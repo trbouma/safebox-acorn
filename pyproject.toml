@@ -29,7 +29,7 @@ python-blossom = "^1.0.2"
 filetype = "^1.2.0"
 aioconsole = "^0.8.1"
 cryptography = "^49.0.0"
-liboqs-python = "^0.14.1"
+liboqs-python = ">=0.14.1,<0.17.0"
 secp256k1 = ">=0.14.0"
 
 [tool.poetry.scripts]
