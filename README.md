@@ -51,6 +51,43 @@ loads. It indicates that the native `liboqs` library and Python wrapper are not
 the same release series. Future releases should document a known-good OQS
 version matrix.
 
+## Record output
+
+Normal record reads are formatted for humans:
+
+```sh
+acorn get "Field Notes"
+```
+
+Example output:
+
+```text
+Record: Field Notes
+Kind: 37375
+Type: generic
+
+Apr 30: Moving
+Apr 25: Dog Walk
+```
+
+Use raw output when debugging the underlying record object:
+
+```sh
+acorn get "Field Notes" --raw
+```
+
+Use verbose mode when debugging relay, wallet, or payment behavior:
+
+```sh
+acorn --verbose get "Field Notes"
+```
+
+If you need to see import-time OQS warnings while debugging:
+
+```sh
+ACORN_SHOW_IMPORT_WARNINGS=1 acorn --help
+```
+
 ## Python usage
 
 ```python

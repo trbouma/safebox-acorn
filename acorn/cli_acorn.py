@@ -1,18 +1,44 @@
-import asyncio, sys, click, os, yaml
+import asyncio, sys, click, os, yaml, logging, warnings, contextlib, io
 from typing import List
 from monstr.encrypt import Keys
 from monstr.client.client import Client, ClientPool
 from monstr.event.event import Event
 from monstr.util import util_funcs
-from acorn.acorn import Acorn
-from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
+def _import_acorn_runtime():
+    warnings.filterwarnings(
+        "ignore",
+        message=r"liboqs version .* differs from liboqs-python version .*",
+        category=UserWarning,
+        module=r"oqs.*",
+    )
+    if os.getenv("ACORN_SHOW_IMPORT_WARNINGS"):
+        from acorn.acorn import Acorn
+        from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
+        from acorn.lightning import lightning_address_pay
+        from acorn.func_utils import recover_nsec_from_seed
+        return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
+
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        from acorn.acorn import Acorn
+        from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
+        from acorn.lightning import lightning_address_pay
+        from acorn.func_utils import recover_nsec_from_seed
+        return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
+
+
+(
+    Acorn,
+    nostrProfile,
+    SafeboxItem,
+    SafeboxRecord,
+    lightning_address_pay,
+    recover_nsec_from_seed,
+) = _import_acorn_runtime()
 from datetime import datetime, timedelta
 import json
 
-from acorn.lightning import lightning_address_pay
 from time import sleep, time
 import qrcode
-from acorn.func_utils import recover_nsec_from_seed
 from acorn.prompts import (
     WELCOME_MSG,
     INFO_HELP,
@@ -62,7 +88,7 @@ else:
                     "mints": mints, 
                     "wallet": wallet,
                     "replicate_relays": replicate_relays,
-                    "logging_level": 10}
+                    "logging_level": 30}
     with open(file_path, 'w') as file:        
         yaml.dump(config_obj, file)
 
@@ -73,7 +99,7 @@ MINTS   = config_obj.get('mints', mints)
 WALLET  = config_obj.get('wallet', wallet)
 HOME_RELAY = config_obj.get('home_relay', home_relay)
 REPLICATE_RELAYS = config_obj.get('replicate_relays', replicate_relays)
-LOGGING_LEVEL = config_obj.get('logging_level',10)
+LOGGING_LEVEL = int(config_obj.get('logging_level', 30))
 
 if NSEC == None:
     click.echo("Private key is not set")
@@ -89,10 +115,42 @@ if 'public_relays' not in config_obj:
 write_config()
 
 
+def _configure_cli_logging(verbose: bool = False) -> int:
+    level = logging.DEBUG if verbose else logging.WARNING
+    logging.getLogger().setLevel(level)
+    logging.getLogger("Acorn").setLevel(level)
+    return level
+
+
+def _format_record(record: SafeboxRecord, kind: int) -> str:
+    title = record.tag[0] if record.tag else "(untitled)"
+    lines = [
+        f"Record: {title}",
+        f"Kind: {kind}",
+        f"Type: {record.type}",
+        "",
+        record.payload or "",
+    ]
+    if record.blobref:
+        lines.extend(
+            [
+                "",
+                f"Blob: {record.blobref}",
+                f"Blob type: {record.blobtype or 'unknown'}",
+            ]
+        )
+    return "\n".join(lines).rstrip()
+
+
 
 @click.group()
-def cli():
-    pass
+@click.option("--verbose", "-v", is_flag=True, help="Show debug logs.")
+@click.pass_context
+def cli(ctx, verbose):
+    global LOGGING_LEVEL
+    ctx.ensure_object(dict)
+    LOGGING_LEVEL = _configure_cli_logging(verbose)
+    ctx.obj["logging_level"] = LOGGING_LEVEL
 
 @click.command("info", help=INFO_HELP)
 @click.pass_context
@@ -100,7 +158,8 @@ def info(ctx):
     
     click.echo(WELCOME_MSG)
     click.echo("This is acorn. Retrieving wallet...")
-    acorn_obj = Acorn(nsec=NSEC, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+    logging_level = ctx.obj.get("logging_level", LOGGING_LEVEL)
+    acorn_obj = Acorn(nsec=NSEC, home_relay=HOME_RELAY, logging_level=logging_level)
    
     click.echo(f"npub: {acorn_obj.pubkey_bech32}")
     # click.echo(f"instance: {acorn_obj.get_instance()}")
@@ -618,10 +677,13 @@ def put(label, label_info, kind, origin, file):
 @click.argument('label', default = "default")
 @click.option('--kind','-k', default=37375)
 @click.option('--origin','-o', default=None)
-def get(label,kind,origin):
+@click.option('--raw', is_flag=True, help="Print the raw record object.")
+@click.pass_context
+def get(ctx, label,kind,origin,raw):
     
     out_info = "None"
-    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints= MINTS, logging_level=LOGGING_LEVEL)
+    logging_level = ctx.obj.get("logging_level", LOGGING_LEVEL)
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints= MINTS, logging_level=logging_level)
     asyncio.run(acorn_obj.load_data())
 
     try:
@@ -629,10 +691,10 @@ def get(label,kind,origin):
         # safebox_info = wallet_obj.get_record(label)
         pass
 
-    except:
-        out_info = "No label found!"
+    except Exception:
+        raise click.ClickException(f"No record found for: {label}")
     
-    click.echo(out_info)
+    click.echo(out_info if raw else _format_record(out_info, kind))
 
 @click.command("get_blob", help='get blob data from private wallet record')
 @click.argument('label', default = "default")
