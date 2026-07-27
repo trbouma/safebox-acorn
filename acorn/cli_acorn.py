@@ -107,7 +107,7 @@ def info(ctx):
     
     
 
-@click.command(help="initialize a new safebox")
+@click.command(help="initialize a new acorn wallet")
 
 @click.option("--homerelay","-h", default=None, help=HOME_RELAY_HELP)
 @click.option("--keepkey","-k", is_flag=True, show_default=True, default=False, help="Keep existing key(nsec).")
@@ -526,7 +526,7 @@ def deposit(amount: int, mint:str):
     click.echo(f"Done! {lninvoice}")
     print(f"{amount} {type(amount)}")
     # No idea why amount has become str - investigate
-    asyncio.run(acorn_obj.add_tx_history(tx_type='C',amount=int(amount), comment="safebox deposit"))
+    asyncio.run(acorn_obj.add_tx_history(tx_type='C',amount=int(amount), comment="acorn deposit"))
     # asyncio.run(acorn_obj.get_tx_history())
  
 @click.command("proofs", help="list proofs") 
