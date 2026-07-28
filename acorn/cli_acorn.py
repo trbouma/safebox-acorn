@@ -254,15 +254,17 @@ def init(keepkey, longseed, homerelay):
 @click.option('--xrelays', '-x', default=None, help='set replicate relays')
 @click.option('--public-relays', default=None, help='store preferred public relays as an encrypted reserved record')
 @click.option('--show-public-relays', is_flag=True, help='show preferred public relays from encrypted reserved record')
+@click.option('--show-mint', is_flag=True, help='show effective home mint from wallet data')
+@click.option('--show-recovery', is_flag=True, help='show recovery information: seed phrase and home relay')
 @click.option('--logging', '-l', default=None, help='set logging level')
 @click.option('--minimal', is_flag=True, help='rewrite config with only nsec and home_relay')
-def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, logging: int, minimal):
+def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, show_mint, show_recovery, logging: int, minimal):
     
-    if nsec == None and relays == None and mints == None and home == None and xrelays==None and public_relays == None and not show_public_relays and logging == None and not minimal:
+    if nsec == None and relays == None and mints == None and home == None and xrelays==None and public_relays == None and not show_public_relays and not show_mint and not show_recovery and logging == None and not minimal:
         click.echo(yaml.dump(config_obj, default_flow_style=False))
         return
 
-    show_only = show_public_relays and nsec == None and relays == None and mints == None and home == None and xrelays == None and public_relays == None and logging == None and not minimal
+    show_only = (show_public_relays or show_mint or show_recovery) and nsec == None and relays == None and mints == None and home == None and xrelays == None and public_relays == None and logging == None and not minimal
    
     if minimal:
         config_obj.clear()
@@ -309,8 +311,23 @@ def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, l
             click.echo(f"- {each}")
         if not saved_relays:
             click.echo("(none set)")
-        if show_only:
-            return
+
+    if show_mint:
+        acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+        asyncio.run(acorn_obj.load_data())
+        click.echo(f"home_mint: {acorn_obj.home_mint}")
+
+    if show_recovery:
+        if not click.confirm("Sensitive recovery material will be displayed. Continue?", default=False):
+            raise click.ClickException("Recovery display cancelled.")
+        acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+        asyncio.run(acorn_obj.load_data())
+        click.echo(f"home_relay: {acorn_obj.home_relay}")
+        click.echo(f"seed_phrase: {acorn_obj.seed_phrase}")
+        click.echo(f"nsec: {acorn_obj.privkey_bech32}")
+
+    if show_only:
+        return
 
     click.echo("set!")
 
@@ -592,38 +609,38 @@ def tx_history():
 @click.option('--mint', '-m', default=None, help="deposit mint")
 def deposit(amount: int, mint:str):
     lninvoice = None
-    if mint:
-        mint = mint.replace("https://", "")
     qr = qrcode.QRCode()
-    click.echo(f"amount: {amount} mint:{mint}")
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS,home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
+    effective_mint = _normalize_mint(mint) if mint else acorn_obj.home_mint
+    click.echo(f"amount: {amount} mint:{effective_mint}")
     cli_quote = acorn_obj.deposit(amount, mint)
     qr.add_data(cli_quote.invoice)
     qr.make(fit=True)
     click.echo(f"\n\nQuote:\n{cli_quote.quote}\n") 
     click.echo(f"\n\nPlease pay invoice:\n{cli_quote.invoice}\n") 
-    qr_invoice = qr.print_ascii(out=sys.stdout)
-    click.echo(f"\n{qr_invoice}\n") 
+    qr.print_ascii(out=sys.stdout)
+    click.echo()
     
-    if click.confirm("Press any key to continue..."):
-        start_time = time()  # Record the start time
-        end_time = start_time + 60  # Set the loop to run for 60 seconds
+    click.pause("Pay the invoice, then press Enter to check payment status...")
+    start_time = time()
+    end_time = start_time + 60
 
-        while time() < end_time:
-            
-            print("checking")
-            success, lninvoice = asyncio.run(acorn_obj.check_quote(cli_quote.quote, amount, mint))
-            if success:
-                break
-            sleep(3)  # Sleep for 3 seconds
+    while time() < end_time:
+        click.echo("checking...")
+        success, lninvoice = asyncio.run(acorn_obj.check_quote(cli_quote.quote, int(amount), mint))
+        if success:
+            break
+        sleep(3)
 
-        click.echo("Loop completed.")
+    if not lninvoice:
+        raise click.ClickException("Deposit was not confirmed before timeout.")
 
-    click.echo(f"Done! {lninvoice}")
-    print(f"{amount} {type(amount)}")
-    # No idea why amount has become str - investigate
     asyncio.run(acorn_obj.add_tx_history(tx_type='C',amount=int(amount), comment="acorn deposit"))
+    click.echo("Deposit confirmed.")
+    click.echo(f"Amount: {int(amount)} sats")
+    click.echo(f"Mint: {effective_mint}")
+    click.echo(f"Balance: {acorn_obj.get_balance()} sats in {len(acorn_obj.proofs)} proofs")
     # asyncio.run(acorn_obj.get_tx_history())
  
 @click.command("proofs", help="list proofs") 
