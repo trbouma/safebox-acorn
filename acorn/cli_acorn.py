@@ -51,17 +51,15 @@ from acorn.prompts import (
 
 )
 
-relays  = [ "wss://nostr-pub.wellorder.net", 
+default_relays  = [ "wss://nostr-pub.wellorder.net", 
             "wss://relay.damus.io", 
             "wss://relay.primal.net",
             "wss://nos.lol"
         ]
-public_relays = ["wss://relay.getsafebox.app", "wss://relay.damus.io", "wss://relay.primal.net"]
-mints   = ["https://mint.getsafebox.app"]
-wallet  = "default" 
-home_relay = "wss://relay.getsafebox.app"
-replicate_relays = ["wss://nostr-pub.wellorder.net"]
-logging_level = 20
+default_public_relays = []
+default_mints = ["https://mint.getsafebox.app"]
+default_home_relay = "wss://relay.getsafebox.app"
+default_logging_level = 30
 
 # List of mints https://nostrapps.github.io/cashu/mints.json
 
@@ -74,6 +72,31 @@ def write_config():
      with open(file_path, 'w') as file:        
         yaml.dump(config_obj, file)
 
+
+def _normalize_relay(relay: str) -> str:
+    relay = str(relay).strip()
+    if relay.startswith(("wss://", "ws://")):
+        return relay
+    return f"wss://{relay}"
+
+
+def _normalize_mint(mint: str) -> str:
+    mint = str(mint).strip()
+    if mint.startswith(("https://", "http://")):
+        return mint
+    return f"https://{mint}"
+
+
+def _split_csv(value: str) -> list[str]:
+    return [each for each in str(value).replace(" ", "").split(",") if each]
+
+
+def _minimize_config(config: dict) -> dict:
+    return {
+        "nsec": config.get("nsec"),
+        "home_relay": config.get("home_relay", default_home_relay),
+    }
+
 os.makedirs(config_directory, exist_ok=True)
 
 if os.path.exists(file_path):
@@ -81,25 +104,18 @@ if os.path.exists(file_path):
         config_obj = yaml.safe_load(file)
 else:
    
-    config_obj = {  'nsec': Keys().private_key_bech32(), 
-                    'relays': relays, 
-                    'public_relays': public_relays,
-                    "home_relay": home_relay,
-                    "mints": mints, 
-                    "wallet": wallet,
-                    "replicate_relays": replicate_relays,
-                    "logging_level": 30}
+    config_obj = {  'nsec': Keys().private_key_bech32(),
+                    "home_relay": default_home_relay}
     with open(file_path, 'w') as file:        
         yaml.dump(config_obj, file)
 
-RELAYS  = config_obj.get('relays',relays)
-PUBLIC_RELAYS = config_obj.get('public_relays', public_relays)
+HOME_RELAY = config_obj.get('home_relay', default_home_relay)
+RELAYS  = config_obj.get('relays') or [HOME_RELAY]
+PUBLIC_RELAYS = config_obj.get('public_relays') or default_public_relays
 NSEC    = config_obj.get('nsec',None)
-MINTS   = config_obj.get('mints', mints)
-WALLET  = config_obj.get('wallet', wallet)
-HOME_RELAY = config_obj.get('home_relay', home_relay)
-REPLICATE_RELAYS = config_obj.get('replicate_relays', replicate_relays)
-LOGGING_LEVEL = int(config_obj.get('logging_level', 30))
+MINTS   = config_obj.get('mints') or default_mints
+REPLICATE_RELAYS = config_obj.get('replicate_relays') or []
+LOGGING_LEVEL = int(config_obj.get('logging_level', default_logging_level))
 
 if NSEC == None:
     click.echo("Private key is not set")
@@ -108,9 +124,6 @@ if NSEC == None:
         write_config()
 
     sys.exit()
-
-if 'public_relays' not in config_obj:
-    config_obj['public_relays'] = PUBLIC_RELAYS
 
 write_config()
 
@@ -142,6 +155,25 @@ def _format_record(record: SafeboxRecord, kind: int) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _json_default(value):
+    if hasattr(value, "model_dump"):
+        return value.model_dump()
+    if hasattr(value, "data"):
+        return value.data()
+    return str(value)
+
+
+def _emit_json(payload) -> None:
+    click.echo(json.dumps(payload, default=_json_default, ensure_ascii=False, indent=2))
+
+
+def _record_to_dict(record: SafeboxRecord, kind: int) -> dict:
+    data = record.model_dump()
+    data["kind"] = kind
+    data["label"] = record.tag[0] if record.tag else None
+    return data
+
+
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Show debug logs.")
@@ -153,14 +185,25 @@ def cli(ctx, verbose):
     ctx.obj["logging_level"] = LOGGING_LEVEL
 
 @click.command("info", help=INFO_HELP)
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
 @click.pass_context
-def info(ctx):
+def info(ctx, json_output):
     
     click.echo(WELCOME_MSG)
     click.echo("This is acorn. Retrieving wallet...")
     logging_level = ctx.obj.get("logging_level", LOGGING_LEVEL)
     acorn_obj = Acorn(nsec=NSEC, home_relay=HOME_RELAY, logging_level=logging_level)
    
+    if json_output:
+        _emit_json(
+            {
+                "npub": acorn_obj.pubkey_bech32,
+                "pubkey": acorn_obj.pubkey_hex,
+                "home_relay": HOME_RELAY,
+            }
+        )
+        return
+
     click.echo(f"npub: {acorn_obj.pubkey_bech32}")
     # click.echo(f"instance: {acorn_obj.get_instance()}")
     
@@ -209,13 +252,21 @@ def init(keepkey, longseed, homerelay):
 @click.option('--home', '-h', default=None, help=HOME_RELAY_HELP)
 @click.option('--mints', '-m', default=None, help=MINTS_HELP)
 @click.option('--xrelays', '-x', default=None, help='set replicate relays')
+@click.option('--public-relays', default=None, help='store preferred public relays as an encrypted reserved record')
+@click.option('--show-public-relays', is_flag=True, help='show preferred public relays from encrypted reserved record')
 @click.option('--logging', '-l', default=None, help='set logging level')
-def set(nsec, home, relays, mints,xrelays, logging: int):
+@click.option('--minimal', is_flag=True, help='rewrite config with only nsec and home_relay')
+def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, logging: int, minimal):
     
-    if nsec == None and relays == None and mints == None and home == None and xrelays==None and logging == None:
+    if nsec == None and relays == None and mints == None and home == None and xrelays==None and public_relays == None and not show_public_relays and logging == None and not minimal:
         click.echo(yaml.dump(config_obj, default_flow_style=False))
         return
+
+    show_only = show_public_relays and nsec == None and relays == None and mints == None and home == None and xrelays == None and public_relays == None and logging == None and not minimal
    
+    if minimal:
+        config_obj.clear()
+        config_obj.update(_minimize_config({"nsec": NSEC, "home_relay": HOME_RELAY, **config_obj}))
 
     if nsec != None:
         config_obj['nsec']=nsec
@@ -225,55 +276,42 @@ def set(nsec, home, relays, mints,xrelays, logging: int):
 
     
     if home != None:
-        if "wss://" in home:
-            home_relay = home
-        elif "ws://" in home:
-            home_relay = home
-        else:
-            home_relay = f"wss://{home}"
-
-
-        print("home relay", home_relay)
+        home_relay = _normalize_relay(home)
         config_obj['home_relay']=home_relay
     
     if relays != None:
-        print("relays:", relays)
-        relay_array = str(relays).replace(" ","").split(',')
-        relay_array_wss = []
-        for each in relay_array:
-            relay_array_wss.append(each if "wss://" in each else "wss://"+each)
-        print(relay_array_wss)
+        relay_array_wss = [_normalize_relay(each) for each in _split_csv(relays)]
         config_obj['relays']=relay_array_wss
-    else:
-       config_obj['relays']=RELAYS 
 
     if xrelays != None:
-        print("replicate relays:", xrelays)
-        relay_array = str(xrelays).replace(" ","").split(',')
-        relay_array_wss = []
-        for each in relay_array:
-            relay_array_wss.append(each if "wss://" in each else "wss://"+each)
-        print(relay_array_wss)
+        relay_array_wss = [_normalize_relay(each) for each in _split_csv(xrelays)]
         config_obj['replicate_relays']=relay_array_wss
-    else:
-       config_obj['replicate_relays']=REPLICATE_RELAYS 
 
     if mints != None:
-        
-        mint_array = str(mints).replace(" ","").split(',') 
-        mint_array_https = []
-        for each in mint_array:
-            mint_array_https.append(each if "https://" in each else "https://"+each)
-
+        mint_array_https = [_normalize_mint(each) for each in _split_csv(mints)]
         config_obj['mints']=mint_array_https
-        print("setting mints" , mint_array_https)
-       
-    else:
-       config_obj['mints']=MINTS 
 
+    if public_relays != None:
+        relay_array_wss = [_normalize_relay(each) for each in _split_csv(public_relays)]
+        acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+        asyncio.run(acorn_obj.load_data())
+        saved_relays = asyncio.run(acorn_obj.set_public_relays(relay_array_wss))
+        click.echo("public_relays:")
+        for each in saved_relays:
+            click.echo(f"- {each}")
 
+    if show_public_relays:
+        acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+        asyncio.run(acorn_obj.load_data())
+        saved_relays = asyncio.run(acorn_obj.get_public_relays())
+        click.echo("public_relays:")
+        for each in saved_relays:
+            click.echo(f"- {each}")
+        if not saved_relays:
+            click.echo("(none set)")
+        if show_only:
+            return
 
-    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
     click.echo("set!")
 
     # print(config_obj)
@@ -678,8 +716,9 @@ def put(label, label_info, kind, origin, file):
 @click.option('--kind','-k', default=37375)
 @click.option('--origin','-o', default=None)
 @click.option('--raw', is_flag=True, help="Print the raw record object.")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
 @click.pass_context
-def get(ctx, label,kind,origin,raw):
+def get(ctx, label,kind,origin,raw,json_output):
     
     out_info = "None"
     logging_level = ctx.obj.get("logging_level", LOGGING_LEVEL)
@@ -694,7 +733,10 @@ def get(ctx, label,kind,origin,raw):
     except Exception:
         raise click.ClickException(f"No record found for: {label}")
     
-    click.echo(out_info if raw else _format_record(out_info, kind))
+    if json_output:
+        _emit_json(_record_to_dict(out_info, kind))
+    else:
+        click.echo(out_info if raw else _format_record(out_info, kind))
 
 @click.command("get_blob", help='get blob data from private wallet record')
 @click.argument('label', default = "default")
@@ -757,11 +799,14 @@ def delete_kind(kind):
     
     click.echo(out_info)
 
-@click.command("get_user_records", help='get a private wallet record')
+@click.command("get_user_records", help='list private wallet records')
 @click.option('--kind','-k', default=37375)
 @click.option('--since','-s', default=None, help='since in hours')
 @click.option('--relays', '-r', default=None, help=RELAYS_HELP)
-def get_user_records(kind, since, relays):
+@click.option('--labels', is_flag=True, help='print record labels only')
+@click.option('--raw', is_flag=True, help='print raw record objects')
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def get_user_records(kind, since, relays, labels, raw, json_output):
     
     out_info = "None"
     relay_array = None
@@ -774,7 +819,8 @@ def get_user_records(kind, since, relays):
             if each.startswith("ws://"):
                 continue
             relay_array_wss.append(each if "wss://" in each else "wss://"+each)
-        print(relay_array_wss)
+        if not json_output:
+            click.echo(relay_array_wss)
 
 
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints= MINTS, logging_level=LOGGING_LEVEL)
@@ -782,15 +828,41 @@ def get_user_records(kind, since, relays):
 
     if since != None:
         since_adjusted = util_funcs.date_as_ticks((datetime.now()-timedelta(hours=int(since))))
-        click.echo(since_adjusted)
+        if not json_output:
+            click.echo(since_adjusted)
     else:
         since_adjusted = None
     
     try:
+        if labels:
+            out_info = asyncio.run(
+                acorn_obj.get_user_record_labels(
+                    record_kind=kind,
+                    since=since_adjusted,
+                    relays=relay_array_wss,
+                )
+            )
+            if json_output:
+                _emit_json({"kind": kind, "count": len(out_info), "labels": out_info})
+                return
+            for each in out_info:
+                click.echo(each)
+            click.echo(f"No. of RECORDS: {len(out_info)}")
+            return
+
         out_info = asyncio.run(acorn_obj.get_user_records(record_kind=kind, since=since_adjusted, relays=relay_array_wss))
-        
-        for each in out_info:
-            click.echo(f"\nRECORD PAYLOAD: {each['tag']} {each['payload']}")
+
+        if json_output:
+            _emit_json({"kind": kind, "count": len(out_info), "records": out_info})
+        elif raw:
+            for each in out_info:
+                click.echo(each)
+        else:
+            for each in out_info:
+                record_labels = each.get("tag") or ["(untitled)"]
+                record_label = record_labels[0] if isinstance(record_labels, list) and record_labels else record_labels
+                record_type = each.get("type", "unknown")
+                click.echo(f"{record_label} ({record_type})")
         click.echo(f"No. of RECORDS: {len(out_info)}" )
 
     except Exception as e:
@@ -801,7 +873,8 @@ def get_user_records(kind, since, relays):
 
 
 @click.command("balance", help="show balance")
-def balance():
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def balance(json_output):
     
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -814,13 +887,19 @@ def balance():
             )
         raise click.ClickException(f"Unable to load wallet data: {msg}")
 
-    click.echo(f"{acorn_obj.get_balance()} sats in {len(acorn_obj.proofs)} proofs.")
+    balance_sats = acorn_obj.get_balance()
+    proof_count = len(acorn_obj.proofs)
+    if json_output:
+        _emit_json({"balance": balance_sats, "unit": "sat", "proof_count": proof_count})
+    else:
+        click.echo(f"{balance_sats} sats in {proof_count} proofs.")
 
 @click.command("zap", help="Zap amount to event or to recipient")
 @click.argument('amount', default=1)
 @click.argument('event')
 @click.option('--comment','-c', default='⚡️')
-def zap(amount:int, event, comment):
+@click.option('--relays', '-r', default=None, help='comma-separated relays to search for the event')
+def zap(amount:int, event, comment, relays):
 
     if event == None:
         click.echo("Need an event!")
@@ -829,6 +908,10 @@ def zap(amount:int, event, comment):
         click.echo("Amount must be greater than zero.")
         return
     
+    relay_array_wss = None
+    if relays:
+        relay_array_wss = [_normalize_relay(each) for each in _split_csv(relays)]
+
     acorn_obj = Acorn(
         nsec=NSEC,
         home_relay=HOME_RELAY,
@@ -838,7 +921,7 @@ def zap(amount:int, event, comment):
     )
     try:
         asyncio.run(acorn_obj.load_data())
-        result_out = asyncio.run(acorn_obj.zap(amount,event,comment))
+        result_out = asyncio.run(acorn_obj.zap(amount,event,comment, relays=relay_array_wss))
         click.echo(result_out)
     except Exception as exc:
         click.echo(f"Zap failed: {exc}")

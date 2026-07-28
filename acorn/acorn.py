@@ -132,7 +132,7 @@ class Acorn:
     balance: int
     proof_events: proofEvents 
     replicate: bool
-    RESERVED_RECORDS: List[str] = ["balance","privkey"]
+    RESERVED_RECORDS: List[str] = ["balance","privkey","public_relays"]
     wallet_reserved_records: object
     logger: logging.Logger
     TZ: str = "America/New_York"
@@ -1033,6 +1033,69 @@ class Acorn:
         if events_out:
             events_out.sort(key=lambda r: int(r.get("timestamp", 0)), reverse=reverse)
         return events_out
+
+    async def get_user_record_labels(
+        self,
+        record_kind: int = 37375,
+        since: int = None,
+        reverse: bool = False,
+        relays: List = None,
+    ) -> List[str]:
+        """Return only user record labels for the requested record kind."""
+
+        records = await self.get_user_records(
+            record_kind=record_kind,
+            since=since,
+            reverse=reverse,
+            relays=relays,
+        )
+        labels: List[str] = []
+        for each in records:
+            tag = each.get("tag") if isinstance(each, dict) else None
+            if isinstance(tag, list) and tag:
+                labels.append(str(tag[0]))
+            elif isinstance(tag, str):
+                labels.append(tag)
+        return labels
+
+    async def set_public_relays(self, relays: List[str]) -> List[str]:
+        """Store preferred public relays as an encrypted reserved record."""
+
+        normalized = self._normalize_relays(relays)
+        await self.set_wallet_info("public_relays", json.dumps(normalized))
+        self.wallet_reserved_records["public_relays"] = json.dumps(normalized)
+        self.public_relays = normalized
+        return normalized
+
+    async def get_public_relays(self) -> List[str]:
+        """Return preferred public relays from reserved record or instance config."""
+
+        configured = self.wallet_reserved_records.get("public_relays")
+        if not configured:
+            configured = await self.get_wallet_info("public_relays")
+            if configured:
+                self.wallet_reserved_records["public_relays"] = configured
+        if configured:
+            try:
+                parsed = json.loads(configured)
+                if isinstance(parsed, list):
+                    return self._normalize_relays(parsed)
+            except (json.JSONDecodeError, TypeError):
+                if isinstance(configured, str):
+                    return self._normalize_relays([each for each in configured.split(",") if each.strip()])
+        return self._normalize_relays(self.public_relays or [])
+
+    def _normalize_relays(self, relays: List[str]) -> List[str]:
+        normalized: List[str] = []
+        for each in relays or []:
+            relay = str(each).strip()
+            if not relay:
+                continue
+            if not relay.startswith(("wss://", "ws://")):
+                relay = f"wss://{relay}"
+            if relay not in normalized:
+                normalized.append(relay)
+        return normalized
 
 
     async def _async_query_client_profile(self, filter: List[dict]): 
@@ -7017,7 +7080,7 @@ class Acorn:
         
         return token_serialized   
 
-    async def zap(self, amount:int, event_id, comment): 
+    async def zap(self, amount:int, event_id, comment, relays: List[str] | None = None): 
         out_msg = ""
         prs = []
         skipped_invoice_requests = 0
@@ -7048,16 +7111,12 @@ class Acorn:
                 event_id = bech32_to_hex(event_id)
             except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
                 return "Note id format is invalid. Please check and try again."
-            try:
-                zap_filter = [{  
-                'ids'  :  [event_id]          
-                
-                }]
-                prs = await self._async_query_zap(amount, comment,zap_filter)
-            except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
-                raise ValueError("Could not find event. Try an additional relay?")
-                # return "Could not find event. Try an additional relay?"
+            zap_filter = [{  
+            'ids'  :  [event_id]          
             
+            }]
+            prs = await self._async_query_zap(amount, comment,zap_filter, relays=relays)
+             
 
         elif event_id.startswith("npub"):  
             pub_hex = bech32_to_hex(event_id)
@@ -7074,7 +7133,7 @@ class Acorn:
             zap_filter = [{
                 'ids': [event_id.lower()]
             }]
-            prs = await self._async_query_zap(amount, comment, zap_filter)
+            prs = await self._async_query_zap(amount, comment, zap_filter, relays=relays)
         else:
             raise ValueError(f"need a note or npub") 
 
@@ -7087,14 +7146,14 @@ class Acorn:
         
         return out_msg   
     
-    async def _async_query_zap(self, amount:int, comment:str, filter: List[dict]): 
+    async def _async_query_zap(self, amount:int, comment:str, filter: List[dict], relays: List[str] | None = None): 
     # does a one off query to relay prints the events and exits
         zaps_to_send = []
         event = None
         skipped_profiles = 0
         skipped_invoice_requests = 0
         last_invoice_error: str | None = None
-        query_relays = self._build_discovery_relays()
+        query_relays = relays if relays else (await self.get_public_relays()) or self._build_discovery_relays()
         # print("are we here today", self.relays)
         async with ClientPool(query_relays) as c:        
             events = await c.query(filter)
@@ -7110,7 +7169,7 @@ class Acorn:
             pass
        
         if event == None:
-            raise RuntimeError("no event")
+            raise RuntimeError(f"no event; searched relays: {', '.join(query_relays)}")
         
         for each in event.tags:
             if not each or each[0] != "zap":

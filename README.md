@@ -10,6 +10,9 @@ Safebox. It provides:
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
 
+See [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md) for
+the private record storage, lookup, and blob encryption model.
+
 ## Install from this repository
 
 From another project:
@@ -76,10 +79,48 @@ Use raw output when debugging the underlying record object:
 acorn get "Field Notes" --raw
 ```
 
+Use JSON output when calling Acorn from another program:
+
+```sh
+acorn get "Field Notes" --json
+acorn get_user_records --labels --json
+acorn balance --json
+acorn info --json
+```
+
 Use verbose mode when debugging relay, wallet, or payment behavior:
 
 ```sh
 acorn --verbose get "Field Notes"
+```
+
+## Public relay preference
+
+Acorn keeps the local CLI config intentionally small. The local
+`~/.acorn/config.yml` only needs the private key and home relay:
+
+```yaml
+nsec: nsec...
+home_relay: wss://relay.getsafebox.app
+```
+
+For commands that need broader public-event discovery, such as zaps, store a
+preferred public relay list as an encrypted reserved record:
+
+```sh
+acorn set --public-relays relay.damus.io,relay.primal.net,nos.lol
+```
+
+Then `acorn zap` uses those relays when `--relays/-r` is not supplied:
+
+```sh
+acorn zap 21 <event-id> -c "from acorn"
+```
+
+You can still override per command:
+
+```sh
+acorn zap 21 <event-id> -c "from acorn" -r relay.damus.io,nos.lol
 ```
 
 If you need to see import-time OQS warnings while debugging:
