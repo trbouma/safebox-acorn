@@ -25,6 +25,34 @@ features should be evaluated before they are added.
 Acorn is responsible for the generic capabilities needed by sovereign
 applications built on Nostr, Cashu, and encrypted records.
 
+## Compartmentalization model
+
+Acorn is not only reusable code. It is a protocol boundary that separates keys,
+code, data, and configuration state.
+
+```text
+keys
+  nsec, seed phrase, signing authority, future HSM-held secrets
+
+code
+  Acorn implementation code and application code that calls it
+
+data
+  encrypted records, proof events, wallet metadata, blobs, signed events
+
+configuration state
+  home relay, public relays, home mint, recovery context, replication policy
+```
+
+This separation is central to the component boundary:
+
+- applications can be replaced without losing user state;
+- relays can be replaced without changing user identity;
+- sensitive keys can eventually move into stronger custody environments;
+- configuration can move from plaintext local files into encrypted reserved
+  records where appropriate;
+- data can be replicated without handing hosts plaintext access.
+
 ### Key and wallet identity
 
 Acorn owns:
@@ -183,4 +211,3 @@ Before adding a feature to Acorn, ask:
 5. Can it be documented as part of the component contract?
 
 If the answer is no, the feature probably belongs in an application layer.
-

@@ -24,6 +24,15 @@ Put another way:
 Acorn is a sovereign protocol component for building sovereign data havens.
 ```
 
+The core value proposition can be summarized as:
+
+```text
+reciprocal resilience, protocol-first.
+```
+
+Acorn should make it simple for people and communities to help each other stay
+recoverable without surrendering secrets to each other or to a central provider.
+
 ## Why Acorn exists
 
 Most applications bind users to infrastructure controlled by the application
@@ -77,13 +86,40 @@ Hardware can strengthen this model, but it should not define it. The protocol
 comes first so that recovery, replication, and interoperability are not tied to
 one box, vendor, or deployment path.
 
+One Acorn node gives a user's data a home. A community of nodes creates
+continuity. A home relay, a private relay, a friend's relay, a community relay,
+and a future hardware appliance can all participate in the same encrypted
+recovery fabric without becoming shared plaintext storage.
+
+This is reciprocal resilience: people, families, teams, or communities can help
+keep each other recoverable without taking custody of each other's plaintext
+data.
+
+In plain language:
+
+```text
+I can help keep you recoverable without holding your secrets.
+You can help keep me recoverable without holding mine.
+```
+
+The model is closer to reciprocal safes than to a shared folder:
+
+```text
+I can host your encrypted Acorn tenant;
+you can host mine;
+neither of us receives the other's contents.
+```
+
+The useful object is the isolated encrypted tenant: the wallet identity, record
+namespace, recovery context, and signed event set controlled by the user.
+
 ## Sovereign protocol component
 
 A sovereign protocol component has several properties.
 
-For Acorn, the term means reusable software that gives applications portable
-identity, encrypted user-controlled state, recovery, and migration across
-replaceable infrastructure.
+For Acorn, the term means a compartmentalized protocol boundary that gives
+applications portable identity, encrypted user-controlled state, recovery, and
+migration across replaceable infrastructure.
 
 This is different from an ordinary library or backend module. A library provides
 functions. A backend module usually serves one application. A sovereign protocol
@@ -92,6 +128,26 @@ devices, and providers.
 
 The continuity boundary is the user and their cryptographic material, not the
 application operator.
+
+The compartmentalization matters. Acorn should separate:
+
+```text
+keys
+  nsec, seed phrase, signing authority, future HSM-held secrets
+
+code
+  the Acorn implementation and application code that requests protocol actions
+
+data
+  encrypted records, proof events, wallet metadata, blobs, and signed events
+
+configuration state
+  home relay, public relays, home mint, recovery context, replication policy
+```
+
+These layers can move and harden independently. For example, data can be
+replicated to a community relay, keys can eventually live in protected hardware,
+and application code can be replaced without losing the user's protocol state.
 
 ### It carries its own identity
 

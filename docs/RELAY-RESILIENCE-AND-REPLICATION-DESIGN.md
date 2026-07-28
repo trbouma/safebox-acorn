@@ -57,14 +57,22 @@ be copied without rewriting their identity.
 
 ## Swarm-style encrypted replicas
 
-Another useful mental model is a swarm of encrypted replicas. One relay can be
-the primary home for a wallet, but additional relays can hold encrypted copies
-of the same signed event set. Those relays improve availability without
-receiving plaintext access.
+Another useful mental model is a swarm of encrypted replicas.
+
+One relay gives the wallet a home. A community of relays creates continuity.
+Additional relays can hold encrypted copies of the same signed event set. Those
+relays improve availability without receiving plaintext access.
 
 The goal is not a shared folder or a shared account. The goal is isolated,
 encrypted tenant-like state that can be mirrored across infrastructure chosen by
 the user.
+
+The value proposition is reciprocal resilience:
+
+```text
+communities can preserve each other's recovery paths without becoming each
+other's custodians.
+```
 
 In Acorn terms:
 
@@ -79,6 +87,59 @@ recovery context   -> home_relay + seed phrase + nsec + runbook
 
 This framing keeps the focus on continuity. A single relay should not be the
 only route back to a user's records, wallet metadata, and recovery context.
+
+### Isolated tenants
+
+The useful unit is an isolated encrypted tenant. In Acorn, this means:
+
+- one wallet identity;
+- one encrypted record namespace;
+- one recovery context;
+- one signed event set;
+- one set of relay and mint preferences.
+
+The infrastructure operator can host that tenant's encrypted events without
+being able to read the tenant's records or spend its proofs.
+
+### Reciprocal resilience
+
+Relay resilience does not require every user to own every relay. Users can host
+encrypted replicas for each other:
+
+```text
+Alice hosts Bob's encrypted Acorn event set.
+Bob hosts Alice's encrypted Acorn event set.
+Neither receives plaintext access.
+```
+
+This is reciprocal infrastructure, not a shared account. It increases recovery
+paths without turning every recovery copy into a new plaintext leak.
+
+The broader principle is reciprocal resilience: a community can improve each
+member's continuity by hosting encrypted replicas, while cryptographic
+boundaries keep custody with each user.
+
+This should become a core Acorn design value, not merely a replication feature.
+Relay pools, migration tools, recovery exports, and future hardware deployments
+should all preserve this distinction between helping someone remain recoverable
+and taking possession of their secrets.
+
+### Pool health
+
+A future relay pool should expose health in operational terms:
+
+- which relays are reachable;
+- which relays have the expected event IDs;
+- which relays are missing proof or deletion events;
+- which relay appears freshest for proof state;
+- whether a relay is safe to promote as the new home relay.
+
+The operator question should become:
+
+```text
+Is my encrypted tenant available from enough independent places to survive the
+failure I care about?
+```
 
 ## Core principles
 
