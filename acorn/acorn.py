@@ -261,6 +261,74 @@ class Acorn:
             if each and each not in relay_pool:
                 relay_pool.append(each)
         return relay_pool
+
+    async def replicate_to_relay(
+        self,
+        target_relay: str,
+        source_relay: str | None = None,
+        kinds: List[int] | None = None,
+        limit: int = 1024,
+    ) -> Dict[str, Any]:
+        """Copy this wallet's signed events from one relay to another.
+
+        Replication preserves original event IDs and signatures. It is intended
+        for migration or backup when a home relay becomes unreliable,
+        unavailable, or adversarial.
+        """
+
+        source = self._normalize_relays([source_relay or self.home_relay])
+        target = self._normalize_relays([target_relay])
+        if not source:
+            raise ValueError("source relay is required")
+        if not target:
+            raise ValueError("target relay is required")
+
+        event_kinds = kinds or [0, 5, 37375, 7375, 30000, 30001, 30002]
+        normalized_kinds = sorted({int(each) for each in event_kinds})
+        if not normalized_kinds:
+            raise ValueError("at least one event kind is required")
+
+        query_limit = int(limit)
+        if query_limit <= 0:
+            raise ValueError("limit must be greater than zero")
+
+        query_filter = [{
+            "limit": query_limit,
+            "authors": [self.pubkey_hex],
+            "kinds": normalized_kinds,
+        }]
+
+        async with ClientPool(source) as c:
+            events: List[Event] = await c.query(query_filter)
+
+        seen_event_ids: set[str] = set()
+        unique_events: List[Event] = []
+        for event in events:
+            event_id = str(event.id)
+            if event_id in seen_event_ids:
+                continue
+            seen_event_ids.add(event_id)
+            unique_events.append(event)
+
+        async with ClientPool(target) as c:
+            for event in unique_events:
+                c.publish(event)
+
+        by_kind: Dict[str, int] = {}
+        for event in unique_events:
+            kind_key = str(event.kind)
+            by_kind[kind_key] = by_kind.get(kind_key, 0) + 1
+
+        return {
+            "status": "OK",
+            "source_relay": source[0],
+            "target_relay": target[0],
+            "kinds": normalized_kinds,
+            "queried": len(events),
+            "replicated": len(unique_events),
+            "by_kind": by_kind,
+            "event_ids": [str(event.id) for event in unique_events],
+        }
    
     async def load_data(self, force_profile_creation: bool=False):
         self.logger.debug(f"load data. Force profile creation {force_profile_creation}")
@@ -321,15 +389,6 @@ class Acorn:
 
         await self._load_proofs()
         
-        
-        if len(self.proofs) > PROOF_LIMIT:
-            self.logger.info("op=load_data status=reduce_proofs proofs=%s", len(self.proofs))
-            try:
-                await self.swap_multi_each()
-                await self.swap_multi_consolidate()
-            except Exception as exc:
-                # Do not fail wallet load if optional proof reduction fails.
-                self.logger.warning("op=load_data status=reduce_proofs_failed error=%s", exc)
         return
     
     async def set_owner_data(self, npub:str = None, local_currency=None):
@@ -2448,8 +2507,7 @@ class Acorn:
                 self._lock_owner,
             )
         else:
-            level = self.logger.warning if held_ms >= 3000 else self.logger.info
-            level(
+            self.logger.info(
                 "op=release_lock status=releasing handle=%s actor=%s owner=%s held_ms=%s",
                 self.handle,
                 actor,

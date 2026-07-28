@@ -1,0 +1,365 @@
+# Relay Resilience and Replication Design
+
+## Summary
+
+Acorn should make relay-backed wallet data resilient in the same spirit that ZFS
+makes filesystem data resilient: easy to replicate, easy to verify, and possible
+to move to new infrastructure when the current storage target becomes
+unreliable.
+
+The design goal is not to clone ZFS literally. Nostr relays are not block
+devices, and Cashu proof spend state is ultimately controlled by mints. The goal
+is to adopt the same operator-friendly posture:
+
+```text
+replicate deliberately;
+verify before trusting;
+promote a good replica;
+operate from a pool when necessary;
+repair explicitly.
+```
+
+## Motivation
+
+Acorn wallets currently depend on a `home_relay` for wallet metadata, encrypted
+records, proof events, and reserved records. This creates a practical dependency
+on relay availability and behavior.
+
+A relay can become:
+
+- unreliable;
+- slow;
+- unavailable;
+- censored;
+- hostile;
+- stale;
+- incomplete;
+- expensive or operationally inconvenient.
+
+Users should be able to move without losing wallet continuity.
+
+## ZFS-inspired mental model
+
+The useful analogy is:
+
+```text
+ZFS dataset       -> Acorn signed event set
+ZFS snapshot      -> point-in-time visible relay event state
+zfs send/receive  -> relay-to-relay signed event replication
+pool health       -> relay pool status and event availability
+scrub             -> verify event visibility and proof spend state
+promotion         -> move home_relay to a verified replica
+```
+
+The analogy is imperfect but helpful. Acorn's replication unit is a signed Nostr
+event, not a filesystem block. The important invariant is that signed events can
+be copied without rewriting their identity.
+
+## Core principles
+
+### Signed events are replication units
+
+Acorn should replicate signed Nostr events as-is.
+
+This preserves:
+
+- event IDs;
+- signatures;
+- authorship;
+- encrypted content;
+- tags;
+- timestamps.
+
+Replication should not decrypt and re-encrypt records unless a future explicit
+re-keying workflow is introduced.
+
+### The home relay is a pointer, not destiny
+
+`home_relay` is the primary relay Acorn uses by default. It should be easy to
+change after verifying another relay.
+
+The user should think:
+
+```text
+my wallet is mine;
+the home relay is where it currently lives.
+```
+
+### Reads should support merge and dedupe
+
+When operating against multiple relays, Acorn should merge events and dedupe by
+event ID.
+
+For replaceable or stateful flows, Acorn must also understand which visible
+event should be considered authoritative.
+
+### Writes should support explicit replication policy
+
+Acorn should eventually support multiple write policies:
+
+```text
+primary-only
+  write only to home_relay
+
+primary-plus-replicas
+  write to home_relay and configured replicas
+
+pool-write
+  write to every relay in a trusted relay pool
+
+manual-replicate
+  write normally, replicate later by command
+```
+
+### Proof state requires mint verification
+
+Relay replication can copy encrypted proof events, but relays do not determine
+whether Cashu proofs are spendable.
+
+The mint remains the authority for proof spend state.
+
+Therefore proof-related replication should be followed by explicit proof repair
+or verification when relay histories diverge.
+
+## Existing capability
+
+Acorn currently supports manual signed-event replication:
+
+```sh
+acorn replicate --target ws://beelink:8735
+```
+
+The source defaults to the current home relay.
+
+Proof-state synchronization can be targeted:
+
+```sh
+acorn replicate \
+  --source ws://beelink:8735 \
+  --target relay.getsafebox.app \
+  --kinds 5,7375
+```
+
+The default replication kinds include:
+
+```text
+0       profile
+5       deletion events
+37375   encrypted private records and wallet metadata
+7375    encrypted proof events
+30000   replaceable metadata, if used
+30001   replaceable metadata, if used
+30002   replaceable metadata, if used
+```
+
+## Desired workflows
+
+### 1. Manual backup replication
+
+Copy the current wallet event set to a backup relay:
+
+```sh
+acorn replicate --target ws://backup-relay:8735
+```
+
+Then verify:
+
+```sh
+acorn get_user_records --labels -r ws://backup-relay:8735
+```
+
+### 2. Relay promotion
+
+Promote a verified replica to become the new home relay.
+
+Possible future command:
+
+```sh
+acorn relay promote ws://backup-relay:8735
+```
+
+Expected behavior:
+
+1. verify the target relay has wallet metadata;
+2. verify private records are visible;
+3. verify proof events are visible;
+4. optionally run proof repair;
+5. update local `home_relay`;
+6. optionally store the previous home relay as a fallback.
+
+### 3. Relay pool operation
+
+Configure a set of relays for read/write resilience.
+
+Possible future commands:
+
+```sh
+acorn relay pool add ws://beelink:8735
+acorn relay pool add wss://relay.example.com
+acorn relay pool status
+acorn relay pool sync
+```
+
+Pool mode should support:
+
+- read from many;
+- dedupe by event ID;
+- write to selected trusted relays;
+- report relay lag or missing events;
+- repair or resync missing events.
+
+### 4. Scrub / verify
+
+Acorn should eventually support a relay verification command.
+
+Possible future command:
+
+```sh
+acorn relay scrub --relays relay-a,relay-b
+```
+
+Checks could include:
+
+- wallet record visibility;
+- record event count by kind;
+- proof event visibility;
+- deletion event visibility;
+- event ID comparison between relays;
+- proof state check against mint.
+
+### 5. Relay diff
+
+Compare two relays before promotion.
+
+Possible future command:
+
+```sh
+acorn relay diff --source relay-a --target relay-b
+```
+
+Expected output:
+
+```text
+Source: relay-a
+Target: relay-b
+Missing on target: 3
+Extra on target: 1
+Kinds:
+- 37375: source=28 target=28 missing=0
+- 7375: source=2 target=1 missing=1
+- 5: source=1 target=0 missing=1
+```
+
+## Proof consistency model
+
+Proof consistency is more subtle than record consistency.
+
+For private records:
+
+```text
+if the signed encrypted event exists and decrypts, the record is present.
+```
+
+For proofs:
+
+```text
+if the signed encrypted proof event exists, the proof is visible;
+if the mint says the proof is UNSPENT, the proof has value.
+```
+
+This distinction matters during migration. A stale relay can show proof events
+for proofs already spent elsewhere.
+
+Therefore:
+
+- `balance` must remain read-only;
+- `repair-proofs` must be explicit;
+- proof repair should check the mint;
+- deletion events should replicate with proof events;
+- relay promotion should verify proof spend state before spending again.
+
+See [Proof State and Relay Consistency](./PROOF-STATE-RELAY-CONSISTENCY.md).
+
+## Reserved records and future relay metadata
+
+Acorn already uses encrypted reserved records for some preferences, such as
+`public_relays`.
+
+Future relay resilience metadata could also be stored as encrypted reserved
+records:
+
+```text
+relay_pool
+replication_policy
+last_replication_status
+preferred_home_relay
+previous_home_relay
+```
+
+The local plaintext config should remain minimal:
+
+```yaml
+nsec: nsec1...
+home_relay: wss://relay.getsafebox.app
+```
+
+The richer policy can live in encrypted relay-backed records.
+
+## Failure modes
+
+### Target relay accepts some events but not all
+
+Replication should eventually verify target visibility and report missing event
+IDs.
+
+### Source relay is stale
+
+Replicating from a stale source can propagate stale state. Operators should
+choose the freshest source relay, especially for proof events.
+
+### Relays disagree
+
+Acorn should prefer deterministic merge rules:
+
+- dedupe exact events by event ID;
+- for replaceable events, prefer the latest valid event by Nostr rules;
+- for proof spend state, ask the mint.
+
+### Relay deletes or censors events
+
+Replication to another relay is the primary escape path. A future pool mode
+should make this less manual.
+
+## Near-term implementation roadmap
+
+### Already implemented
+
+- `acorn replicate --target <relay>`
+- source relay override;
+- kind override;
+- confirmation prompt;
+- JSON output;
+- default inclusion of deletion events.
+
+### Next candidates
+
+1. `acorn relay diff`
+2. `acorn relay verify`
+3. `acorn relay promote`
+4. encrypted `relay_pool` reserved record
+5. pool read mode for records and proofs
+6. pool write mode for critical wallet state
+7. proof-state epoch or latest-proof pointer
+
+## Operator rule of thumb
+
+Use this mental model:
+
+```text
+replicate like ZFS send;
+verify like scrub;
+promote only after verification;
+repair proofs explicitly;
+trust the mint for spend state.
+```
+

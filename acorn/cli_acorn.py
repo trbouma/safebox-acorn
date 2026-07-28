@@ -1088,6 +1088,54 @@ def recover(seedphrase, homerelay, legacy):
         config_obj['nsec'] = nsec
         write_config()
 
+@click.command("replicate", help="replicate this wallet's signed events to a target relay")
+@click.option('--target', '-t', required=True, help='target relay to copy wallet events to')
+@click.option('--source', '-s', default=None, help='source relay; defaults to home_relay')
+@click.option('--kinds', '-k', default=None, help='comma-separated event kinds; defaults to core Acorn wallet kinds')
+@click.option('--limit', '-l', default=1024, type=int, help='maximum events to query from the source relay')
+@click.option('--yes', '-y', is_flag=True, help='skip confirmation prompt')
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def replicate(target, source, kinds, limit, yes, json_output):
+    target_relay = _normalize_relay(target)
+    source_relay = _normalize_relay(source) if source else HOME_RELAY
+    try:
+        event_kinds = [int(each) for each in _split_csv(kinds)] if kinds else None
+    except ValueError as exc:
+        raise click.ClickException("--kinds must be a comma-separated list of integers") from exc
+
+    if not yes:
+        click.echo("This will copy this wallet's signed relay events to another relay.")
+        click.echo(f"Source: {source_relay}")
+        click.echo(f"Target: {target_relay}")
+        if event_kinds:
+            click.echo(f"Kinds: {', '.join(str(each) for each in event_kinds)}")
+        else:
+            click.echo("Kinds: core Acorn wallet kinds")
+        if not click.confirm("Continue?", default=False):
+            raise click.ClickException("Replication cancelled.")
+
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+    result = asyncio.run(
+        acorn_obj.replicate_to_relay(
+            target_relay=target_relay,
+            source_relay=source_relay,
+            kinds=event_kinds,
+            limit=limit,
+        )
+    )
+
+    if json_output:
+        _emit_json(result)
+        return
+
+    click.echo("Replicated wallet events.")
+    click.echo(f"Source: {result['source_relay']}")
+    click.echo(f"Target: {result['target_relay']}")
+    click.echo(f"Events: {result['replicated']}")
+    click.echo("Kinds:")
+    for kind, count in sorted(result["by_kind"].items(), key=lambda item: int(item[0])):
+        click.echo(f"- {kind}: {count}")
+
 @click.command("checklock", help='acquire lock')
 def check_lock():
     click.echo("check lock")
@@ -1378,6 +1426,7 @@ cli.add_command(accept_token)
 cli.add_command(issue_token)
 cli.add_command(send)
 cli.add_command(recover)
+cli.add_command(replicate)
 cli.add_command(set_owner)
 cli.add_command(dm_recipient)
 cli.add_command(stx_recipient)

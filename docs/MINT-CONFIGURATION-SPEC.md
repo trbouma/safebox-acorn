@@ -1,0 +1,160 @@
+# Acorn Mint Configuration Specification
+
+## Summary
+
+Acorn uses a home mint for Cashu deposit and wallet operations. The home mint
+must be explicit enough for users to understand where deposits are requested,
+while still allowing the local config to remain minimal.
+
+## Terms
+
+### Mint
+
+A Cashu mint issues and redeems ecash proofs.
+
+Example:
+
+```text
+https://mint.getsafebox.app
+```
+
+### Home mint
+
+The home mint is the default mint Acorn uses when a command does not provide an
+explicit mint.
+
+## Mint fallback chain
+
+Acorn resolves the effective mint in this order:
+
+```text
+explicit command mint
+→ wallet record mint loaded by load_data()
+→ constructor mints[0]
+→ DEFAULT_HOME_MINT
+```
+
+The current default home mint constant is:
+
+```text
+https://mint.getsafebox.app
+```
+
+## Where the home mint is stored
+
+When a wallet is created, Acorn writes the home mint into the encrypted wallet
+record as a tag:
+
+```python
+["mint", self.mints[0]]
+```
+
+On startup, `load_data()` reads the encrypted wallet record and sets:
+
+```python
+self.home_mint = each[1]
+```
+
+where `each` is the wallet tag whose first value is `"mint"`.
+
+## Constructor behavior
+
+When an `Acorn` object is created, it initializes:
+
+```python
+self.mints = mints or [DEFAULT_HOME_MINT]
+self.home_mint = self.mints[0]
+```
+
+This gives the object a usable home mint before wallet metadata has been loaded.
+If wallet metadata is present, `load_data()` can override this value with the
+stored wallet mint.
+
+## CLI behavior
+
+The CLI default mint list is:
+
+```python
+["https://mint.getsafebox.app"]
+```
+
+The user can inspect the effective wallet-loaded mint with:
+
+```sh
+acorn set --show-mint
+```
+
+Example output:
+
+```text
+home_mint: https://mint.getsafebox.app
+```
+
+## Deposit behavior
+
+When running:
+
+```sh
+acorn deposit 21
+```
+
+Acorn uses the effective home mint and prints it before generating the invoice:
+
+```text
+amount: 21 mint:https://mint.getsafebox.app
+```
+
+The user may override the mint for a single deposit:
+
+```sh
+acorn deposit 21 --mint https://mint.example.com
+```
+
+Mint values are normalized so a bare hostname becomes HTTPS.
+
+## Mint normalization
+
+Mint values are normalized as follows:
+
+- leading and trailing whitespace is removed;
+- if the value starts with `https://`, keep it;
+- if the value starts with `http://`, keep it;
+- otherwise prefix `https://`.
+
+Examples:
+
+```text
+mint.getsafebox.app          -> https://mint.getsafebox.app
+https://mint.getsafebox.app  -> https://mint.getsafebox.app
+http://localhost:3338        -> http://localhost:3338
+```
+
+## Deposit success output
+
+After a deposit confirms, the CLI should print a human-readable summary:
+
+```text
+Deposit confirmed.
+Amount: 21 sats
+Mint: https://mint.getsafebox.app
+Balance: 32582 sats in 16 proofs
+```
+
+It should not print the paid BOLT11 invoice as the success message.
+
+## Security and operational considerations
+
+- Different mints have different trust and availability properties.
+- A home mint can fail, disappear, refuse redemption, or behave adversarially.
+- Wallet proofs are mint-specific.
+- Applications should make the effective mint visible before deposit requests.
+- Future multi-mint support should avoid assuming one mint forever.
+
+## Open questions
+
+- Whether home mint should become an encrypted reserved record separate from the
+  wallet record.
+- Whether `acorn set --mint` should update the encrypted wallet mint, not just
+  local CLI config.
+- Whether multi-mint policy should be exposed as a first-class component API.
+
