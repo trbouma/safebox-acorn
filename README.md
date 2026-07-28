@@ -12,6 +12,7 @@ without requiring the Safebox web application.
 
 ## Specifications
 
+- [Acorn Product North Star](./docs/ACORN-PRODUCT-NORTH-STAR.md)
 - [Acorn Component Boundary](./docs/ACORN-COMPONENT-BOUNDARY.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)

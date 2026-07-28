@@ -335,6 +335,54 @@ visible.
 Relays and blob servers can refuse service, delete data, censor events, or be
 unavailable. Encryption protects confidentiality, not availability.
 
+### Quantum-safe cryptography
+
+The current private record format relies on Nostr-compatible classical key
+material and NIP-44 encryption for record metadata. Blob content is encrypted
+with AES-256-GCM using random symmetric keys.
+
+This should not be described as fully quantum-safe.
+
+Acorn does, however, need a quantum-safe migration path because private records
+and recovery context may be long-lived. A future-compatible posture should
+include:
+
+- cryptographic agility in record metadata;
+- explicit algorithm identifiers;
+- hybrid classical/post-quantum wrapping where practical;
+- test vectors for every supported encryption profile;
+- optional support until compatibility is mature;
+- clear distinction between experimental PQC and stable record formats.
+
+Acorn currently contains Open Quantum Safe (`liboqs` / `liboqs-python`) related
+code paths for experimental post-quantum signatures and KEM-assisted flows. Those
+dependencies should be treated as experimental until the project documents a
+known-good version matrix, conformance tests, and stable interoperability
+behavior.
+
+The desired long-term posture is:
+
+```text
+classical compatibility now;
+hybrid protection where practical;
+post-quantum agility over premature claims.
+```
+
+Future record formats may add a versioned encryption profile such as:
+
+```json
+{
+  "profile": "acorn-record-v2-hybrid",
+  "metadata_alg": "nip44-v2",
+  "blob_alg": "aes-256-gcm",
+  "kem_alg": "ML-KEM-768",
+  "mode": "hybrid"
+}
+```
+
+Any such profile must preserve recoverability and avoid silently breaking older
+clients.
+
 ### Deterministic tag correlation
 
 The same label under the same key produces the same `d` tag hash. This enables

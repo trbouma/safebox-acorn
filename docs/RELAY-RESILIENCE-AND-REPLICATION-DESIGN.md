@@ -55,6 +55,31 @@ The analogy is imperfect but helpful. Acorn's replication unit is a signed Nostr
 event, not a filesystem block. The important invariant is that signed events can
 be copied without rewriting their identity.
 
+## Swarm-style encrypted replicas
+
+Another useful mental model is a swarm of encrypted replicas. One relay can be
+the primary home for a wallet, but additional relays can hold encrypted copies
+of the same signed event set. Those relays improve availability without
+receiving plaintext access.
+
+The goal is not a shared folder or a shared account. The goal is isolated,
+encrypted tenant-like state that can be mirrored across infrastructure chosen by
+the user.
+
+In Acorn terms:
+
+```text
+primary safe       -> home_relay
+mirror safe        -> replicated relay
+swarm              -> trusted relay pool
+tenant             -> wallet identity and encrypted record namespace
+encrypted mirror   -> copied signed encrypted Nostr events
+recovery context   -> home_relay + seed phrase + nsec + runbook
+```
+
+This framing keeps the focus on continuity. A single relay should not be the
+only route back to a user's records, wallet metadata, and recovery context.
+
 ## Core principles
 
 ### Signed events are replication units
@@ -227,6 +252,45 @@ Checks could include:
 - event ID comparison between relays;
 - proof state check against mint.
 
+## Relay-native replication and negentropy
+
+Acorn-level replication is intentionally simple: query signed events from a
+source relay and publish those same signed events to a target relay. This works
+with ordinary Nostr relay behavior and does not require special backend support.
+
+Some relay implementations support more efficient backend or protocol-level
+synchronization. For example, strfry supports negentropy sync, and NIP-77
+defines a Negentropy set-reconciliation protocol for efficiently determining
+which events differ between two event sets.
+
+These mechanisms are complementary to Acorn's replication model:
+
+```text
+Acorn replicate
+  application/component-level copy of the user's signed event set
+
+Relay-native sync / negentropy
+  relay/backend-level set reconciliation and efficient event transfer
+```
+
+Where available, relay-native sync can make replication faster and more
+complete, especially for large event sets or ongoing relay mirroring. Acorn
+should not require it, because not every relay supports the same sync protocol.
+But Acorn should be designed to take advantage of it later.
+
+Future Acorn relay tooling could:
+
+- detect whether a relay advertises NIP-77 or negentropy support;
+- prefer negentropy for relay diff/scrub when supported;
+- fall back to ordinary Nostr filters when unsupported;
+- expose operator guidance for strfry-style backend sync;
+- verify that relay-native sync actually produced the expected event set.
+
+The invariant remains the same: Acorn cares about the signed event set becoming
+visible on the target relay. The transport mechanism can be ordinary query and
+publish, negentropy reconciliation, relay backend sync, or another future sync
+method.
+
 ### 5. Relay diff
 
 Compare two relays before promotion.
@@ -330,6 +394,27 @@ Acorn should prefer deterministic merge rules:
 Replication to another relay is the primary escape path. A future pool mode
 should make this less manual.
 
+## Practical security boundaries
+
+Relay-backed does not have to mean public-internet hosted. Acorn should support
+a range of deployment postures.
+
+For ordinary data, a public or hosted relay may be acceptable because Acorn
+records are encrypted before publication. For highly sensitive data, the user
+can choose a stricter relay boundary:
+
+- a relay behind a firewall;
+- a relay reachable only on a private LAN;
+- a relay inside a FreeBSD jail;
+- a relay on a personal appliance;
+- a relay reachable only over VPN, Tor, WireGuard, or Tailscale;
+- a relay mirrored between trusted homes, offices, or jurisdictions.
+
+This is part of the sovereignty model. Security is not delegated entirely to a
+corporate provider. The user can decide where encrypted protocol state lives,
+who operates the infrastructure, and how many independent locations should hold
+replicas.
+
 ## Near-term implementation roadmap
 
 ### Already implemented
@@ -362,4 +447,3 @@ promote only after verification;
 repair proofs explicitly;
 trust the mint for spend state.
 ```
-
