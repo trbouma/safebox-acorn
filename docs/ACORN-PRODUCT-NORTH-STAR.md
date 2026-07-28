@@ -18,6 +18,12 @@ across applications and infrastructure without being trapped by any single app,
 relay, mint, or service provider.
 ```
 
+Put another way:
+
+```text
+Acorn is a sovereign protocol component for building sovereign data havens.
+```
+
 ## Why Acorn exists
 
 Most applications bind users to infrastructure controlled by the application
@@ -74,6 +80,18 @@ one box, vendor, or deployment path.
 ## Sovereign protocol component
 
 A sovereign protocol component has several properties.
+
+For Acorn, the term means reusable software that gives applications portable
+identity, encrypted user-controlled state, recovery, and migration across
+replaceable infrastructure.
+
+This is different from an ordinary library or backend module. A library provides
+functions. A backend module usually serves one application. A sovereign protocol
+component carries interoperable user state across applications, relays, mints,
+devices, and providers.
+
+The continuity boundary is the user and their cryptographic material, not the
+application operator.
 
 ### It carries its own identity
 
