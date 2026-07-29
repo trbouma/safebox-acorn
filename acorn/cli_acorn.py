@@ -1118,9 +1118,161 @@ def balance(json_output):
     balance_sats = acorn_obj.get_balance()
     proof_count = len(acorn_obj.proofs)
     if json_output:
-        _emit_json({"balance": balance_sats, "unit": "sat", "proof_count": proof_count})
+        _emit_json({
+            "balance": balance_sats,
+            "unit": "sat",
+            "proof_count": proof_count,
+        })
     else:
         click.echo(f"{balance_sats} sats in {proof_count} proofs.")
+
+@click.command("receive-ecash", help="Receive kind 7378 ecash transfers into this Acorn")
+@click.option("--since", default=None, type=int, help="Override incoming ecash transfer cursor.")
+@click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 7378 ecash transfers.")
+@click.option("--receive-nsec", default=None, help="Transient receiving nsec used only to decrypt incoming transfers; it is not stored.")
+@click.option("--event-id", default=None, help="Receive a specific kind 7378 event id; bypasses recipient tag and cursor query.")
+@click.option("--no-advance", is_flag=True, help="Do not advance the stored receive cursor.")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def receive_ecash(since, relay, receive_nsec, event_id, no_advance, json_output):
+    sweep_relays = [_normalize_relay(relay)] if relay else None
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
+    try:
+        asyncio.run(acorn_obj.load_data())
+        result = asyncio.run(
+            acorn_obj.sweep_ecash_transfers(
+                since=since,
+                relays=sweep_relays,
+                advance_cursor=not no_advance,
+                receive_nsec=receive_nsec,
+                event_id=event_id,
+            )
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Receive ecash failed: {exc}") from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+
+    if receive_nsec:
+        click.echo("Used transient receive key; key was not stored.")
+    relay_discovery = result.get("relay_discovery") or {}
+    if relay_discovery:
+        if relay_discovery.get("verified") and relay_discovery.get("relays"):
+            click.echo(f"Resolved receive NIP-05: {relay_discovery.get('nip05')}")
+            click.echo(f"Receive relays: {', '.join(relay_discovery.get('relays'))}")
+        else:
+            click.echo(f"Receive relay discovery: {relay_discovery.get('reason', 'not available')}")
+    if result.get("event_id"):
+        click.echo(f"Direct event lookup: {result['event_id']}")
+    click.echo(f"Queried {result['queried']} transfer event(s).")
+    if result["accepted_count"]:
+        click.echo(
+            f"Accepted {result['accepted_amount']} sats from "
+            f"{result['accepted_count']} incoming ecash transfer(s)."
+        )
+    else:
+        click.echo("No incoming ecash accepted.")
+    if result.get("failed"):
+        click.echo(f"Stopped after {len(result['failed'])} failed transfer event(s).")
+
+@click.command("delete-ecash-transfers", help="Delete kind 7378 ecash transfer events authored by this Acorn")
+@click.option("--relay", "-r", default=None, help="Relay to delete transfer events from; defaults to home relay")
+@click.option("--recipient", default=None, help="Only delete transfers addressed to this nip05, npub, or pubkey")
+@click.option("--since", default=None, type=int, help="Only match transfer events since this timestamp")
+@click.option("--until", default=None, type=int, help="Only match transfer events until this timestamp")
+@click.option("--limit", default=1024, type=int, help="Maximum transfer events to query")
+@click.option("--yes", "-y", is_flag=True, help="Skip confirmation prompt")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output")
+def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_output):
+    delete_relays = [_normalize_relay(relay)] if relay else None
+    if not yes and not json_output:
+        click.echo("This will publish a NIP-09 deletion request for kind 7378 ecash transfer events authored by this wallet.")
+        click.echo(f"Relay: {delete_relays[0] if delete_relays else HOME_RELAY}")
+        if recipient:
+            click.echo(f"Recipient filter: {recipient}")
+        if since:
+            click.echo(f"Since: {since}")
+        if until:
+            click.echo(f"Until: {until}")
+        if not click.confirm("Continue?", default=False):
+            raise click.ClickException("Delete cancelled.")
+    elif not yes and json_output:
+        _emit_json({
+            "status": "ERROR",
+            "reason": "confirmation_required",
+            "message": "Re-run with --yes to delete ecash transfer events non-interactively.",
+        })
+        return
+
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
+    try:
+        asyncio.run(acorn_obj.load_data())
+        result = asyncio.run(
+            acorn_obj.delete_ecash_transfer_events(
+                relays=delete_relays,
+                recipient=recipient,
+                since=since,
+                until=until,
+                limit=limit,
+            )
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Delete ecash transfers failed: {exc}") from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+
+    click.echo(f"Matched {result['matched']} kind 7378 transfer event(s).")
+    if result["deleted"]:
+        click.echo(f"Published delete request: {result['delete_event_id']}")
+    else:
+        click.echo("No delete request published.")
+
+@click.command("ecash-transfer", help="Send ecash to another Acorn using kind 7378")
+@click.argument('amount', type=int)
+@click.argument('recipient')
+@click.option('--relay', '-r', default=None, help='relay to publish the transfer to; defaults to home relay')
+@click.option('--comment', '-c', default='ecash transfer', help='transfer comment')
+@click.option('--json', "json_output", is_flag=True, help="Emit JSON output.")
+def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str, json_output: bool):
+    transfer_relay = _normalize_relay(relay) if relay else None
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
+    try:
+        asyncio.run(acorn_obj.load_data())
+        result = asyncio.run(
+            acorn_obj.send_ecash_transfer(
+                amount=amount,
+                recipient=recipient,
+                relay=transfer_relay,
+                comment=comment,
+            )
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Ecash transfer failed: {exc}") from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+
+    click.echo("Ecash transfer published.")
+    click.echo(f"Kind: {result['kind']}")
+    click.echo(f"Event: {result['event_id']}")
+    click.echo(f"Relays: {', '.join(result['relays'])}")
+    if result.get("recipient_relays") and not transfer_relay:
+        click.echo("Relay source: recipient NIP-05")
+    click.echo(f"Recipient: {result['recipient_pubkey']}")
+    click.echo(f"Amount: {result['amount']} {result['unit']}")
 
 @click.command("zap", help="Zap amount to event or to recipient")
 @click.argument('amount', default=1)
@@ -1632,6 +1784,9 @@ cli.add_command(delete_record)
 cli.add_command(delete_kind)
 cli.add_command(get_user_records)
 cli.add_command(balance)
+cli.add_command(ecash_transfer)
+cli.add_command(receive_ecash)
+cli.add_command(delete_ecash_transfers)
 cli.add_command(zap)
 cli.add_command(accept_token)
 cli.add_command(issue_token)

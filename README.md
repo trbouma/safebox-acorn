@@ -22,6 +22,7 @@ without requiring the Safebox web application.
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)
 - [Mint Configuration Specification](./docs/MINT-CONFIGURATION-SPEC.md)
 - [CLI Contract](./docs/CLI-CONTRACT.md)
+- [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)

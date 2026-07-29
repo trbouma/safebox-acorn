@@ -62,6 +62,8 @@ import mimetypes
 
 RECORD_LIMIT: int = 1024
 PROOF_LIMIT: int = 32
+ECASH_TRANSFER_KIND: int = 7378
+ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
     "RECEIVE_PROOF_MAINTENANCE_ENABLED",
     "true",
@@ -2784,7 +2786,382 @@ class Acorn:
 
         
         return self.proofs
-    
+
+    def _event_timestamp(self, event: Event) -> int:
+        created_at = event.created_at
+        if hasattr(created_at, "timestamp"):
+            return int(created_at.timestamp())
+        return int(created_at)
+
+    async def _resolve_receive_relays_from_kind0(
+        self,
+        receive_pubkey: str,
+        lookup_relays: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Find NIP-05 relay hints for a receiving pubkey via its kind 0 event."""
+
+        relay_pool = self._normalize_relays(lookup_relays or self._build_discovery_relays())
+        if not relay_pool:
+            return {
+                "receive_pubkey": receive_pubkey,
+                "lookup_relays": [],
+                "nip05": None,
+                "relays": [],
+                "verified": False,
+                "reason": "no_lookup_relays",
+            }
+
+        query_filter = [{
+            "limit": 1,
+            "authors": [receive_pubkey],
+            "kinds": [0],
+        }]
+
+        async with ClientPool(relay_pool) as c:
+            events: List[Event] = await c.query(query_filter)
+
+        if not events:
+            return {
+                "receive_pubkey": receive_pubkey,
+                "lookup_relays": relay_pool,
+                "nip05": None,
+                "relays": [],
+                "verified": False,
+                "reason": "kind0_not_found",
+            }
+
+        event = sorted(events, key=self._event_timestamp, reverse=True)[0]
+        try:
+            profile = json.loads(event.content)
+        except (json.JSONDecodeError, TypeError) as exc:
+            return {
+                "receive_pubkey": receive_pubkey,
+                "lookup_relays": relay_pool,
+                "kind0_event_id": str(event.id),
+                "nip05": None,
+                "relays": [],
+                "verified": False,
+                "reason": f"kind0_invalid_json: {exc}",
+            }
+
+        nip05 = profile.get("nip05") or profile.get("NIP05")
+        if not nip05:
+            return {
+                "receive_pubkey": receive_pubkey,
+                "lookup_relays": relay_pool,
+                "kind0_event_id": str(event.id),
+                "nip05": None,
+                "relays": [],
+                "verified": False,
+                "reason": "nip05_not_found",
+            }
+
+        resolved_pubkey, resolved_relays = nip05_to_npub(str(nip05))
+        if not resolved_pubkey or str(resolved_pubkey).lower() != str(receive_pubkey).lower():
+            return {
+                "receive_pubkey": receive_pubkey,
+                "lookup_relays": relay_pool,
+                "kind0_event_id": str(event.id),
+                "nip05": str(nip05),
+                "relays": [],
+                "verified": False,
+                "reason": "nip05_pubkey_mismatch",
+                "resolved_pubkey": str(resolved_pubkey).lower() if resolved_pubkey else None,
+            }
+
+        return {
+            "receive_pubkey": receive_pubkey,
+            "lookup_relays": relay_pool,
+            "kind0_event_id": str(event.id),
+            "nip05": str(nip05),
+            "relays": self._normalize_relays(resolved_relays),
+            "verified": True,
+        }
+
+    async def send_ecash_transfer(
+        self,
+        amount: int,
+        recipient: str,
+        relay: str | None = None,
+        comment: str = "ecash transfer",
+        nonce: str | None = None,
+    ) -> Dict[str, Any]:
+        """Send ecash to another Acorn via encrypted kind 7378 relay event."""
+
+        if int(amount) <= 0:
+            raise ValueError("amount must be positive")
+
+        recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(recipient)
+        transfer_relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
+        transfer_relays = self._normalize_relays(transfer_relay_candidates)
+        if not transfer_relays:
+            raise ValueError("No relay available for ecash transfer")
+        nonce = nonce or secrets.token_hex(16)
+
+        token = await self.issue_token(int(amount), comment=comment)
+
+        payload = {
+            "version": 1,
+            "type": "cashu-token",
+            "token": token,
+            "mint": self.home_mint,
+            "amount": int(amount),
+            "unit": "sat",
+            "comment": comment,
+            "nonce": nonce,
+        }
+
+        my_enc = NIP44Encrypt(self.k)
+        encrypted_payload = my_enc.encrypt(json.dumps(payload), to_pub_k=recipient_pubkey)
+        tags = [
+            ["p", recipient_pubkey],
+            ["protocol", "acorn-ecash-transfer"],
+            ["v", "1"],
+            ["mint", self.home_mint],
+            ["amount", str(int(amount))],
+            ["unit", "sat"],
+            ["nonce", nonce],
+        ]
+
+        async with ClientPool(transfer_relays) as c:
+            n_msg = Event(
+                kind=ECASH_TRANSFER_KIND,
+                content=encrypted_payload,
+                pub_key=self.pubkey_hex,
+                tags=tags,
+            )
+            n_msg.sign(self.privkey_hex)
+            c.publish(n_msg)
+            await asyncio.sleep(0.2)
+
+        return {
+            "status": "OK",
+            "kind": ECASH_TRANSFER_KIND,
+            "event_id": n_msg.id,
+            "recipient_pubkey": recipient_pubkey,
+            "relays": transfer_relays,
+            "recipient_relays": recipient_relays,
+            "amount": int(amount),
+            "unit": "sat",
+            "mint": self.home_mint,
+            "nonce": nonce,
+        }
+
+    async def sweep_ecash_transfers(
+        self,
+        since: int | None = None,
+        relays: List[str] | None = None,
+        limit: int = RECORD_LIMIT,
+        advance_cursor: bool = True,
+        receive_nsec: str | None = None,
+        event_id: str | None = None,
+    ) -> Dict[str, Any]:
+        """Accept encrypted kind 7378 ecash transfers addressed to this wallet."""
+
+        receive_key = Keys(priv_k=receive_nsec) if receive_nsec else self.k
+        receive_pubkey = receive_key.public_key_hex()
+        target_event_id = str(event_id or "").strip()
+        if target_event_id.startswith("note"):
+            target_event_id = bech32_to_hex(target_event_id)
+        if target_event_id:
+            target_event_id = target_event_id.lower()
+            if len(target_event_id) != 64 or not all(ch in string.hexdigits for ch in target_event_id):
+                raise ValueError("event_id must be note1... or 64-char hex")
+        relay_discovery: Dict[str, Any] | None = None
+        if relays:
+            relay_pool = self._normalize_relays(relays)
+        elif receive_nsec:
+            relay_discovery = await self._resolve_receive_relays_from_kind0(receive_pubkey)
+            relay_pool = relay_discovery.get("relays") or self._normalize_relays([self.home_relay])
+        else:
+            relay_pool = self._normalize_relays([self.home_relay])
+        cursor_label = (
+            ECASH_TRANSFER_CURSOR_LABEL
+            if receive_pubkey == self.pubkey_hex
+            else f"{ECASH_TRANSFER_CURSOR_LABEL}:{receive_pubkey}"
+        )
+        cursor_from_record = False
+        cursor = int(since or 0)
+        if since is None:
+            cursor_from_record = True
+            try:
+                cursor_raw = await self.get_wallet_info(cursor_label, record_kind=37376)
+                cursor = int(cursor_raw) if cursor_raw else 0
+            except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
+                self.logger.debug("op=sweep_ecash_transfers status=no_cursor error=%s", exc)
+                cursor = 0
+
+        if target_event_id:
+            query_filter = [{
+                "limit": 1,
+                "ids": [target_event_id],
+                "kinds": [ECASH_TRANSFER_KIND],
+            }]
+        else:
+            query_filter = [{
+                "limit": int(limit),
+                "kinds": [ECASH_TRANSFER_KIND],
+                "#p": [receive_pubkey],
+            }]
+        if cursor > 0 and not target_event_id:
+            query_filter[0]["since"] = cursor + 1
+
+        async with ClientPool(relay_pool) as c:
+            events: List[Event] = await c.query(query_filter)
+
+        events_sorted = sorted(events, key=self._event_timestamp)
+        receive_enc = NIP44Encrypt(receive_key)
+        accepted: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
+        latest_processed = cursor
+
+        for each_event in events_sorted:
+            event_ts = self._event_timestamp(each_event)
+            try:
+                decrypted = receive_enc.decrypt(each_event.content, each_event.pub_key)
+                payload = json.loads(decrypted)
+                if payload.get("type") != "cashu-token":
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "unsupported_payload_type",
+                        "timestamp": event_ts,
+                    })
+                    latest_processed = max(latest_processed, event_ts)
+                    continue
+
+                token = payload.get("token")
+                if not token:
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "missing_token",
+                        "timestamp": event_ts,
+                    })
+                    latest_processed = max(latest_processed, event_ts)
+                    continue
+
+                comment = payload.get("comment") or "ecash transfer received"
+                history_comment = f"ecash transfer received from {each_event.pub_key[:12]}: {comment}"
+                msg_out, token_amount = await self.accept_token(
+                    cashu_token=token,
+                    comment=history_comment,
+                    tendered_amount=payload.get("amount"),
+                    tendered_currency=payload.get("unit", "SAT").upper(),
+                )
+                accepted.append({
+                    "event_id": each_event.id,
+                    "sender_pubkey": each_event.pub_key,
+                    "timestamp": event_ts,
+                    "amount": token_amount,
+                    "unit": "sat",
+                    "message": msg_out,
+                    "nonce": payload.get("nonce"),
+                })
+                latest_processed = max(latest_processed, event_ts)
+            except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
+                failed.append({
+                    "event_id": each_event.id,
+                    "sender_pubkey": each_event.pub_key,
+                    "timestamp": event_ts,
+                    "reason": str(exc),
+                })
+                self.logger.warning(
+                    "op=sweep_ecash_transfers status=failed event_id=%s error=%s",
+                    each_event.id,
+                    exc,
+                )
+                break
+
+        if advance_cursor and latest_processed > cursor:
+            await self.set_wallet_info(cursor_label, str(latest_processed), record_kind=37376)
+
+        return {
+            "status": "OK" if not failed else "PARTIAL",
+            "kind": ECASH_TRANSFER_KIND,
+            "relays": relay_pool,
+            "relay_discovery": relay_discovery,
+            "cursor_label": cursor_label,
+            "query_filter": query_filter,
+            "event_id": target_event_id or None,
+            "receive_pubkey": receive_pubkey,
+            "wallet_pubkey": self.pubkey_hex,
+            "used_transient_receive_key": bool(receive_nsec),
+            "since": cursor,
+            "cursor_from_record": cursor_from_record,
+            "latest_processed": latest_processed,
+            "queried": len(events_sorted),
+            "accepted": accepted,
+            "skipped": skipped,
+            "failed": failed,
+            "accepted_count": len(accepted),
+            "accepted_amount": sum(each["amount"] for each in accepted),
+        }
+
+    async def delete_ecash_transfer_events(
+        self,
+        relays: List[str] | None = None,
+        recipient: str | None = None,
+        since: int | None = None,
+        until: int | None = None,
+        limit: int = RECORD_LIMIT,
+    ) -> Dict[str, Any]:
+        """Delete kind 7378 transfer events authored by this wallet."""
+
+        relay_pool = self._normalize_relays(relays or [self.home_relay])
+        recipient_pubkey = self._resolve_pubkey_identifier(recipient) if recipient else None
+        query_filter: Dict[str, Any] = {
+            "limit": int(limit),
+            "authors": [self.pubkey_hex],
+            "kinds": [ECASH_TRANSFER_KIND],
+        }
+        if recipient_pubkey:
+            query_filter["#p"] = [recipient_pubkey]
+        if since is not None:
+            query_filter["since"] = int(since)
+        if until is not None:
+            query_filter["until"] = int(until)
+
+        async with ClientPool(relay_pool) as c:
+            events: List[Event] = await c.query([query_filter])
+
+        events_sorted = sorted(events, key=self._event_timestamp, reverse=True)
+        event_ids: List[str] = []
+        for each_event in events_sorted:
+            event_id = str(each_event.id)
+            if event_id not in event_ids:
+                event_ids.append(event_id)
+
+        if not event_ids:
+            return {
+                "status": "OK",
+                "kind": ECASH_TRANSFER_KIND,
+                "relays": relay_pool,
+                "recipient_pubkey": recipient_pubkey,
+                "matched": 0,
+                "deleted": 0,
+                "event_ids": [],
+                "delete_event_id": None,
+            }
+
+        delete_result = await self.publish_deletion_request(
+            event_ids=event_ids,
+            kinds=[ECASH_TRANSFER_KIND],
+            reason="delete acorn ecash transfer events",
+            relays=relay_pool,
+        )
+
+        return {
+            "status": "OK",
+            "kind": ECASH_TRANSFER_KIND,
+            "relays": relay_pool,
+            "recipient_pubkey": recipient_pubkey,
+            "matched": len(event_ids),
+            "deleted": len(event_ids),
+            "event_ids": event_ids,
+            "delete_event_id": delete_result.get("event_id"),
+            "delete_request": delete_result,
+        }
+            
     async def get_ecash_latest(self,since: int|None = None, relays: List[str]|None=None, nonce:str = None):
         ecash_out = []
         ecash_record = {}
@@ -7645,16 +8022,22 @@ class Acorn:
         return social_profile       
 
     def _resolve_pubkey_identifier(self, identifier: str) -> str:
+        pubhex, _ = self._resolve_pubkey_and_relays(identifier)
+        return pubhex
+
+    def _resolve_pubkey_and_relays(self, identifier: str) -> tuple[str, List[str]]:
         value = (identifier or "").strip()
         if not value:
             raise ValueError("Missing identifier")
         if "@" in value:
-            pubhex, _ = nip05_to_npub(value)
-            return str(pubhex).lower()
+            pubhex, relays = nip05_to_npub(value)
+            if not pubhex:
+                raise ValueError(f"Unable to resolve NIP-05 identifier: {value}")
+            return str(pubhex).lower(), self._normalize_relays(relays)
         if value.startswith("npub"):
-            return bech32_to_hex(value).lower()
+            return bech32_to_hex(value).lower(), []
         if len(value) == 64 and all(ch in string.hexdigits for ch in value):
-            return value.lower()
+            return value.lower(), []
         raise ValueError("Identifier must be nip05, npub, or 64-char pubhex")
 
     async def _get_latest_contacts_event(self, relays: List[str] | None = None) -> Event | None:
