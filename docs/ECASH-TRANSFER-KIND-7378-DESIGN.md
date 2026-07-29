@@ -92,6 +92,29 @@ clients can then query by recipient:
 
 ## Recommended event shape
 
+The production/default transfer format is gift-wrapped. The public relay event
+is a kind `7378` wrapper authored by a transient key and addressed to the
+recipient with a `p` tag:
+
+```json
+{
+  "kind": 7378,
+  "pubkey": "<transient_pubkey>",
+  "content": "<encrypted gift wrap>",
+  "tags": [
+    ["p", "<recipient_pubkey>"]
+  ]
+}
+```
+
+Inside the gift wrap, the recipient can recover the sender-authored transfer
+payload. Public observers can see that a transient key published to the
+recipient, but they cannot directly correlate the sender wallet key to the
+recipient from the outer event.
+
+For debugging and legacy compatibility, Acorn may also support direct kind
+`7378` events:
+
 ```json
 {
   "kind": 7378,
@@ -110,6 +133,8 @@ clients can then query by recipient:
 
 The `mint`, `amount`, and `unit` tags are hints for indexing, display, and
 debugging. They are not authoritative. The encrypted payload is authoritative.
+In gift-wrapped mode these hints should not be placed on the outer event,
+because that would leak transfer metadata.
 
 ## Payload
 
@@ -141,10 +166,17 @@ The content should be encrypted to the recipient. The first implementation can
 use the same NIP-44 encryption convention already used by Acorn private wallet
 records.
 
-The recipient decrypts using the private key for the resolved receiving
-identity. That may be the Acorn wallet key, or it may be a transient receiving
-key supplied only for the receive operation. If decryption fails, the event is
-ignored or reported as an unreadable transfer candidate.
+By default, the transfer should be NIP-59 style gift-wrapped using NIP-44
+encryption. The recipient decrypts the outer wrapper using the private key for
+the resolved receiving identity, then decrypts the sealed inner event to obtain
+the sender-authored transfer payload.
+
+For direct mode, the event `content` itself is NIP-44 encrypted to the
+recipient.
+
+The receiving identity may be the Acorn wallet key, or it may be a transient
+receiving key supplied only for the receive operation. If decryption fails, the
+event is ignored or reported as an unreadable transfer candidate.
 
 The sender should never publish unencrypted proofs or tokens in kind `7378`.
 
@@ -270,6 +302,12 @@ Send an Acorn-to-Acorn ecash transfer:
 acorn ecash-transfer 21 <recipient-npub-or-nip05> --relay wss://relay.example.com
 ```
 
+Gift wrapping is the default. For direct sender-authored debugging mode:
+
+```sh
+acorn ecash-transfer 21 <recipient-npub-or-nip05> --direct
+```
+
 Receive opportunistically before showing balance:
 
 ```sh
@@ -363,6 +401,11 @@ acorn delete-ecash-transfers --recipient alice@example.com
 Important caveat: NIP-09 is a deletion request, not a universal erasure
 guarantee. Relays and clients decide how to honor deletion events, and remote
 caches may already have seen the encrypted transfer event.
+
+Gift-wrapped transfers are authored by a transient outer key. Unless the sender
+retains that transient private key, the sender cannot later publish an
+authoritative deletion request for the outer event. This is the main operational
+tradeoff for hiding sender-recipient correlation.
 
 ## Acknowledgements
 

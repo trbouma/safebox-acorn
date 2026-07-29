@@ -1179,7 +1179,7 @@ def receive_ecash(since, relay, receive_nsec, event_id, no_advance, json_output)
     if result.get("failed"):
         click.echo(f"Stopped after {len(result['failed'])} failed transfer event(s).")
 
-@click.command("delete-ecash-transfers", help="Delete kind 7378 ecash transfer events authored by this Acorn")
+@click.command("delete-ecash-transfers", help="Delete direct kind 7378 ecash transfer events authored by this Acorn")
 @click.option("--relay", "-r", default=None, help="Relay to delete transfer events from; defaults to home relay")
 @click.option("--recipient", default=None, help="Only delete transfers addressed to this nip05, npub, or pubkey")
 @click.option("--since", default=None, type=int, help="Only match transfer events since this timestamp")
@@ -1190,7 +1190,8 @@ def receive_ecash(since, relay, receive_nsec, event_id, no_advance, json_output)
 def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_output):
     delete_relays = [_normalize_relay(relay)] if relay else None
     if not yes and not json_output:
-        click.echo("This will publish a NIP-09 deletion request for kind 7378 ecash transfer events authored by this wallet.")
+        click.echo("This will publish a NIP-09 deletion request for direct kind 7378 ecash transfer events authored by this wallet.")
+        click.echo("Gift-wrapped transfers use a transient outer key and are not matched by this sender cleanup command.")
         click.echo(f"Relay: {delete_relays[0] if delete_relays else HOME_RELAY}")
         if recipient:
             click.echo(f"Recipient filter: {recipient}")
@@ -1241,8 +1242,9 @@ def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_outp
 @click.argument('recipient')
 @click.option('--relay', '-r', default=None, help='relay to publish the transfer to; defaults to home relay')
 @click.option('--comment', '-c', default='ecash transfer', help='transfer comment')
+@click.option('--direct', is_flag=True, help='Publish direct sender-authored NIP-44 event instead of default gift-wrapped event')
 @click.option('--json', "json_output", is_flag=True, help="Emit JSON output.")
-def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str, json_output: bool):
+def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str, direct: bool, json_output: bool):
     transfer_relay = _normalize_relay(relay) if relay else None
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -1253,6 +1255,7 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
                 recipient=recipient,
                 relay=transfer_relay,
                 comment=comment,
+                direct=direct,
             )
         )
     except Exception as exc:
@@ -1267,12 +1270,15 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
 
     click.echo("Ecash transfer published.")
     click.echo(f"Kind: {result['kind']}")
+    click.echo(f"Mode: {result['mode']}")
     click.echo(f"Event: {result['event_id']}")
     click.echo(f"Relays: {', '.join(result['relays'])}")
     if result.get("recipient_relays") and not transfer_relay:
         click.echo("Relay source: recipient NIP-05")
     click.echo(f"Recipient: {result['recipient_pubkey']}")
     click.echo(f"Amount: {result['amount']} {result['unit']}")
+    if not result.get("deletable_by_sender"):
+        click.echo("Deletion: outer event uses a transient key and is not sender-deletable unless that key is retained.")
 
 @click.command("zap", help="Zap amount to event or to recipient")
 @click.argument('amount', default=1)

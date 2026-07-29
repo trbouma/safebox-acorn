@@ -2885,6 +2885,7 @@ class Acorn:
         relay: str | None = None,
         comment: str = "ecash transfer",
         nonce: str | None = None,
+        direct: bool = False,
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted kind 7378 relay event."""
 
@@ -2911,26 +2912,41 @@ class Acorn:
             "nonce": nonce,
         }
 
-        my_enc = NIP44Encrypt(self.k)
-        encrypted_payload = my_enc.encrypt(json.dumps(payload), to_pub_k=recipient_pubkey)
-        tags = [
-            ["p", recipient_pubkey],
-            ["protocol", "acorn-ecash-transfer"],
-            ["v", "1"],
-            ["mint", self.home_mint],
-            ["amount", str(int(amount))],
-            ["unit", "sat"],
-            ["nonce", nonce],
-        ]
-
         async with ClientPool(transfer_relays) as c:
-            n_msg = Event(
-                kind=ECASH_TRANSFER_KIND,
-                content=encrypted_payload,
-                pub_key=self.pubkey_hex,
-                tags=tags,
-            )
-            n_msg.sign(self.privkey_hex)
+            if direct:
+                my_enc = NIP44Encrypt(self.k)
+                encrypted_payload = my_enc.encrypt(json.dumps(payload), to_pub_k=recipient_pubkey)
+                tags = [
+                    ["p", recipient_pubkey],
+                    ["protocol", "acorn-ecash-transfer"],
+                    ["v", "1"],
+                    ["mint", self.home_mint],
+                    ["amount", str(int(amount))],
+                    ["unit", "sat"],
+                    ["nonce", nonce],
+                ]
+                n_msg = Event(
+                    kind=ECASH_TRANSFER_KIND,
+                    content=encrypted_payload,
+                    pub_key=self.pubkey_hex,
+                    tags=tags,
+                )
+                n_msg.sign(self.privkey_hex)
+                transient_pubkey = None
+            else:
+                my_gift = KindOtherGiftWrap(BasicKeySigner(self.k), kind_gift_wrap=ECASH_TRANSFER_KIND)
+                inner_evt = Event(
+                    kind=ECASH_TRANSFER_KIND,
+                    content=json.dumps(payload),
+                    pub_key=self.pubkey_hex,
+                    tags=[
+                        ["p", recipient_pubkey],
+                        ["protocol", "acorn-ecash-transfer"],
+                        ["v", "1"],
+                    ],
+                )
+                n_msg, transient_key = await my_gift.wrap(inner_evt, to_pub_k=recipient_pubkey)
+                transient_pubkey = transient_key.public_key_hex()
             c.publish(n_msg)
             await asyncio.sleep(0.2)
 
@@ -2941,6 +2957,9 @@ class Acorn:
             "recipient_pubkey": recipient_pubkey,
             "relays": transfer_relays,
             "recipient_relays": recipient_relays,
+            "mode": "direct" if direct else "gift-wrapped",
+            "transient_pubkey": transient_pubkey,
+            "deletable_by_sender": bool(direct),
             "amount": int(amount),
             "unit": "sat",
             "mint": self.home_mint,
@@ -3011,6 +3030,7 @@ class Acorn:
 
         events_sorted = sorted(events, key=self._event_timestamp)
         receive_enc = NIP44Encrypt(receive_key)
+        receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_KIND)
         accepted: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
@@ -3019,7 +3039,20 @@ class Acorn:
         for each_event in events_sorted:
             event_ts = self._event_timestamp(each_event)
             try:
-                decrypted = receive_enc.decrypt(each_event.content, each_event.pub_key)
+                sender_pubkey = each_event.pub_key
+                mode = "direct"
+                try:
+                    unwrapped_event = await receive_gift.unwrap(each_event)
+                    decrypted = unwrapped_event.content
+                    sender_pubkey = unwrapped_event.pub_key
+                    mode = "gift-wrapped"
+                except Exception as unwrap_exc:
+                    self.logger.debug(
+                        "op=sweep_ecash_transfers status=unwrap_fallback event_id=%s error=%s",
+                        each_event.id,
+                        unwrap_exc,
+                    )
+                    decrypted = receive_enc.decrypt(each_event.content, each_event.pub_key)
                 payload = json.loads(decrypted)
                 if payload.get("type") != "cashu-token":
                     skipped.append({
@@ -3041,7 +3074,7 @@ class Acorn:
                     continue
 
                 comment = payload.get("comment") or "ecash transfer received"
-                history_comment = f"ecash transfer received from {each_event.pub_key[:12]}: {comment}"
+                history_comment = f"ecash transfer received from {sender_pubkey[:12]}: {comment}"
                 msg_out, token_amount = await self.accept_token(
                     cashu_token=token,
                     comment=history_comment,
@@ -3050,7 +3083,9 @@ class Acorn:
                 )
                 accepted.append({
                     "event_id": each_event.id,
-                    "sender_pubkey": each_event.pub_key,
+                    "sender_pubkey": sender_pubkey,
+                    "outer_pubkey": each_event.pub_key,
+                    "mode": mode,
                     "timestamp": event_ts,
                     "amount": token_amount,
                     "unit": "sat",
