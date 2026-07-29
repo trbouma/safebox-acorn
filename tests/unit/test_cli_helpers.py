@@ -20,6 +20,14 @@ def test_normalize_relay_adds_wss(monkeypatch, tmp_path):
     assert cli._normalize_relay("ws://localhost:7777") == "ws://localhost:7777"
 
 
+def test_normalize_mint_adds_https(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    assert cli._normalize_mint("mint.example.com") == "https://mint.example.com"
+    assert cli._normalize_mint("https://mint.example.com") == "https://mint.example.com"
+    assert cli._normalize_mint("http://localhost:3338") == "http://localhost:3338"
+
+
 def test_split_csv_trims_spaces(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 
@@ -27,6 +35,54 @@ def test_split_csv_trims_spaces(monkeypatch, tmp_path):
         "relay.one",
         "relay.two",
         "relay.three",
+    ]
+
+
+def test_minimize_config_keeps_recovery_essentials(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    minimized = cli._minimize_config(
+        {
+            "nsec": "nsec1example",
+            "home_relay": "wss://relay.example.com",
+            "mints": ["https://mint.example.com"],
+            "public_relays": ["wss://relay.damus.io"],
+            "logging_level": 10,
+        }
+    )
+
+    assert minimized == {
+        "nsec": "nsec1example",
+        "home_relay": "wss://relay.example.com",
+    }
+
+
+def test_minimize_config_defaults_home_relay(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    minimized = cli._minimize_config({"nsec": "nsec1example"})
+
+    assert minimized == {
+        "nsec": "nsec1example",
+        "home_relay": cli.default_home_relay,
+    }
+
+
+def test_format_recovery_material(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_recovery_material(
+        {
+            "home_relay": "wss://relay.example.com",
+            "seed_phrase": "alpha beta gamma",
+            "nsec": "nsec1example",
+        }
+    )
+
+    assert rendered.splitlines() == [
+        "home_relay: wss://relay.example.com",
+        "seed_phrase: alpha beta gamma",
+        "nsec: nsec1example",
     ]
 
 
@@ -71,3 +127,17 @@ def test_format_tx_history_entry_debit(monkeypatch, tmp_path):
     assert "Debit" in rendered
     assert "-1 sats" in rendered
     assert "gift wrapped test" in rendered
+
+
+def test_format_tx_history_entry_handles_missing_optional_fields(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_tx_history_entry(
+        {
+            "tx_type": "C",
+            "amount": 2,
+        }
+    )
+
+    assert "Credit" in rendered
+    assert "+2 sats" in rendered

@@ -102,6 +102,16 @@ def _minimize_config(config: dict) -> dict:
         "home_relay": config.get("home_relay", default_home_relay),
     }
 
+
+def _format_recovery_material(recovery: dict) -> str:
+    return "\n".join(
+        [
+            f"home_relay: {recovery.get('home_relay')}",
+            f"seed_phrase: {recovery.get('seed_phrase')}",
+            f"nsec: {recovery.get('nsec')}",
+        ]
+    )
+
 os.makedirs(config_directory, exist_ok=True)
 
 CONFIG_FILE_EXISTED = os.path.exists(file_path)
@@ -444,9 +454,7 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
         click.echo("Your local config was not replaced.")
         click.echo()
         click.echo("Recovery material for this attempted wallet:")
-        click.echo(f"home_relay: {recovery['home_relay']}")
-        click.echo(f"seed_phrase: {recovery['seed_phrase']}")
-        click.echo(f"nsec: {recovery['nsec']}")
+        click.echo(_format_recovery_material(recovery))
         click.echo()
         raise click.ClickException(
             "Initialization was not completed. Try another relay, or retry this relay if you expect delayed indexing."
@@ -483,9 +491,15 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
     click.echo(f"npub: {acorn_obj.pubkey_bech32}")
     if force or click.confirm("Display new recovery/bootstrap material now?", default=True):
         click.echo("Sensitive recovery material:")
-        click.echo(f"home_relay: {home_relay}")
-        click.echo(f"seed_phrase: {acorn_obj.seed_phrase}")
-        click.echo(f"nsec: {acorn_obj.privkey_bech32}")
+        click.echo(
+            _format_recovery_material(
+                {
+                    "home_relay": home_relay,
+                    "seed_phrase": acorn_obj.seed_phrase,
+                    "nsec": acorn_obj.privkey_bech32,
+                }
+            )
+        )
     
 
 
@@ -565,9 +579,15 @@ def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, s
             raise click.ClickException("Recovery display cancelled.")
         acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
         asyncio.run(acorn_obj.load_data())
-        click.echo(f"home_relay: {acorn_obj.home_relay}")
-        click.echo(f"seed_phrase: {acorn_obj.seed_phrase}")
-        click.echo(f"nsec: {acorn_obj.privkey_bech32}")
+        click.echo(
+            _format_recovery_material(
+                {
+                    "home_relay": acorn_obj.home_relay,
+                    "seed_phrase": acorn_obj.seed_phrase,
+                    "nsec": acorn_obj.privkey_bech32,
+                }
+            )
+        )
 
     if show_only:
         return
