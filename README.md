@@ -17,6 +17,7 @@ without requiring the Safebox web application.
 
 - [Acorn Product North Star](./docs/ACORN-PRODUCT-NORTH-STAR.md)
 - [Acorn Component Boundary](./docs/ACORN-COMPONENT-BOUNDARY.md)
+- [Acorn Record Model](./docs/ACORN-RECORD-MODEL.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)
