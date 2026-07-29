@@ -10,7 +10,14 @@ import pytest_asyncio
 
 from acorn.acorn import Acorn
 
-from tests.helpers import ensure_test_wallet_config, remove_test_wallet_config, should_burn_test_wallet
+from tests.helpers import (
+    ensure_test_wallet_config,
+    live_progress,
+    live_relay_scenarios,
+    relay_suitable,
+    remove_test_wallet_config,
+    should_burn_test_wallet,
+)
 
 
 async def _drain_monstr_tasks():
@@ -39,6 +46,7 @@ async def _await_or_skip(awaitable, label: str, timeout: float):
         return await asyncio.wait_for(awaitable, timeout=timeout)
     except asyncio.TimeoutError:
         await _drain_monstr_tasks()
+        live_progress("SKIPPED record lifecycle test step timed out", step=label, timeout=f"{timeout:g}s")
         pytest.skip(f"{label} timed out after {timeout:g}s")
 
 
@@ -56,6 +64,7 @@ async def _eventually(
         if predicate(last_result):
             return last_result
         if asyncio.get_running_loop().time() >= deadline:
+            live_progress("FAILED record lifecycle eventual check", step=label, timeout=f"{timeout:g}s")
             pytest.fail(f"{label} did not become available after {timeout:g}s")
         await asyncio.sleep(interval)
 
@@ -69,10 +78,20 @@ async def cleanup_monstr_clients():
 @pytest.mark.live
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_live_record_lifecycle_round_trip():
+@pytest.mark.parametrize("relay_scenario", live_relay_scenarios())
+async def test_live_record_lifecycle_round_trip(relay_scenario):
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
+    live_progress(
+        "record lifecycle test: ensuring disposable wallet",
+        scenario=relay_scenario["name"],
+        relay=relay_scenario["relay"],
+        timeout=f"{timeout:g}s",
+    )
     test_wallet_config = await _await_or_skip(
-        ensure_test_wallet_config(),
+        ensure_test_wallet_config(
+            relay=relay_scenario["relay"],
+            config_suffix=relay_scenario["config_suffix"],
+        ),
         "test wallet init",
         timeout,
     )
@@ -81,6 +100,7 @@ async def test_live_record_lifecycle_round_trip():
     label = f"pytest-record-{uuid4().hex[:12]}"
     payload = f"hello from pytest {uuid4().hex}"
 
+    live_progress("record lifecycle test: loading wallet", relay=test_relay)
     acorn = Acorn(
         nsec=test_nsec,
         home_relay=test_relay,
@@ -94,7 +114,9 @@ async def test_live_record_lifecycle_round_trip():
             f"on {test_relay}: {exc}"
         )
 
+    deleted = False
     try:
+        live_progress("record lifecycle test: putting record", label=label)
         stored_label = await _await_or_skip(
             acorn.put_record(label, payload),
             "record publish",
@@ -102,6 +124,7 @@ async def test_live_record_lifecycle_round_trip():
         )
         assert stored_label == label
 
+        live_progress("record lifecycle test: reading record back", label=label)
         record = await _eventually(
             lambda: acorn.get_record_safebox(label),
             "record readback",
@@ -111,6 +134,7 @@ async def test_live_record_lifecycle_round_trip():
         assert record.type == "generic"
         assert record.payload == payload
 
+        live_progress("record lifecycle test: listing labels")
         labels = await _eventually(
             lambda: acorn.get_user_record_labels(relays=[test_relay]),
             "record label listing",
@@ -119,14 +143,40 @@ async def test_live_record_lifecycle_round_trip():
         )
         assert label in labels
 
+        live_progress("record lifecycle test: deleting record", label=label)
+        delete_result = await _await_or_skip(
+            acorn.delete_record(label),
+            "record delete",
+            timeout,
+        )
+        assert delete_result == f"{label} deleted."
+        deleted = True
+
+        live_progress("record lifecycle test: verifying label removal")
+        labels_after_delete = await _eventually(
+            lambda: acorn.get_user_record_labels(relays=[test_relay]),
+            "record label removal",
+            timeout,
+            predicate=lambda labels: label not in labels,
+        )
+        assert label not in labels_after_delete
+        relay_suitable(
+            relay_scenario,
+            "private-record-put-get-list-delete",
+            label=label,
+        )
+
     finally:
-        with contextlib.suppress(Exception):
-            await _await_or_skip(
-                acorn.delete_record(label),
-                "record cleanup delete",
-                timeout,
-            )
+        if not deleted:
+            live_progress("record lifecycle test: cleanup delete", label=label)
+            with contextlib.suppress(Exception):
+                await _await_or_skip(
+                    acorn.delete_record(label),
+                    "record cleanup delete",
+                    timeout,
+                )
         if should_burn_test_wallet(test_wallet_config):
+            live_progress("record lifecycle test: cleanup burn disposable wallet")
             with contextlib.suppress(Exception):
                 await _await_or_skip(
                     acorn.burn_wallet(allow_funded=True),

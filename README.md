@@ -25,6 +25,7 @@ without requiring the Safebox web application.
 - [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
+- [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
 
@@ -94,6 +95,13 @@ Then edit `.env` and run:
 poetry run pytest -m live
 ```
 
+To see live progress messages while relay and mint operations are running, add
+`-s`:
+
+```sh
+poetry run pytest -m live -rs -s
+```
+
 Live tests use the default Acorn profile, normally `~/.acorn/config.yml`, as
 the source wallet. This source wallet should already be initialized and should
 have a small spendable balance when running ecash transfer tests.
@@ -126,9 +134,50 @@ relay, for example:
 ACORN_TEST_RELAY=ws://beelink:7777
 ```
 
+To run the same live tests against a third-party relay, set
+`ACORN_THIRD_PARTY_RELAY`. The controlled relay scenario still runs, and pytest
+adds a second scenario using a separate disposable wallet config suffix:
+
+```env
+ACORN_THIRD_PARTY_RELAY=wss://relay.example.com
+```
+
+To run only one relay scenario, set `ACORN_RELAY_SCENARIO`:
+
+```sh
+ACORN_RELAY_SCENARIO=third-party poetry run pytest -m live -rs -s
+```
+
+Supported values are:
+
+```text
+all
+controlled
+third-party
+```
+
+For example, the default disposable wallet config:
+
+```text
+./.acorn-test/test-wallet.yml
+```
+
+is paired with:
+
+```text
+./.acorn-test/test-wallet-third-party.yml
+```
+
+This lets you confirm Acorn works against relays you control while also testing
+whether an external relay behaves well enough for Acorn's record, ecash, and
+burn lifecycle. Observed compatibility results are tracked in the
+[Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md).
+
 Ecash transfer tests publish transfer events to `ACORN_TEST_TRANSFER_RELAY` if
 set, otherwise to `ACORN_TEST_RELAY`, otherwise to the test wallet's
-`home_relay`.
+`home_relay`. Leave `ACORN_TEST_TRANSFER_RELAY` unset when you want the
+third-party relay scenario to publish transfer events to
+`ACORN_THIRD_PARTY_RELAY` as well.
 
 The burn live test creates a separate disposable burn wallet config next to the
 main test wallet, funds it from the source wallet, burns it, and verifies that

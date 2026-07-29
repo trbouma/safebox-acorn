@@ -2,9 +2,166 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from time import monotonic
+from time import strftime
 
 import pytest
 import yaml
+
+
+UNSUITABLE_RELAYS: dict[str, str] = {}
+RELAY_SUITABILITY_RESULTS: dict[str, dict] = {}
+
+
+def _relay_result(relay: str) -> dict:
+    relay = normalize_relay(relay)
+    result = RELAY_SUITABILITY_RESULTS.setdefault(
+        relay,
+        {
+            "relay": relay,
+            "scenario": None,
+            "started_at": monotonic(),
+            "capabilities": {},
+            "unsuitable": [],
+        },
+    )
+    return result
+
+
+def live_progress(message: str, **details) -> None:
+    """Print live-test progress when pytest output capture is disabled."""
+
+    suffix = ""
+    if details:
+        rendered = ", ".join(f"{key}={value}" for key, value in details.items())
+        suffix = f" ({rendered})"
+    print(f"[{strftime('%H:%M:%S')}] {message}{suffix}", flush=True)
+
+
+def relay_suitable(scenario: dict, capability: str, **details) -> None:
+    result = _relay_result(scenario["relay"])
+    result["scenario"] = scenario["name"]
+    result["capabilities"][capability] = {
+        "status": "suitable",
+        "details": details,
+    }
+    live_progress(
+        "SUITABLE relay capability",
+        scenario=scenario["name"],
+        relay=scenario["relay"],
+        capability=capability,
+        **details,
+    )
+
+
+def relay_unsuitable(relay: str, capability: str, reason: str, **details) -> None:
+    relay = normalize_relay(relay)
+    UNSUITABLE_RELAYS[relay] = f"{capability}: {reason}"
+    result = _relay_result(relay)
+    result["capabilities"][capability] = {
+        "status": "unsuitable",
+        "reason": reason,
+        "details": details,
+    }
+    result["unsuitable"].append(f"{capability}: {reason}")
+    live_progress(
+        "UNSUITABLE relay capability",
+        relay=relay,
+        capability=capability,
+        reason=reason,
+        **details,
+    )
+
+
+def relay_suitability_summary_rows() -> list[dict]:
+    rows = []
+    for relay, result in sorted(RELAY_SUITABILITY_RESULTS.items()):
+        capabilities = result["capabilities"]
+        suitable_caps = [
+            capability
+            for capability, capability_result in capabilities.items()
+            if capability_result.get("status") == "suitable"
+        ]
+        unsuitable = result["unsuitable"]
+        elapsed = max(0.0, monotonic() - result["started_at"])
+        status = "Suitable" if suitable_caps and not unsuitable else "Unsuitable as tested"
+        if not suitable_caps and not unsuitable:
+            status = "No suitability result"
+        if unsuitable:
+            observed = "; ".join(unsuitable)
+        elif suitable_caps:
+            observed = "Passed " + ", ".join(sorted(suitable_caps))
+        else:
+            observed = "No relay capabilities completed"
+        rows.append(
+            {
+                "relay": relay,
+                "scenario": result.get("scenario") or "",
+                "status": status,
+                "observed": observed,
+                "elapsed": elapsed,
+            }
+        )
+    return rows
+
+
+def skip_if_relay_unsuitable(relay: str) -> None:
+    relay = normalize_relay(relay)
+    reason = UNSUITABLE_RELAYS.get(relay)
+    if not reason:
+        return
+    live_progress(
+        "SKIPPED relay scenario previously marked unsuitable",
+        relay=relay,
+        reason=reason,
+    )
+    pytest.skip(
+        f"relay scenario skipped because {relay} was already marked "
+        f"unsuitable in this pytest run: {reason}"
+    )
+
+
+def live_relay_scenarios() -> list:
+    """Return relay scenarios for live tests.
+
+    The controlled scenario always runs. If ACORN_THIRD_PARTY_RELAY is set, the
+    same live tests run again using that relay and a separate disposable wallet
+    config suffix.
+    """
+    selected = os.getenv("ACORN_RELAY_SCENARIO", "all").strip().lower()
+    valid = {"all", "controlled", "third-party", "third_party"}
+    if selected not in valid:
+        pytest.skip(
+            "ACORN_RELAY_SCENARIO must be one of: all, controlled, third-party"
+        )
+
+    scenarios = []
+    if selected in {"all", "controlled"}:
+        scenarios.append(
+            pytest.param(
+                {
+                    "name": "controlled",
+                    "relay": normalize_relay(os.getenv("ACORN_TEST_RELAY", "ws://beelink:7777")),
+                    "config_suffix": "",
+                },
+                id="controlled-relay",
+            )
+        )
+    third_party_relay = os.getenv("ACORN_THIRD_PARTY_RELAY")
+    if selected in {"all", "third-party", "third_party"} and third_party_relay:
+        scenarios.append(
+            pytest.param(
+                {
+                    "name": "third-party",
+                    "relay": normalize_relay(third_party_relay),
+                    "config_suffix": "-third-party",
+                },
+                id="third-party-relay",
+            )
+        )
+    if selected in {"third-party", "third_party"} and not third_party_relay:
+        pytest.skip("ACORN_THIRD_PARTY_RELAY is required when ACORN_RELAY_SCENARIO=third-party")
+    return scenarios
 
 
 def normalize_relay(relay: str) -> str:
@@ -73,27 +230,35 @@ def require_source_config() -> dict:
     return require_config(source_path, "source wallet")
 
 
-def require_test_wallet_config() -> dict:
-    test_path = os.getenv("ACORN_TEST_WALLET_CONFIG", "./.acorn-test/test-wallet.yml")
+def _add_config_suffix(path: Path, suffix: str = "") -> Path:
+    if not suffix:
+        return path
+    return path.with_name(f"{path.stem}{suffix}{path.suffix}")
+
+
+def require_test_wallet_config(relay: str | None = None, config_suffix: str = "") -> dict:
+    test_path = get_test_wallet_config_path(config_suffix=config_suffix)
     config = require_config(test_path, "test wallet")
-    if os.getenv("ACORN_TEST_RELAY"):
+    if relay:
+        config["home_relay"] = normalize_relay(relay)
+    elif os.getenv("ACORN_TEST_RELAY"):
         config["home_relay"] = normalize_relay(os.environ["ACORN_TEST_RELAY"])
     return config
 
 
-def get_test_transfer_relay(default_relay: str) -> str:
-    return normalize_relay(os.getenv("ACORN_TEST_TRANSFER_RELAY") or os.getenv("ACORN_TEST_RELAY") or default_relay)
+def get_test_transfer_relay(default_relay: str, relay: str | None = None) -> str:
+    return normalize_relay(os.getenv("ACORN_TEST_TRANSFER_RELAY") or relay or os.getenv("ACORN_TEST_RELAY") or default_relay)
 
 
-def get_test_wallet_config_path() -> Path:
+def get_test_wallet_config_path(config_suffix: str = "") -> Path:
     config_path = Path(os.getenv("ACORN_TEST_WALLET_CONFIG", "./.acorn-test/test-wallet.yml")).expanduser()
     if not config_path.is_absolute():
         config_path = Path.cwd() / config_path
-    return config_path
+    return _add_config_suffix(config_path, config_suffix)
 
 
-def write_test_wallet_config(nsec: str, home_relay: str) -> dict:
-    config_path = get_test_wallet_config_path()
+def write_test_wallet_config(nsec: str, home_relay: str, config_suffix: str = "") -> dict:
+    config_path = get_test_wallet_config_path(config_suffix=config_suffix)
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
@@ -113,13 +278,18 @@ def write_test_wallet_config(nsec: str, home_relay: str) -> dict:
     return config
 
 
-async def ensure_test_wallet_config() -> dict:
-    config_path = get_test_wallet_config_path()
+async def ensure_test_wallet_config(relay: str | None = None, config_suffix: str = "") -> dict:
+    config_path = get_test_wallet_config_path(config_suffix=config_suffix)
+    if relay:
+        skip_if_relay_unsuitable(relay)
     if config_path.exists():
-        config = require_test_wallet_config()
+        config = require_test_wallet_config(relay=relay, config_suffix=config_suffix)
         config.setdefault("test_wallet", True)
-        if os.getenv("ACORN_TEST_RELAY"):
+        if relay:
+            config["home_relay"] = normalize_relay(relay)
+        elif os.getenv("ACORN_TEST_RELAY"):
             config["home_relay"] = normalize_relay(os.environ["ACORN_TEST_RELAY"])
+        skip_if_relay_unsuitable(config["home_relay"])
         if truthy_env("ACORN_TEST_CREATE_WALLET", "true"):
             config["test_wallet"] = True
             try:
@@ -135,8 +305,8 @@ async def ensure_test_wallet_config() -> dict:
 
     from monstr.encrypt import Keys
 
-    test_relay = normalize_relay(os.getenv("ACORN_TEST_RELAY", "ws://beelink:7777"))
-    config = write_test_wallet_config(Keys().private_key_bech32(), test_relay)
+    test_relay = normalize_relay(relay or os.getenv("ACORN_TEST_RELAY", "ws://beelink:7777"))
+    config = write_test_wallet_config(Keys().private_key_bech32(), test_relay, config_suffix=config_suffix)
     await initialize_test_wallet_config(config)
     return config
 
@@ -160,7 +330,18 @@ async def initialize_test_wallet_config(config: dict) -> None:
         await acorn.create_instance(keepkey=True)
         await acorn.load_data()
     except Exception as exc:
-        pytest.skip(f"could not initialize disposable test wallet on {config['home_relay']}: {exc}")
+        relay_unsuitable(
+            relay=config["home_relay"],
+            capability="wallet-bootstrap-readback",
+            reason="wallet bootstrap state was not readable after initialization",
+            error=exc,
+        )
+        pytest.skip(
+            "relay compatibility: wallet bootstrap state was not readable "
+            f"after initialization on {config['home_relay']}. "
+            "This relay may reject, filter, fail to retain, or fail to return "
+            f"Acorn wallet events. Original error: {exc}"
+        )
 
 
 def should_burn_test_wallet(config: dict) -> bool:

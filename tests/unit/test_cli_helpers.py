@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
+import pytest
 import yaml
 
 
@@ -137,6 +138,98 @@ def test_transfer_relay_prefers_explicit_transfer_relay(monkeypatch):
     monkeypatch.setenv("ACORN_TEST_TRANSFER_RELAY", "relay.example.com")
 
     assert get_test_transfer_relay("wss://wallet-relay.example.com") == "wss://relay.example.com"
+
+
+def test_transfer_relay_uses_relay_scenario_when_no_explicit_override(monkeypatch):
+    from tests.helpers import get_test_transfer_relay
+
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+
+    assert (
+        get_test_transfer_relay(
+            "wss://wallet-relay.example.com",
+            relay="relay.thirdparty.example.com",
+        )
+        == "wss://relay.thirdparty.example.com"
+    )
+
+
+def test_live_relay_scenarios_include_optional_third_party(monkeypatch):
+    from tests.helpers import live_relay_scenarios
+
+    monkeypatch.delenv("ACORN_RELAY_SCENARIO", raising=False)
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+    monkeypatch.setenv("ACORN_THIRD_PARTY_RELAY", "relay.thirdparty.example.com")
+
+    scenarios = [param.values[0] for param in live_relay_scenarios()]
+
+    assert scenarios == [
+        {
+            "name": "controlled",
+            "relay": "ws://beelink:7777",
+            "config_suffix": "",
+        },
+        {
+            "name": "third-party",
+            "relay": "wss://relay.thirdparty.example.com",
+            "config_suffix": "-third-party",
+        },
+    ]
+
+
+def test_live_relay_scenarios_can_select_third_party_only(monkeypatch):
+    from tests.helpers import live_relay_scenarios
+
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+    monkeypatch.setenv("ACORN_THIRD_PARTY_RELAY", "relay.thirdparty.example.com")
+    monkeypatch.setenv("ACORN_RELAY_SCENARIO", "third-party")
+
+    scenarios = [param.values[0] for param in live_relay_scenarios()]
+
+    assert scenarios == [
+        {
+            "name": "third-party",
+            "relay": "wss://relay.thirdparty.example.com",
+            "config_suffix": "-third-party",
+        },
+    ]
+
+
+def test_live_relay_scenarios_can_select_controlled_only(monkeypatch):
+    from tests.helpers import live_relay_scenarios
+
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+    monkeypatch.setenv("ACORN_THIRD_PARTY_RELAY", "relay.thirdparty.example.com")
+    monkeypatch.setenv("ACORN_RELAY_SCENARIO", "controlled")
+
+    scenarios = [param.values[0] for param in live_relay_scenarios()]
+
+    assert scenarios == [
+        {
+            "name": "controlled",
+            "relay": "ws://beelink:7777",
+            "config_suffix": "",
+        },
+    ]
+
+
+def test_skip_if_relay_unsuitable_short_circuits_later_scenarios(monkeypatch):
+    from tests import helpers
+
+    helpers.UNSUITABLE_RELAYS.clear()
+    helpers.RELAY_SUITABILITY_RESULTS.clear()
+    helpers.relay_unsuitable(
+        "relay.unsuitable.example.com",
+        capability="wallet-bootstrap-readback",
+        reason="wallet bootstrap state was not readable after initialization",
+    )
+
+    with pytest.raises(pytest.skip.Exception) as exc:
+        helpers.skip_if_relay_unsuitable("wss://relay.unsuitable.example.com")
+
+    assert "already marked unsuitable" in str(exc.value)
+    helpers.UNSUITABLE_RELAYS.clear()
+    helpers.RELAY_SUITABILITY_RESULTS.clear()
 
 
 def test_format_tx_history_entry_credit(monkeypatch, tmp_path):
