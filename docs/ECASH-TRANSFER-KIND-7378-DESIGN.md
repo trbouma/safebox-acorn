@@ -2,8 +2,10 @@
 
 ## Summary
 
-Kind `7378` is reserved for relay-delivered ecash transfers between Acorn
-wallets.
+Kind `7378` is reserved as the inner Acorn ecash-transfer application kind.
+In the default production path it is not the relay-visible event kind. The
+relay-visible event is a NIP-59 kind `1059` gift wrap containing an inner kind
+`7378` transfer.
 
 The goal is to let one Acorn send ecash directly to another Acorn through
 Nostr relay infrastructure. The recipient can later query their home relay, or
@@ -16,7 +18,14 @@ state:
 
 - kind `7375` remains the canonical encrypted wallet proof state;
 - kind `7377` remains transaction history;
-- kind `7378` becomes the transfer inbox for Acorn-to-Acorn ecash delivery.
+- kind `7378` identifies an incoming Acorn ecash transfer after unwrap;
+- kind `1059` is the default relay-visible delivery envelope.
+
+This separation is deliberate. A gift-wrapped kind `7375` could technically be
+interpreted as a transfer, but it would overload the meaning of `7375`. Acorn
+keeps `7375` for durable spendable proof state and `7378` for transfer intent.
+After a transfer is accepted, refreshed proofs are merged into kind `7375`; the
+kind `7378` payload remains delivery/inbox material, not wallet state.
 
 ## Motivation
 
@@ -373,7 +382,8 @@ A sender-side transfer flow should eventually:
 
 1. select spendable proofs;
 2. issue a Cashu token for the transfer amount;
-3. publish encrypted kind `7378` to the recipient relay;
+3. publish a kind `1059` gift wrap containing an inner kind `7378` transfer to
+   the recipient relay;
 4. treat the token/proofs as sent and no longer locally spendable;
 5. optionally wait for an acknowledgement in a future protocol extension.
 
@@ -384,13 +394,18 @@ resent or safely restored.
 
 ## Sender-side deletion
 
-The sender should be able to clean up kind `7378` transfer events it authored.
-This is useful after a recipient has accepted the transfer, or when the sender
-wants to reduce relay-visible delivery history.
+The sender should be able to clean up direct kind `7378` transfer events it
+authored. This is useful after a recipient has accepted the transfer, or when
+the sender wants to reduce relay-visible delivery history.
+
+For default gift-wrapped transfers, the relay-visible event is kind `1059` and
+is authored by a transient outer key. Unless the sender retains that transient
+key, the sender cannot later author a valid deletion request for that outer
+event. This is the privacy tradeoff of gift wrapping.
 
 Deletion is performed with a standard NIP-09 deletion request, kind `5`, that
-references the authored kind `7378` event ids with `e` tags and includes a
-`k=7378` tag.
+references the authored direct kind `7378` event ids with `e` tags and includes
+a `k=7378` tag.
 
 Initial command:
 
