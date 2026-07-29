@@ -2337,6 +2337,7 @@ class Acorn:
         # my_enc = NIP44Encrypt(self.k)
         # target_tag = filter[0]['d']
         target_tag = label_hash
+        events = []
         
         self.logger.debug(f"target tag: {target_tag}")
         async with ClientPool([self.home_relay]) as c:

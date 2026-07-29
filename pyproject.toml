@@ -37,6 +37,22 @@ acorn = "acorn.cli_acorn:cli"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.3.4"
+pytest-asyncio = "^0.25.0"
+python-dotenv = "^1.0.1"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "integration: tests that exercise multiple Acorn components",
+    "live: tests that require live relays, mints, or real wallet keys",
+    "asyncio: async tests that require pytest-asyncio",
+]
+addopts = "-m 'not live'"
+filterwarnings = [
+    "ignore:Exception ignored in:pytest.PytestUnraisableExceptionWarning",
+    "ignore:parameter 'timeout' of type 'float' is deprecated:DeprecationWarning:aiohttp\\.client",
+    "ignore:ssl=None is deprecated:DeprecationWarning:aiohttp\\.client",
+]
 
 [build-system]
 requires = ["poetry-core"]

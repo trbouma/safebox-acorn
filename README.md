@@ -68,6 +68,33 @@ loads. It indicates that the native `liboqs` library and Python wrapper are not
 the same release series. Future releases should document a known-good OQS
 version matrix.
 
+## Testing
+
+Acorn uses pytest for repeatable tests. Test dependencies are dev-only and are
+not required by the installable runtime component.
+
+Run the default test suite:
+
+```sh
+poetry install --with dev
+poetry run pytest
+```
+
+Live relay/mint tests are skipped by default. To run them, copy the template
+and provide local secrets:
+
+```sh
+cp .env.example .env
+```
+
+Then edit `.env` and run:
+
+```sh
+poetry run pytest -m live
+```
+
+The real `.env` file is gitignored. Do not commit real `nsec` values.
+
 ## Record output
 
 Normal record reads are formatted for humans:

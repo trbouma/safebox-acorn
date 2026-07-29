@@ -1,0 +1,126 @@
+============================= test session starts ==============================
+platform darwin -- Python 3.11.0, pytest-8.4.2, pluggy-1.6.0
+rootdir: /Users/trbouma/projects/safebox-acorn
+configfile: pyproject.toml
+testpaths: tests
+plugins: asyncio-0.25.3, anyio-4.14.2
+asyncio: mode=Mode.STRICT, asyncio_default_fixture_loop_scope=None
+collected 5 items / 4 deselected / 1 selected
+
+tests/integration/test_ecash_transfer_live.py F                          [100%]
+
+=================================== FAILURES ===================================
+_______________ test_live_gift_wrapped_ecash_transfer_round_trip _______________
+
+    @pytest.mark.live
+    @pytest.mark.asyncio
+    async def test_live_gift_wrapped_ecash_transfer_round_trip():
+        env = require_env(
+            "ACORN_SENDER_NSEC",
+            "ACORN_RECEIVE_NSEC",
+            "ACORN_RECIPIENT_NIP05",
+            "ACORN_TEST_RELAY",
+        )
+        amount = int(env.get("ACORN_TEST_AMOUNT", "1"))
+        timeout = float(env.get("ACORN_TEST_TIMEOUT", "15"))
+    
+        sender = Acorn(
+            nsec=env["ACORN_SENDER_NSEC"],
+            home_relay=env["ACORN_TEST_RELAY"],
+            relays=[env["ACORN_TEST_RELAY"]],
+        )
+        try:
+            await _await_or_skip(sender.load_data(), "sender wallet load", timeout)
+        except RuntimeError as exc:
+            pytest.skip(
+                "ACORN_SENDER_NSEC must be an initialized, funded Acorn wallet "
+                f"on {env['ACORN_TEST_RELAY']}: {exc}"
+            )
+        before = sender.get_balance()
+        if before < amount:
+            pytest.skip(
+                "ACORN_SENDER_NSEC must have enough spendable balance for the live "
+                f"test: balance={before}, amount={amount}"
+            )
+    
+>       transfer = await _await_or_skip(
+            sender.send_ecash_transfer(
+                amount=amount,
+                recipient=env["ACORN_RECIPIENT_NIP05"],
+                relay=env["ACORN_TEST_RELAY"],
+                comment="pytest live gift-wrapped transfer",
+            ),
+            "ecash transfer publish",
+            timeout,
+        )
+
+tests/integration/test_ecash_transfer_live.py:50: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+tests/integration/test_ecash_transfer_live.py:14: in _await_or_skip
+    return await asyncio.wait_for(awaitable, timeout=timeout)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+../../.pyenv/versions/3.11.0/lib/python3.11/asyncio/tasks.py:490: in wait_for
+    return fut.result()
+           ^^^^^^^^^^^^
+acorn/acorn.py:2902: in send_ecash_transfer
+    token = await self.issue_token(int(amount), comment=comment)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+acorn/acorn.py:6717: in issue_token
+    await self.acquire_lock()
+acorn/acorn.py:2442: in acquire_lock
+    lock_value = await self.get_wallet_info(label="lock")
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+acorn/acorn.py:2261: in get_wallet_info
+    event = await self._async_get_wallet_info(FILTER, label_hash)
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = {}
+filter = [{'#d': ['cda31b482e2c54bffbe24e409249a529c750b9271944f9041a2b1aa9864bdee3'], 'authors': ['f47693596ab146aa7be5afae3092f9e157bbf29392ae9a7bcf937950f9e98f4d'], 'kinds': [37375], 'limit': 1024}]
+label_hash = 'cda31b482e2c54bffbe24e409249a529c750b9271944f9041a2b1aa9864bdee3'
+
+    async def _async_get_wallet_info(self, filter: List[dict],label_hash):
+    # does a one off query to relay prints the events and exits
+        self.logger.debug(f"filter {filter}")
+        # my_enc = NIP44Encrypt(self.k)
+        # target_tag = filter[0]['d']
+        target_tag = label_hash
+    
+        self.logger.debug(f"target tag: {target_tag}")
+        async with ClientPool([self.home_relay]) as c:
+    
+    
+            events = await c.query(filter)
+    
+            self.logger.debug(f"no of events: {len(events)}")
+    
+            # print(f"_async event xoxoxo: type: {type(events[0])} data: {events[0].data()}")
+    
+>       if not events:
+               ^^^^^^
+E       UnboundLocalError: cannot access local variable 'events' where it is not associated with a value
+
+acorn/acorn.py:2351: UnboundLocalError
+------------------------------ Captured log call -------------------------------
+INFO     Acorn:acorn.py:183 Wallet initialized: Acorn
+=============================== warnings summary ===============================
+../../test-acorn/.venv/lib/python3.11/site-packages/oqs/__init__.py:1
+  /Users/trbouma/test-acorn/.venv/lib/python3.11/site-packages/oqs/__init__.py:1: UserWarning: liboqs version (major, minor) 0.14.0 differs from liboqs-python version 0.16.0
+    from oqs.oqs import (
+
+acorn/models.py:344
+  /Users/trbouma/projects/safebox-acorn/acorn/models.py:344: PydanticDeprecatedSince20: Support for class-based `config` is deprecated, use ConfigDict instead. Deprecated in Pydantic V2.0 to be removed in V3.0. See Pydantic V2 Migration Guide at https://errors.pydantic.dev/2.13/migration/
+    class EncryptionResult(BaseModel):
+
+tests/integration/test_ecash_transfer_live.py: 13 warnings
+  /Users/trbouma/test-acorn/.venv/lib/python3.11/site-packages/aiohttp/client.py:1693: DeprecationWarning: parameter 'timeout' of type 'float' is deprecated, please use 'timeout=ClientWSTimeout(ws_close=...)'
+    self._resp: _RetType_co = await self._coro
+
+tests/integration/test_ecash_transfer_live.py: 13 warnings
+  /Users/trbouma/test-acorn/.venv/lib/python3.11/site-packages/aiohttp/client.py:1693: DeprecationWarning: ssl=None is deprecated, please use ssl=True
+    self._resp: _RetType_co = await self._coro
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED tests/integration/test_ecash_transfer_live.py::test_live_gift_wrapped_ecash_transfer_round_trip
+================ 1 failed, 4 deselected, 28 warnings in 16.68s =================

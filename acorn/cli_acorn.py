@@ -181,6 +181,38 @@ def _record_to_dict(record: SafeboxRecord, kind: int) -> dict:
     return data
 
 
+def _format_tx_history_entry(entry: dict) -> str:
+    tx_type = str(entry.get("tx_type") or "").upper()
+    direction = {
+        "C": "Credit",
+        "D": "Debit",
+        "X": "Advisory",
+    }.get(tx_type, tx_type or "Unknown")
+    sign = "+" if tx_type == "C" else "-" if tx_type == "D" else ""
+    amount = entry.get("amount", 0)
+    tendered_amount = entry.get("tendered_amount")
+    tendered_currency = entry.get("tendered_currency") or "SAT"
+    current_balance = entry.get("current_balance")
+    comment = entry.get("comment") or ""
+    fees = entry.get("fees") or 0
+
+    lines = [
+        f"{entry.get('create_time', 'unknown time')}  {direction}",
+        f"  amount:  {sign}{amount} sats",
+    ]
+    if tendered_amount is not None:
+        lines.append(f"  tender:  {tendered_amount} {tendered_currency}")
+    if fees:
+        lines.append(f"  fees:    {fees} sats")
+    if current_balance is not None:
+        lines.append(f"  balance: {current_balance} sats")
+    if comment:
+        lines.append(f"  note:    {comment}")
+    if entry.get("payment_hash"):
+        lines.append(f"  payment: {entry['payment_hash']}")
+    return "\n".join(lines)
+
+
 
 @click.group()
 @click.option("--verbose", "-v", is_flag=True, help="Show debug logs.")
@@ -808,11 +840,19 @@ def set_owner(owner, currency):
     click.echo(msg_out)
 
 @click.command("txhistory", help="transaction history")
-def tx_history():   
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def tx_history(json_output):   
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS,home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     tx_history = asyncio.run(acorn_obj.get_tx_history())
+    if json_output:
+        _emit_json(tx_history)
+        return
+    if not tx_history:
+        click.echo("No transaction history found.")
+        return
     for each in tx_history:
-        click.echo(each)
+        click.echo(_format_tx_history_entry(each))
+        click.echo()
 
 
 @click.command("deposit", help="deposit funds into wallet via lightning invoice")
