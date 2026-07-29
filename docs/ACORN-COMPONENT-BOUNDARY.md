@@ -2,10 +2,10 @@
 
 ## Summary
 
-Acorn is the reusable sovereign wallet and private-record component extracted
-from Safebox. It should remain small, installable, and product-neutral. Safebox
-and other applications may depend on Acorn, but Acorn should not depend on
-Safebox application concepts.
+Acorn is a protocol-first sovereign data haven extracted from Safebox as a
+standalone component. It should remain small, installable, and product-neutral.
+Safebox and other applications may depend on Acorn, but Acorn should not depend
+on Safebox application concepts.
 
 This specification defines what belongs in Acorn, what does not, and how future
 features should be evaluated before they are added.

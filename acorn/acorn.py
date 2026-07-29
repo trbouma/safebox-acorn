@@ -383,8 +383,8 @@ class Acorn:
                 await self.create_instance(keepkey=True)
                 
             else:
-                self.logger.error("op=load_data status=failed relay=%s error=%s", self.home_relay, e)
-                raise RuntimeError(f"No wallet data on {self.home_relay}!!!")
+                self.logger.warning("op=load_data status=failed relay=%s error=%s", self.home_relay, e)
+                raise RuntimeError(f"No wallet data found on {self.home_relay}")
 
 
         await self._load_proofs()
@@ -489,19 +489,19 @@ class Acorn:
         # init_index = "[{\"root\":\"init\"}]"
         init_index["root"] = local_name
         # self.set_index_info(json.dumps(init_index))
-        self.set_wallet_info(label="default", label_info=local_name)
-        self.set_wallet_info(label="profile", label_info=json.dumps(nostr_profile.model_dump()))
+        asyncio.run(self.set_wallet_info(label="default", label_info=local_name))
+        asyncio.run(self.set_wallet_info(label="profile", label_info=json.dumps(nostr_profile.model_dump())))
         
         self.wallet_config = WalletConfig(  kind_cashu = 7375,
                                             seed_phrase=seed_phrase)                
-        self.set_wallet_info(label="wallet_config", label_info=json.dumps(self.wallet_config.model_dump()))
-        self.set_wallet_info(label="mints", label_info=json.dumps(self.mints))
-        self.set_wallet_info(label="relays", label_info=json.dumps(self.relays))
-        self.set_wallet_info(label="quote", label_info='[]')
-        self.set_wallet_info(label="index", label_info='{}')
-        self.set_wallet_info(label="last_dm", label_info='0')
-        self.set_wallet_info(label="user_records", label_info='[]')
-        self.set_wallet_info(label="payment_request", label_info='[]')
+        asyncio.run(self.set_wallet_info(label="wallet_config", label_info=json.dumps(self.wallet_config.model_dump())))
+        asyncio.run(self.set_wallet_info(label="mints", label_info=json.dumps(self.mints)))
+        asyncio.run(self.set_wallet_info(label="relays", label_info=json.dumps(self.relays)))
+        asyncio.run(self.set_wallet_info(label="quote", label_info='[]'))
+        asyncio.run(self.set_wallet_info(label="index", label_info='{}'))
+        asyncio.run(self.set_wallet_info(label="last_dm", label_info='0'))
+        asyncio.run(self.set_wallet_info(label="user_records", label_info='[]'))
+        asyncio.run(self.set_wallet_info(label="payment_request", label_info='[]'))
 
         self._load_record_events()
         
@@ -670,8 +670,7 @@ class Acorn:
                     access_key_hash = access_key_digest.hexdigest()
                     self.access_key = generate_access_key_from_hex(access_key_hash)
                     self.logger.debug(f"acorn tags: {self.acorn_tags} npub: {self.pubkey_bech32}")
-                    pass
-                    await self.set_wallet_config()
+                    await self.set_wallet_info(label=name,label_info=json.dumps(self.acorn_tags))
                     
 
 
@@ -1178,7 +1177,7 @@ class Acorn:
         
         return json_str
         
-    def replicate_safebox(self, replicate_relays = List[str]):
+    def replicate_safebox(self, replicate_relays: List[str] | None = None):
         
         self.logger.info("op=replicate_safebox status=start relays=%s", replicate_relays)
 
@@ -1188,65 +1187,58 @@ class Acorn:
             'kinds': [0]
         }]
         
-        try:
-            profile =asyncio.run(self.async_query_client_profile([self.home_relay],FILTER))
-            profile_obj = nostrProfile(**json.loads(profile))
-            self.logger.debug("op=replicate_safebox status=profile_loaded")
-            asyncio.run(self._async_create_profile(profile_obj, replicate_relays=replicate_relays))
-        except (ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
-            self.logger.warning("op=replicate_safebox status=no_profile error=%s", exc)
-            out_string = "No profile found!"
-            return out_string
-        
+        async def _async_replicate_safebox():
+            try:
+                profile = await self._async_query_client_profile(FILTER)
+                profile_obj = nostrProfile(**json.loads(profile))
+                self.logger.debug("op=replicate_safebox status=profile_loaded")
+                await self._async_create_profile(profile_obj, replicate_relays=replicate_relays)
+            except (ValueError, TypeError, IndexError, json.JSONDecodeError) as exc:
+                self.logger.warning("op=replicate_safebox status=no_profile error=%s", exc)
+                return "No profile found!"
 
+            await self.set_wallet_info(label="test", label_info="test record booga", replicate_relays=replicate_relays)
+            # replicate the reserved records
 
-        self.set_wallet_info(label="test", label_info="test record booga", replicate_relays=replicate_relays)
-        # self.set_wallet_info(label="profile", label_info=json.dumps(nostr_profile.model_dump()))
-       
-        # replicate the reserved records
+            profile = await self.get_wallet_info(label="profile")
+            self.logger.debug("op=replicate_safebox status=replicate_profile")
+            await self.set_wallet_info(label="profile", label_info=profile, replicate_relays=replicate_relays)
 
-        profile = self.get_wallet_info(label="profile")
-        self.logger.debug("op=replicate_safebox status=replicate_profile")
-        self.set_wallet_info(label="profile", label_info=profile, replicate_relays=replicate_relays)
+            await self.set_wallet_info(label="home_relay", label_info=json.dumps(self.home_relay), replicate_relays=replicate_relays)
 
-        self.set_wallet_info(label="home_relay", label_info=json.dumps(self.home_relay), replicate_relays=replicate_relays)
+            default = await self.get_wallet_info(label="default")
+            await self.set_wallet_info(label="default", label_info=default, replicate_relays=replicate_relays)
 
-        default = self.get_wallet_info(label="default")
-        self.set_wallet_info(label="default", label_info=default, replicate_relays=replicate_relays)
+            wallet_config = await self.get_wallet_info(label="wallet_config")
+            await self.set_wallet_info(label="wallet_config", label_info=wallet_config, replicate_relays=replicate_relays)
+            
+            mints = await self.get_wallet_info(label="mints")
+            await self.set_wallet_info(label="mints", label_info=mints,replicate_relays=replicate_relays)
+            
+            read_relays = await self.get_wallet_info(label="relays")
+            await self.set_wallet_info(label="relays", label_info=read_relays, replicate_relays=replicate_relays)
+            
+            trusted_mints = await self.get_wallet_info(label="trusted_mints")
+            self.logger.debug("op=replicate_safebox status=trusted_mints")
+            await self.set_wallet_info(label="trusted_mints", label_info=json.dumps(self.trusted_mints), replicate_relays=replicate_relays)
+            
+            quote = await self.get_wallet_info(label="quote")
+            self.logger.debug("op=replicate_safebox status=quote")
+            await self.set_wallet_info(label="quote", label_info=quote,replicate_relays=replicate_relays)
+            
+            index = await self.get_wallet_info(label="index")
+            self.logger.debug("op=replicate_safebox status=index")
+            await self.set_wallet_info(label="index", label_info=index, replicate_relays=replicate_relays)
+            
+            last_dm = await self.get_wallet_info(label="last_dm")
+            self.logger.debug("op=replicate_safebox status=last_dm")
+            await self.set_wallet_info(label="last_dm", label_info=last_dm, replicate_relays=replicate_relays)
+            
+            self.logger.debug("op=replicate_safebox status=proofs count=%s", len(self.proofs))
+            await self.add_proofs_obj(self.proofs, replicate_relays=replicate_relays)
+            return profile
 
-        wallet_config = self.get_wallet_info(label="wallet_config")
-        self.set_wallet_info(label="wallet_config", label_info=wallet_config, replicate_relays=replicate_relays)
-        
-        mints = self.get_wallet_info(label="mints")
-        self.set_wallet_info(label="mints", label_info=mints,replicate_relays=replicate_relays)
-        
-        read_relays = self.get_wallet_info(label="relays")
-        self.set_wallet_info(label="relays", label_info=read_relays, replicate_relays=replicate_relays)
-        
-        trusted_mints = self.get_wallet_info(label="trusted_mints")
-        self.logger.debug("op=replicate_safebox status=trusted_mints")
-        self.set_wallet_info(label="trusted_mints", label_info=json.dumps(self.trusted_mints), replicate_relays=replicate_relays)
-        
-        quote = self.get_wallet_info(label="quote")
-        self.logger.debug("op=replicate_safebox status=quote")
-        self.set_wallet_info(label="quote", label_info=quote,replicate_relays=replicate_relays)
-        
-        index = self.get_wallet_info(label="index")
-        self.logger.debug("op=replicate_safebox status=index")
-        self.set_wallet_info(label="index", label_info=index, replicate_relays=replicate_relays)
-        
-        last_dm = self.get_wallet_info(label="last_dm")
-        self.logger.debug("op=replicate_safebox status=last_dm")
-        self.set_wallet_info(label="last_dm", label_info=last_dm, replicate_relays=replicate_relays)
-        
-        replicate_proofs = []
-        for each in self.proofs:
-            each_dump = each.model_dump()
-            replicate_proofs.append(each_dump)
-        self.logger.debug("op=replicate_safebox status=proofs count=%s", len(replicate_proofs))
-        # self.add_proofs(json.dumps(replicate_proofs), replicate_relays=replicate_relays)
-        self.add_proofs_obj(self.proofs, replicate_relays=replicate_proofs)
-        return profile 
+        return asyncio.run(_async_replicate_safebox())
     
     async def _async_store_event(self, event_content_str:str, event_kind: int, relays: List[str]):
 
@@ -3536,7 +3528,7 @@ class Acorn:
     
     def withdraw(self, lninvoice:str):
 
-        msg_out = self.pay_multi_invoice(lninvoice=lninvoice)
+        msg_out = asyncio.run(self.pay_multi_invoice(lninvoice=lninvoice))
         
         return msg_out
 

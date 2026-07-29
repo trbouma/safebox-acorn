@@ -2,13 +2,13 @@
 
 ## Summary
 
-Acorn is a sovereign data haven, implemented first as a protocol component.
+Acorn is a protocol-first sovereign data haven.
 
 It is not merely a wallet library, a command-line tool, or the code extracted
-from Safebox. Acorn is intended to be a reusable component that gives
+from Safebox. Acorn is intended to be a sovereign protocol component that gives
 applications user-controlled identity, encrypted records, relay-backed
-resilience, Cashu value transfer, and recovery across replaceable
-infrastructure.
+resilience, Cashu value transfer, recovery, and reciprocal resilience across
+replaceable infrastructure.
 
 The north star is:
 
@@ -21,7 +21,8 @@ relay, mint, or service provider.
 Put another way:
 
 ```text
-Acorn is a sovereign protocol component for building sovereign data havens.
+Acorn is a sovereign protocol component for building protocol-first sovereign
+data havens.
 ```
 
 The core value proposition can be summarized as:

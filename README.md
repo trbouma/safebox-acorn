@@ -1,7 +1,10 @@
 # Safebox Acorn
 
-Acorn is the reusable Nostr/Cashu wallet and records component extracted from
-Safebox. It provides:
+Acorn is a protocol-first sovereign data haven: a sovereign protocol component
+for identity, records, value, recovery, and reciprocal resilience.
+
+Safebox Acorn is the standalone Acorn component extracted from Safebox. It
+provides:
 
 - the `Acorn` Python runtime class
 - the `acorn` command-line interface

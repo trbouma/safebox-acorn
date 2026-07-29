@@ -67,12 +67,74 @@ Current examples:
 
 ```sh
 acorn info --json
+acorn init --json
 acorn balance --json
 acorn get "Field Notes" --json
 acorn get_user_records --labels --json
 ```
 
 JSON output should avoid extra human text, debug lines, or incidental prints.
+
+## Wallet initialization
+
+`acorn init` creates or replaces the local wallet bootstrap configuration.
+Because this can disconnect the local CLI from an existing wallet, it must be
+conservative by default.
+
+Human flow:
+
+- if an existing config is present, show that an existing wallet was detected;
+- offer to display existing bootstrap/recovery material before continuing;
+- require confirmation before replacing the local config;
+- prompt for `nsec`, home relay, and home mint;
+- generate a new `nsec` if none is supplied;
+- use default home relay and home mint if blank/default choices are accepted;
+- offer to display the newly created recovery/bootstrap material.
+
+Automation flow:
+
+```sh
+acorn init --json
+```
+
+If an existing config is present and `--force` is not supplied, the command must
+not mutate local config or relay state. It returns a machine-readable refusal:
+
+```json
+{
+  "ok": false,
+  "reason": "confirmation_required",
+  "confirmations_completed": false
+}
+```
+
+For non-interactive replacement, callers must opt in explicitly:
+
+```sh
+acorn init --force --json
+```
+
+With `--force`, omitted values are resolved without prompts: a new `nsec` is
+generated, the default home relay is used, and the default home mint is used.
+Successful JSON output includes the recovery material required to reconnect to
+the wallet. Callers must treat that output as sensitive.
+
+If initialization writes wallet material but cannot read it back from the
+selected home relay, the command must fail clearly and must not replace the
+local config. Human output should explain likely relay causes, such as rejected
+event kinds, delayed indexing, authentication requirements, or relay policy
+restrictions. JSON output should return:
+
+```json
+{
+  "ok": false,
+  "reason": "relay_wallet_readback_failed",
+  "local_config_replaced": false
+}
+```
+
+Because a new key may already have been generated for the attempted wallet, the
+failure output may include recovery material. Treat that output as sensitive.
 
 ## Raw output
 
