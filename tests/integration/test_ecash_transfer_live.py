@@ -130,7 +130,8 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
             timeout,
         )
 
-        assert transfer["kind"] == 7378
+        assert transfer["kind"] == 1059
+        assert transfer["transfer_kind"] == 7378
         assert transfer["mode"] == "gift-wrapped"
         assert transfer["deletable_by_sender"] is False
         assert transfer["event_id"]
@@ -153,6 +154,8 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
         assert receive["accepted_count"] == 1
         assert receive["accepted_amount"] == amount
         assert receive["accepted"][0]["mode"] == "gift-wrapped"
+        assert receive["accepted"][0]["outer_kind"] == 1059
+        assert receive["accepted"][0]["inner_kind"] == 7378
 
         live_progress("ecash transfer test: reloading receiver wallet")
         await _await_or_skip(receiver_wallet.load_data(), "final wallet reload", timeout)

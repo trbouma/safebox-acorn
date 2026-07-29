@@ -14,7 +14,8 @@ complete the following capabilities:
 
 - wallet bootstrap state can be written and read back;
 - private records can be put, read, listed, and deleted;
-- gift-wrapped kind `7378` ecash transfers can be published and received;
+- kind `1059` gift-wrapped ecash transfers carrying inner Acorn kind `7378`
+  payloads can be published and received;
 - disposable wallet burn can sweep remaining funds back to the source wallet;
 - relay behaviour is reliable enough to pass within the configured live-test
   timeout.

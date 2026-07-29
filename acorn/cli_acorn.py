@@ -1320,11 +1320,11 @@ def balance(json_output):
     else:
         click.echo(f"{balance_sats} sats in {proof_count} proofs.")
 
-@click.command("receive-ecash", help="Receive kind 7378 ecash transfers into this Acorn")
+@click.command("receive-ecash", help="Receive Acorn ecash transfers into this Acorn")
 @click.option("--since", default=None, type=int, help="Override incoming ecash transfer cursor.")
-@click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 7378 ecash transfers.")
+@click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps or direct kind 7378 transfers.")
 @click.option("--receive-nsec", default=None, help="Transient receiving nsec used only to decrypt incoming transfers; it is not stored.")
-@click.option("--event-id", default=None, help="Receive a specific kind 7378 event id; bypasses recipient tag and cursor query.")
+@click.option("--event-id", default=None, help="Receive a specific kind 1059 gift-wrap or direct kind 7378 event id; bypasses recipient tag and cursor query.")
 @click.option("--no-advance", is_flag=True, help="Do not advance the stored receive cursor.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
 def receive_ecash(since, relay, receive_nsec, event_id, no_advance, json_output):
@@ -1431,7 +1431,7 @@ def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_outp
     else:
         click.echo("No delete request published.")
 
-@click.command("ecash-transfer", help="Send ecash to another Acorn using kind 7378")
+@click.command("ecash-transfer", help="Send ecash to another Acorn using NIP-59 gift wrap with inner kind 7378")
 @click.argument('amount', type=int)
 @click.argument('recipient')
 @click.option('--relay', '-r', default=None, help='relay to publish the transfer to; defaults to home relay')
@@ -1464,6 +1464,8 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
 
     click.echo("Ecash transfer published.")
     click.echo(f"Kind: {result['kind']}")
+    if result.get("transfer_kind") and result["transfer_kind"] != result["kind"]:
+        click.echo(f"Inner transfer kind: {result['transfer_kind']}")
     click.echo(f"Mode: {result['mode']}")
     click.echo(f"Event: {result['event_id']}")
     click.echo(f"Relays: {', '.join(result['relays'])}")

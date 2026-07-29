@@ -74,31 +74,37 @@ for a different key.
 ## Event kind
 
 ```text
-kind 7378: Acorn relay-delivered ecash transfer
+inner kind 7378: Acorn relay-delivered ecash transfer
+outer kind 1059: default NIP-59 gift-wrap envelope
 ```
 
-The event is a regular signed Nostr event.
+The Acorn transfer payload is represented as an inner kind `7378` event. By
+default, that inner event is delivered inside a NIP-59 gift wrap whose public
+relay-visible outer event is kind `1059`.
 
-The event should be addressed to the recipient with a `p` tag. Relays and
-clients can then query by recipient:
+The outer gift-wrap event should be addressed to the recipient with a `p` tag.
+Relays and clients can then query by recipient:
 
 ```json
 {
-  "kinds": [7378],
+  "kinds": [1059, 7378],
   "#p": ["<recipient_pubkey>"],
   "since": 1234567890
 }
 ```
 
+The kind `7378` query remains for direct/debug transfers and legacy Acorn
+gift-wrapped transfers that used `7378` as the outer kind.
+
 ## Recommended event shape
 
 The production/default transfer format is gift-wrapped. The public relay event
-is a kind `7378` wrapper authored by a transient key and addressed to the
+is a NIP-59 kind `1059` wrapper authored by a transient key and addressed to the
 recipient with a `p` tag:
 
 ```json
 {
-  "kind": 7378,
+  "kind": 1059,
   "pubkey": "<transient_pubkey>",
   "content": "<encrypted gift wrap>",
   "tags": [
@@ -108,12 +114,12 @@ recipient with a `p` tag:
 ```
 
 Inside the gift wrap, the recipient can recover the sender-authored transfer
-payload. Public observers can see that a transient key published to the
-recipient, but they cannot directly correlate the sender wallet key to the
-recipient from the outer event.
+payload as an inner kind `7378` Acorn transfer. Public observers can see that a
+transient key published to the recipient, but they cannot directly correlate the
+sender wallet key to the recipient from the outer event.
 
-For debugging and legacy compatibility, Acorn may also support direct kind
-`7378` events:
+For debugging and legacy compatibility, Acorn also supports direct kind `7378`
+events:
 
 ```json
 {
@@ -169,7 +175,7 @@ records.
 By default, the transfer should be NIP-59 style gift-wrapped using NIP-44
 encryption. The recipient decrypts the outer wrapper using the private key for
 the resolved receiving identity, then decrypts the sealed inner event to obtain
-the sender-authored transfer payload.
+the sender-authored inner kind `7378` transfer payload.
 
 For direct mode, the event `content` itself is NIP-44 encrypted to the
 recipient.
@@ -182,9 +188,9 @@ The sender should never publish unencrypted proofs or tokens in kind `7378`.
 
 ## Recipient receive
 
-Receiving kind `7378` transfers should be an explicit operation, not an
-implicit side effect of checking balance. This keeps `balance` read-only and
-avoids assuming that the wallet key is always the NIP-05 owner key.
+Receiving Acorn ecash transfers should be an explicit operation, not an implicit
+side effect of checking balance. This keeps `balance` read-only and avoids
+assuming that the wallet key is always the NIP-05 owner key.
 
 Proposed receive behavior:
 
@@ -198,9 +204,9 @@ Proposed receive behavior:
      profile; or
    - wallet home relay fallback.
 4. Determine the ecash transfer cursor.
-5. Query transfer relays for kind `7378` events addressed to the receiving
-   public key.
-6. Decrypt each candidate event with the receiving key.
+5. Query transfer relays for kind `1059` gift wraps and legacy/direct kind
+   `7378` events addressed to the receiving public key.
+6. Unwrap/decrypt each candidate event with the receiving key.
 7. Extract the Cashu token.
 8. Accept the token using Acorn's existing token acceptance path.
 9. Refresh/swap the received proofs through the mint.
@@ -339,7 +345,7 @@ NIP-05 relay hints.
 Receive a specific event directly:
 
 ```sh
-acorn receive-ecash --event-id <kind-7378-event-id> --receive-nsec nsec1...
+acorn receive-ecash --event-id <kind-1059-or-7378-event-id> --receive-nsec nsec1...
 ```
 
 Direct event-id receive is useful when a relay stores the event but does not

@@ -199,8 +199,9 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             f"expected_amount={amount} "
             f"accepted_amount={sweep_back['accepted_amount']} "
             f"queried_count={sweep_back.get('queried_count')}. "
-            "This relay may not reliably return gift-wrapped kind 7378 "
-            "events, may have delayed propagation, or may apply filtering/"
+            "This relay may not reliably return kind 1059 gift wraps or "
+            "direct/legacy kind 7378 events, may have delayed propagation, "
+            "or may apply filtering/"
             "retention policies that make it unsuitable as an Acorn relay."
         )
         relay_suitable(

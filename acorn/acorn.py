@@ -63,6 +63,7 @@ import mimetypes
 RECORD_LIMIT: int = 1024
 PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
+ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
 BURN_DEFAULT_KINDS: List[int] = [0, 5, 37375, 37376, 7375, ECASH_TRANSFER_KIND, 30000, 30001, 30002]
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
@@ -2996,7 +2997,12 @@ class Acorn:
         nonce: str | None = None,
         direct: bool = False,
     ) -> Dict[str, Any]:
-        """Send ecash to another Acorn via encrypted kind 7378 relay event."""
+        """Send ecash to another Acorn via encrypted relay event.
+
+        Direct/debug mode publishes sender-authored kind 7378. Default
+        gift-wrapped mode publishes a NIP-59 kind 1059 outer event containing
+        an inner Acorn kind 7378 transfer.
+        """
 
         if int(amount) <= 0:
             raise ValueError("amount must be positive")
@@ -3043,7 +3049,11 @@ class Acorn:
                 n_msg.sign(self.privkey_hex)
                 transient_pubkey = None
             else:
-                my_gift = KindOtherGiftWrap(BasicKeySigner(self.k), kind_gift_wrap=ECASH_TRANSFER_KIND)
+                my_gift = KindOtherGiftWrap(
+                    BasicKeySigner(self.k),
+                    kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND,
+                    preserve_rumour_kind=True,
+                )
                 inner_evt = Event(
                     kind=ECASH_TRANSFER_KIND,
                     content=json.dumps(payload),
@@ -3061,7 +3071,9 @@ class Acorn:
 
         return {
             "status": "OK",
-            "kind": ECASH_TRANSFER_KIND,
+            "kind": n_msg.kind,
+            "transfer_kind": ECASH_TRANSFER_KIND,
+            "gift_wrap_kind": ECASH_TRANSFER_GIFT_WRAP_KIND if not direct else None,
             "event_id": n_msg.id,
             "recipient_pubkey": recipient_pubkey,
             "relays": transfer_relays,
@@ -3084,7 +3096,12 @@ class Acorn:
         receive_nsec: str | None = None,
         event_id: str | None = None,
     ) -> Dict[str, Any]:
-        """Accept encrypted kind 7378 ecash transfers addressed to this wallet."""
+        """Accept Acorn ecash transfers addressed to this wallet.
+
+        Receives standard NIP-59 kind 1059 gift wraps containing inner kind
+        7378 transfers, legacy kind 7378 gift wraps, and direct sender-authored
+        kind 7378 events.
+        """
 
         receive_key = Keys(priv_k=receive_nsec) if receive_nsec else self.k
         receive_pubkey = receive_key.public_key_hex()
@@ -3123,12 +3140,12 @@ class Acorn:
             query_filter = [{
                 "limit": 1,
                 "ids": [target_event_id],
-                "kinds": [ECASH_TRANSFER_KIND],
+                "kinds": [ECASH_TRANSFER_GIFT_WRAP_KIND, ECASH_TRANSFER_KIND],
             }]
         else:
             query_filter = [{
                 "limit": int(limit),
-                "kinds": [ECASH_TRANSFER_KIND],
+                "kinds": [ECASH_TRANSFER_GIFT_WRAP_KIND, ECASH_TRANSFER_KIND],
                 "#p": [receive_pubkey],
             }]
         if cursor > 0 and not target_event_id:
@@ -3139,7 +3156,8 @@ class Acorn:
 
         events_sorted = sorted(events, key=self._event_timestamp)
         receive_enc = NIP44Encrypt(receive_key)
-        receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_KIND)
+        receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND)
+        legacy_receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_KIND)
         accepted: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
@@ -3151,7 +3169,10 @@ class Acorn:
                 sender_pubkey = each_event.pub_key
                 mode = "direct"
                 try:
-                    unwrapped_event = await receive_gift.unwrap(each_event)
+                    gift_unwrapper = receive_gift
+                    if getattr(each_event, "kind", None) == ECASH_TRANSFER_KIND:
+                        gift_unwrapper = legacy_receive_gift
+                    unwrapped_event = await gift_unwrapper.unwrap(each_event)
                     decrypted = unwrapped_event.content
                     sender_pubkey = unwrapped_event.pub_key
                     mode = "gift-wrapped"
@@ -3192,6 +3213,8 @@ class Acorn:
                 )
                 accepted.append({
                     "event_id": each_event.id,
+                    "outer_kind": each_event.kind,
+                    "inner_kind": getattr(unwrapped_event, "kind", None) if mode == "gift-wrapped" else None,
                     "sender_pubkey": sender_pubkey,
                     "outer_pubkey": each_event.pub_key,
                     "mode": mode,

@@ -24,11 +24,12 @@ class KindOtherGiftWrap:
     """
     KIND_OTHER_GIFT_WRAP: int
 
-    def __init__(self, signer: SignerInterface, kind_gift_wrap: int = 1060):
+    def __init__(self, signer: SignerInterface, kind_gift_wrap: int = 1060, preserve_rumour_kind: bool = False):
         self._signer = signer
         # jitter is upto 2 days from now
         self._jitter = 60 * 60 * 24 * 2
         self.KIND_OTHER_GIFT_WRAP = kind_gift_wrap
+        self._preserve_rumour_kind = preserve_rumour_kind
 
     def get_jittered_created_ticks(self):
         # remove jittered ticks - deactivate
@@ -45,7 +46,8 @@ class KindOtherGiftWrap:
         event_data = evt.data()
         event_data['sig'] = None
         event_data['pubkey'] = await self._signer.get_public_key()
-        event_data['kind'] = Event.KIND_RUMOUR
+        if not self._preserve_rumour_kind:
+            event_data['kind'] = Event.KIND_RUMOUR
 
         ret = Event.load(event_data)
         # this forces the id, oxchat didn't see the events without this
