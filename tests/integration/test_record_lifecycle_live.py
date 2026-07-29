@@ -10,7 +10,7 @@ import pytest_asyncio
 
 from acorn.acorn import Acorn
 
-from tests.helpers import require_env
+from tests.helpers import ensure_test_wallet_config, remove_test_wallet_config, should_burn_test_wallet
 
 
 async def _drain_monstr_tasks():
@@ -70,22 +70,28 @@ async def cleanup_monstr_clients():
 @pytest.mark.integration
 @pytest.mark.asyncio
 async def test_live_record_lifecycle_round_trip():
-    env = require_env("ACORN_SENDER_NSEC", "ACORN_TEST_RELAY")
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
+    test_wallet_config = await _await_or_skip(
+        ensure_test_wallet_config(),
+        "test wallet init",
+        timeout,
+    )
+    test_nsec = test_wallet_config["nsec"]
+    test_relay = test_wallet_config["home_relay"]
     label = f"pytest-record-{uuid4().hex[:12]}"
     payload = f"hello from pytest {uuid4().hex}"
 
     acorn = Acorn(
-        nsec=env["ACORN_SENDER_NSEC"],
-        home_relay=env["ACORN_TEST_RELAY"],
-        relays=[env["ACORN_TEST_RELAY"]],
+        nsec=test_nsec,
+        home_relay=test_relay,
+        relays=[test_relay],
     )
     try:
         await _await_or_skip(acorn.load_data(), "wallet load", timeout)
     except RuntimeError as exc:
         pytest.skip(
-            "ACORN_SENDER_NSEC must be an initialized Acorn wallet "
-            f"on {env['ACORN_TEST_RELAY']}: {exc}"
+            "test wallet config must point to an initialized Acorn wallet "
+            f"on {test_relay}: {exc}"
         )
 
     try:
@@ -106,7 +112,7 @@ async def test_live_record_lifecycle_round_trip():
         assert record.payload == payload
 
         labels = await _eventually(
-            lambda: acorn.get_user_record_labels(relays=[env["ACORN_TEST_RELAY"]]),
+            lambda: acorn.get_user_record_labels(relays=[test_relay]),
             "record label listing",
             timeout,
             predicate=lambda labels: label in labels,
@@ -120,3 +126,11 @@ async def test_live_record_lifecycle_round_trip():
                 "record cleanup delete",
                 timeout,
             )
+        if should_burn_test_wallet(test_wallet_config):
+            with contextlib.suppress(Exception):
+                await _await_or_skip(
+                    acorn.burn_wallet(allow_funded=True),
+                    "test wallet burn cleanup",
+                    timeout,
+                )
+            remove_test_wallet_config(test_wallet_config)

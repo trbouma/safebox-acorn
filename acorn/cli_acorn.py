@@ -63,16 +63,6 @@ default_logging_level = 30
 
 # List of mints https://nostrapps.github.io/cashu/mints.json
 
-home_directory = os.path.expanduser('~')
-cli_directory = '.acorn'
-config_file = 'config.yml'
-config_directory = os.path.join(home_directory, cli_directory)
-file_path = os.path.join(home_directory, cli_directory, config_file)
-def write_config():
-     with open(file_path, 'w') as file:        
-        yaml.dump(config_obj, file)
-
-
 def _normalize_relay(relay: str) -> str:
     relay = str(relay).strip()
     if relay.startswith(("wss://", "ws://")):
@@ -112,37 +102,76 @@ def _format_recovery_material(recovery: dict) -> str:
         ]
     )
 
-os.makedirs(config_directory, exist_ok=True)
+def _extract_early_config_path(argv: list[str] | None = None) -> str | None:
+    args = list(sys.argv[1:] if argv is None else argv)
+    for index, arg in enumerate(args):
+        if arg == "--config" and index + 1 < len(args):
+            return args[index + 1]
+        if arg.startswith("--config="):
+            return arg.split("=", 1)[1]
+    return os.getenv("ACORN_CONFIG")
 
-CONFIG_FILE_EXISTED = os.path.exists(file_path)
 
-if CONFIG_FILE_EXISTED:
-    with open(file_path, 'r') as file:
-        config_obj = yaml.safe_load(file)
-else:
-   
-    config_obj = {  'nsec': Keys().private_key_bech32(),
-                    "home_relay": default_home_relay}
-    with open(file_path, 'w') as file:        
+def _resolve_config_path(config_path: str | None = None) -> str:
+    configured_path = config_path or _extract_early_config_path()
+    if configured_path:
+        return os.path.abspath(os.path.expanduser(configured_path))
+    return os.path.join(os.path.expanduser("~"), ".acorn", "config.yml")
+
+
+file_path = _resolve_config_path()
+config_directory = os.path.dirname(file_path)
+CONFIG_FILE_EXISTED = False
+config_obj = {}
+HOME_RELAY = default_home_relay
+RELAYS = [HOME_RELAY]
+PUBLIC_RELAYS = default_public_relays
+NSEC = None
+MINTS = default_mints
+REPLICATE_RELAYS = []
+LOGGING_LEVEL = default_logging_level
+
+
+def write_config():
+    os.makedirs(config_directory, exist_ok=True)
+    with open(file_path, 'w') as file:
         yaml.dump(config_obj, file)
 
-HOME_RELAY = config_obj.get('home_relay', default_home_relay)
-RELAYS  = config_obj.get('relays') or [HOME_RELAY]
-PUBLIC_RELAYS = config_obj.get('public_relays') or default_public_relays
-NSEC    = config_obj.get('nsec',None)
-MINTS   = config_obj.get('mints') or default_mints
-REPLICATE_RELAYS = config_obj.get('replicate_relays') or []
-LOGGING_LEVEL = int(config_obj.get('logging_level', default_logging_level))
 
-if NSEC == None:
-    click.echo("Private key is not set")
-    if click.confirm("Do you want to generate a new key?"):
-        
+def _load_config():
+    global CONFIG_FILE_EXISTED, config_obj, HOME_RELAY, RELAYS, PUBLIC_RELAYS, NSEC, MINTS, REPLICATE_RELAYS, LOGGING_LEVEL
+
+    os.makedirs(config_directory, exist_ok=True)
+    CONFIG_FILE_EXISTED = os.path.exists(file_path)
+
+    if CONFIG_FILE_EXISTED:
+        with open(file_path, 'r') as file:
+            config_obj = yaml.safe_load(file) or {}
+    else:
+        config_obj = {
+            'nsec': Keys().private_key_bech32(),
+            "home_relay": default_home_relay,
+        }
         write_config()
 
-    sys.exit()
+    HOME_RELAY = config_obj.get('home_relay', default_home_relay)
+    RELAYS = config_obj.get('relays') or [HOME_RELAY]
+    PUBLIC_RELAYS = config_obj.get('public_relays') or default_public_relays
+    NSEC = config_obj.get('nsec', None)
+    MINTS = config_obj.get('mints') or default_mints
+    REPLICATE_RELAYS = config_obj.get('replicate_relays') or []
+    LOGGING_LEVEL = int(config_obj.get('logging_level', default_logging_level))
 
-write_config()
+    if NSEC is None:
+        click.echo("Private key is not set")
+        if click.confirm("Do you want to generate a new key?"):
+            write_config()
+        sys.exit()
+
+    write_config()
+
+
+_load_config()
 
 
 def _configure_cli_logging(verbose: bool = False) -> int:
@@ -225,13 +254,15 @@ def _format_tx_history_entry(entry: dict) -> str:
 
 
 @click.group()
+@click.option("--config", "config_path", default=None, help="Path to Acorn config file; defaults to ~/.acorn/config.yml or ACORN_CONFIG")
 @click.option("--verbose", "-v", is_flag=True, help="Show debug logs.")
 @click.pass_context
-def cli(ctx, verbose):
+def cli(ctx, config_path, verbose):
     global LOGGING_LEVEL
     ctx.ensure_object(dict)
     LOGGING_LEVEL = _configure_cli_logging(verbose)
     ctx.obj["logging_level"] = LOGGING_LEVEL
+    ctx.obj["config_path"] = file_path
 
 @click.command("info", help=INFO_HELP)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
@@ -297,6 +328,7 @@ def info(ctx, json_output):
 def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
     existing_nsec = config_obj.get("nsec")
     existing_home_relay = config_obj.get("home_relay")
+    config_created = not CONFIG_FILE_EXISTED
     existing_wallet_config = CONFIG_FILE_EXISTED and existing_nsec
     existing_npub = None
 
@@ -324,6 +356,8 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
                     },
                     "force": force,
                     "confirmations_completed": False,
+                    "config_path": file_path,
+                    "config_created": config_created,
                 }
             )
             return
@@ -406,6 +440,9 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
 
     if not json_output:
         click.echo("Creating a new Acorn wallet.")
+        click.echo(f"config: {file_path}")
+        if config_created:
+            click.echo("config_created: true")
         click.echo(f"home_relay: {home_relay}")
         click.echo(f"home_mint: {home_mint}")
 
@@ -435,6 +472,8 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
                     "force": force,
                     "confirmations_completed": bool(force or not existing_wallet_config),
                     "local_config_replaced": False,
+                    "config_path": file_path,
+                    "config_created": config_created,
                     "error": str(exc),
                     "recovery": recovery,
                 }
@@ -474,6 +513,8 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
                 "force": force,
                 "confirmations_completed": bool(force or not existing_wallet_config),
                 "generated_nsec": generated_nsec,
+                "config_path": file_path,
+                "config_created": config_created,
                 "npub": acorn_obj.pubkey_bech32,
                 "pubkey": acorn_obj.pubkey_hex,
                 "home_relay": home_relay,
@@ -488,6 +529,7 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
         return
 
     click.echo("Acorn wallet initialized.")
+    click.echo(f"config: {file_path}")
     click.echo(f"npub: {acorn_obj.pubkey_bech32}")
     if force or click.confirm("Display new recovery/bootstrap material now?", default=True):
         click.echo("Sensitive recovery material:")
@@ -1086,6 +1128,98 @@ def delete_kind(kind):
         out_info = "No label found!"
     
     click.echo(out_info)
+
+@click.command("burn", help="Burn this wallet's relay data and remove local wallet config")
+@click.option("--send-to", default=None, help="NIP-05/npub/pubkey recipient for remaining ecash before burn")
+@click.option("--send-relay", default=None, help="Relay to publish the optional ecash sweep transfer")
+@click.option("--relay", "relays", default=None, help="Comma-separated relays to burn from; defaults to home relay")
+@click.option("--kinds", default=None, help="Comma-separated event kinds to burn; defaults to Acorn wallet/data kinds")
+@click.option("--allow-funded", is_flag=True, default=False, help="Burn even if funds remain and --send-to is not provided")
+@click.option("--keep-local-config", is_flag=True, default=False, help="Do not remove the local Acorn config file after burn")
+@click.option("--limit", default=1024, show_default=True, help="Maximum events to query for deletion")
+@click.option("--force", "-f", is_flag=True, default=False, help="Bypass confirmation prompts")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output")
+def burn(send_to, send_relay, relays, kinds, allow_funded, keep_local_config, limit, force, json_output):
+    burn_relays = [_normalize_relay(each) for each in _split_csv(relays)] if relays else None
+    burn_kinds = [int(each) for each in _split_csv(kinds)] if kinds else None
+    transfer_relay = _normalize_relay(send_relay) if send_relay else None
+    acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
+
+    try:
+        asyncio.run(acorn_obj.load_data())
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": f"Wallet load failed: {exc}"})
+            return
+        raise click.ClickException(f"Wallet load failed: {exc}") from exc
+
+    if not force:
+        click.echo("This will publish deletion requests for this Acorn wallet's relay-backed data.")
+        click.echo("NIP-09 deletion is advisory; relay retention behavior can vary.")
+        click.echo(f"npub: {acorn_obj.pubkey_bech32}")
+        click.echo(f"home_relay: {acorn_obj.home_relay}")
+        click.echo(f"balance: {acorn_obj.get_balance()} sats")
+        if acorn_obj.get_balance() > 0 and not send_to and not allow_funded:
+            raise click.ClickException("Wallet has funds. Provide --send-to or --allow-funded.")
+        expected = f"burn {acorn_obj.pubkey_bech32[-8:]}"
+        entered = click.prompt(f"Type '{expected}' to continue", default="", show_default=False)
+        if entered.strip() != expected:
+            raise click.ClickException("Burn cancelled.")
+
+    try:
+        result = asyncio.run(
+            acorn_obj.burn_wallet(
+                send_to=send_to,
+                send_relay=transfer_relay,
+                relays=burn_relays,
+                kinds=burn_kinds,
+                allow_funded=allow_funded,
+                limit=limit,
+            )
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Burn failed: {exc}") from exc
+
+    local_config_removed = False
+    if not keep_local_config:
+        try:
+            os.remove(file_path)
+            config_obj.clear()
+            local_config_removed = True
+        except FileNotFoundError:
+            local_config_removed = True
+        except Exception as exc:
+            result["local_config_error"] = str(exc)
+
+    result["local_config_removed"] = local_config_removed
+    result["local_config_path"] = file_path
+
+    if json_output:
+        _emit_json(result)
+        return
+
+    if result.get("sweep"):
+        click.echo("Funds swept before burn.")
+        click.echo(f"Sweep event: {result['sweep']['event_id']}")
+        click.echo(f"Sweep amount: {result['sweep']['amount']} {result['sweep']['unit']}")
+    elif result.get("balance_before", 0) > 0:
+        click.echo("Funds were present and were not swept.")
+
+    click.echo("Burn deletion request published." if result.get("delete_event_id") else "No matching relay events found to burn.")
+    click.echo(f"Matched events: {result['matched']}")
+    click.echo(f"Deleted events requested: {result['deleted']}")
+    click.echo(f"Delete event: {result.get('delete_event_id') or '(none)'}")
+    click.echo(f"Relays: {', '.join(result['relays'])}")
+    click.echo("Kinds:")
+    for kind, count in sorted(result.get("by_kind", {}).items(), key=lambda item: int(item[0])):
+        click.echo(f"- {kind}: {count}")
+    if not result.get("by_kind"):
+        click.echo("- (none)")
+    click.echo(f"Local config removed: {local_config_removed}")
+    click.echo(result["advisory"])
 
 @click.command("get_user_records", help='list private wallet records')
 @click.option('--kind','-k', default=37375)
@@ -1848,6 +1982,7 @@ cli.add_command(get)
 cli.add_command(get_blob)
 cli.add_command(delete_record)
 cli.add_command(delete_kind)
+cli.add_command(burn)
 cli.add_command(get_user_records)
 cli.add_command(balance)
 cli.add_command(ecash_transfer)

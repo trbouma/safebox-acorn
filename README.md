@@ -23,6 +23,7 @@ without requiring the Safebox web application.
 - [Mint Configuration Specification](./docs/MINT-CONFIGURATION-SPEC.md)
 - [CLI Contract](./docs/CLI-CONTRACT.md)
 - [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
+- [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
@@ -93,7 +94,93 @@ Then edit `.env` and run:
 poetry run pytest -m live
 ```
 
+Live tests use the default Acorn profile, normally `~/.acorn/config.yml`, as
+the source wallet. This source wallet should already be initialized and should
+have a small spendable balance when running ecash transfer tests.
+
+Disposable test wallets use an explicit config file, configured by
+`ACORN_TEST_WALLET_CONFIG`. By default, live tests create this wallet if it is
+missing and burn/remove it after the test:
+
+```env
+ACORN_TEST_WALLET_CONFIG=./.acorn-test/test-wallet.yml
+ACORN_TEST_CREATE_WALLET=true
+ACORN_TEST_BURN_AFTER=true
+```
+
+You can also create it manually:
+
+```sh
+acorn --config ./.acorn-test/test-wallet.yml init \
+  --homerelay "${ACORN_TEST_RELAY:-ws://beelink:7777}" \
+  --force
+```
+
+If the config file does not exist, `init` creates the parent directory and YAML
+config file.
+
+Set `ACORN_TEST_RELAY` to point disposable test-wallet operations at a local
+relay, for example:
+
+```env
+ACORN_TEST_RELAY=ws://beelink:7777
+```
+
+Ecash transfer tests publish transfer events to `ACORN_TEST_TRANSFER_RELAY` if
+set, otherwise to `ACORN_TEST_RELAY`, otherwise to the test wallet's
+`home_relay`.
+
+The burn live test creates a separate disposable burn wallet config next to the
+main test wallet, funds it from the source wallet, burns it, and verifies that
+remaining funds are swept back.
+
+The live test flow can also be used as a manual interoperability check with the
+Safebox web app: create or recover the same source wallet in the web app and
+verify that deposits, ecash transfers, burn sweeps, balances, and transaction
+history are visible from both surfaces. See
+[Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md).
+
+Ecash receive tests use `ACORN_RECEIVE_NSEC` for the recipient identity. If
+`ACORN_RECIPIENT_NIP05` is omitted, the recipient npub is derived from
+`ACORN_RECEIVE_NSEC`. If you need to override the source wallet path, set
+`ACORN_SOURCE_CONFIG`.
+
 The real `.env` file is gitignored. Do not commit real `nsec` values.
+
+## Config files
+
+By default, Acorn stores local bootstrap configuration in:
+
+```text
+~/.acorn/config.yml
+```
+
+For disposable wallets, tests, or project-specific environments, pass an
+explicit config file:
+
+```sh
+acorn --config ./test-wallet.yml balance
+```
+
+You can also set `ACORN_CONFIG=/path/to/config.yml`.
+
+## Wallet burn lifecycle
+
+For disposable test wallets, Acorn can create, fund, exercise, and burn a wallet.
+Burning publishes NIP-09 deletion requests for the wallet's relay-backed data
+and removes the local wallet config by default.
+
+```sh
+acorn burn --send-to alice@example.com
+```
+
+If the wallet has funds, provide `--send-to` to sweep the balance as an Acorn
+ecash transfer before deletion, or explicitly use `--allow-funded`. Use
+`--keep-local-config` for dry-run-like development flows where you want relay
+deletion without removing the local config file.
+
+NIP-09 deletion is advisory: relays and clients ultimately decide whether
+matching events are hidden, retained, or garbage-collected.
 
 ## Record output
 

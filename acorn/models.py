@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 from typing import Union, List, Optional
 from typing import Any, Dict
 import hashlib
@@ -118,7 +118,7 @@ class Proof(BaseModel):
         # optional fields
         if include_dleq:
             assert self.dleq, "DLEQ proof is missing"
-            return_dict["dleq"] = self.dleq.dict()  # type: ignore
+            return_dict["dleq"] = self.dleq.model_dump()  # type: ignore
 
         if self.witness:
             return_dict["witness"] = self.witness
@@ -321,7 +321,7 @@ class TokenV3(BaseModel):
         token_base64 += "=" * (4 - len(token_base64) % 4)
 
         token = json.loads(base64.urlsafe_b64decode(token_base64))
-        return cls.parse_obj(token)
+        return cls.model_validate(token)
 
     def serialize(self, include_dleq=False) -> str:
         """
@@ -342,14 +342,12 @@ class EncryptionParms(BaseModel):
     aad: str|None = None
 
 class EncryptionResult(BaseModel):
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
+
     alg: str                     # "AES-256-GCM"
     cipherbytes: bytes            # encrypted bytes (auth tag included)
     iv: bytes                    # nonce
     aad: Optional[bytes] = None
-
-    class Config:
-        arbitrary_types_allowed = True
-        frozen = True
 
 class SafeboxRecord(BaseModel):
     tag: list[str]                     # e.g. ["my_record"]
@@ -540,7 +538,7 @@ class TokenV4(BaseModel):
         return cls(t=cls.t, d=cls.d, m=cls.m, u=cls.u)
 
     def serialize_to_dict(self, include_dleq=False):
-        return_dict: Dict[str, Any] = dict(t=[t.dict() for t in self.t])
+        return_dict: Dict[str, Any] = dict(t=[t.model_dump() for t in self.t])
         # strip dleq if needed
         if not include_dleq:
             for token in return_dict["t"]:
@@ -587,7 +585,7 @@ class TokenV4(BaseModel):
         token_base64 += "=" * (4 - len(token_base64) % 4)
 
         token = cbor2.loads(base64.urlsafe_b64decode(token_base64))
-        return cls.parse_obj(token)
+        return cls.model_validate(token)
 
     def to_tokenv3(self) -> TokenV3:
         tokenv3 = TokenV3()

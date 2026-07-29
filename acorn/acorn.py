@@ -64,6 +64,7 @@ RECORD_LIMIT: int = 1024
 PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
+BURN_DEFAULT_KINDS: List[int] = [0, 5, 37375, 37376, 7375, ECASH_TRANSFER_KIND, 30000, 30001, 30002]
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
     "RECEIVE_PROOF_MAINTENANCE_ENABLED",
     "true",
@@ -330,6 +331,113 @@ class Acorn:
             "replicated": len(unique_events),
             "by_kind": by_kind,
             "event_ids": [str(event.id) for event in unique_events],
+        }
+
+    async def _query_authored_events_for_burn(
+        self,
+        relays: List[str],
+        kinds: List[int],
+        limit: int = RECORD_LIMIT,
+    ) -> List[Event]:
+        query_filter = [{
+            "limit": int(limit),
+            "authors": [self.pubkey_hex],
+            "kinds": sorted({int(each) for each in kinds}),
+        }]
+        async with ClientPool(relays) as c:
+            events: List[Event] = await c.query(query_filter)
+
+        seen: set[str] = set()
+        unique_events: List[Event] = []
+        for event in events:
+            event_id = str(event.id)
+            if event_id in seen:
+                continue
+            seen.add(event_id)
+            unique_events.append(event)
+        return unique_events
+
+    async def burn_wallet(
+        self,
+        send_to: str | None = None,
+        send_relay: str | None = None,
+        relays: List[str] | None = None,
+        kinds: List[int] | None = None,
+        allow_funded: bool = False,
+        limit: int = RECORD_LIMIT,
+    ) -> Dict[str, Any]:
+        """Burn this wallet's relay-backed data by publishing NIP-09 deletions.
+
+        If `send_to` is provided and the wallet has a spendable balance, the
+        balance is first sent as a kind 7378 ecash transfer. NIP-09 deletion is
+        advisory: relays and clients ultimately decide whether matching events
+        are hidden, retained, or garbage-collected.
+        """
+
+        burn_relays = self._normalize_relays(relays or [self.home_relay])
+        if not burn_relays:
+            raise ValueError("at least one burn relay is required")
+
+        burn_kinds = sorted({int(each) for each in (kinds or BURN_DEFAULT_KINDS)})
+        if not burn_kinds:
+            raise ValueError("at least one burn kind is required")
+
+        balance_before = int(self.get_balance())
+        sweep_result: Dict[str, Any] | None = None
+        if balance_before > 0:
+            if send_to:
+                sweep_result = await self.send_ecash_transfer(
+                    amount=balance_before,
+                    recipient=send_to,
+                    relay=send_relay,
+                    comment="acorn wallet burn sweep",
+                )
+                # Refresh local state after issuing the sweep token.
+                with contextlib.suppress(Exception):
+                    await self.load_data()
+            elif not allow_funded:
+                raise ValueError(
+                    "wallet has a positive balance; provide send_to or set allow_funded=True"
+                )
+
+        events = await self._query_authored_events_for_burn(
+            relays=burn_relays,
+            kinds=burn_kinds,
+            limit=limit,
+        )
+        event_ids = [str(event.id) for event in events]
+        by_kind: Dict[str, int] = {}
+        for event in events:
+            kind_key = str(event.kind)
+            by_kind[kind_key] = by_kind.get(kind_key, 0) + 1
+
+        delete_request: Dict[str, Any] | None = None
+        if event_ids:
+            delete_request = await self.publish_deletion_request(
+                event_ids=event_ids,
+                kinds=burn_kinds,
+                reason="burn acorn wallet data",
+                relays=burn_relays,
+            )
+
+        balance_after = int(self.get_balance())
+        return {
+            "status": "OK",
+            "pubkey": self.pubkey_hex,
+            "npub": self.pubkey_bech32,
+            "relays": burn_relays,
+            "kinds": burn_kinds,
+            "limit": int(limit),
+            "balance_before": balance_before,
+            "balance_after": balance_after,
+            "sweep": sweep_result,
+            "matched": len(event_ids),
+            "deleted": len(event_ids),
+            "by_kind": by_kind,
+            "event_ids": event_ids,
+            "delete_event_id": delete_request.get("event_id") if delete_request else None,
+            "delete_request": delete_request,
+            "advisory": "NIP-09 deletion requests are advisory; relay retention behavior can vary.",
         }
    
     async def load_data(self, force_profile_creation: bool=False):

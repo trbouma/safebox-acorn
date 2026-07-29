@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import importlib
+import os
 from pathlib import Path
+import yaml
 
 
 def _load_cli(monkeypatch, tmp_path):
@@ -84,6 +86,57 @@ def test_format_recovery_material(monkeypatch, tmp_path):
         "seed_phrase: alpha beta gamma",
         "nsec: nsec1example",
     ]
+
+
+def test_resolve_config_path_from_explicit_value(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    config_path = cli._resolve_config_path("./test-wallet.yml")
+
+    assert config_path == os.path.abspath("./test-wallet.yml")
+
+
+def test_extract_early_config_path_from_argv(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    assert cli._extract_early_config_path(["--config", "./wallet.yml", "balance"]) == "./wallet.yml"
+    assert cli._extract_early_config_path(["--config=./wallet.yml", "balance"]) == "./wallet.yml"
+
+
+def test_extract_early_config_path_from_env(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    monkeypatch.setenv("ACORN_CONFIG", "./env-wallet.yml")
+
+    assert cli._extract_early_config_path(["balance"]) == "./env-wallet.yml"
+
+
+def test_test_wallet_config_uses_test_relay_override(monkeypatch, tmp_path):
+    from tests.helpers import require_test_wallet_config
+
+    config_path = tmp_path / "test-wallet.yml"
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "nsec": "nsec1example",
+                "home_relay": "wss://stored-relay.example.com",
+            }
+        )
+    )
+    monkeypatch.setenv("ACORN_TEST_WALLET_CONFIG", str(config_path))
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+
+    config = require_test_wallet_config()
+
+    assert config["home_relay"] == "ws://beelink:7777"
+
+
+def test_transfer_relay_prefers_explicit_transfer_relay(monkeypatch):
+    from tests.helpers import get_test_transfer_relay
+
+    monkeypatch.setenv("ACORN_TEST_RELAY", "ws://beelink:7777")
+    monkeypatch.setenv("ACORN_TEST_TRANSFER_RELAY", "relay.example.com")
+
+    assert get_test_transfer_relay("wss://wallet-relay.example.com") == "wss://relay.example.com"
 
 
 def test_format_tx_history_entry_credit(monkeypatch, tmp_path):

@@ -6,10 +6,18 @@ import os
 
 import pytest
 import pytest_asyncio
+from monstr.encrypt import Keys
 
 from acorn.acorn import Acorn
 
-from tests.helpers import require_env
+from tests.helpers import (
+    ensure_test_wallet_config,
+    get_test_transfer_relay,
+    remove_test_wallet_config,
+    require_env,
+    require_source_config,
+    should_burn_test_wallet,
+)
 
 
 async def _drain_monstr_tasks():
@@ -51,69 +59,110 @@ async def cleanup_monstr_clients():
 @pytest.mark.asyncio
 async def test_live_gift_wrapped_ecash_transfer_round_trip():
     env = require_env(
-        "ACORN_SENDER_NSEC",
         "ACORN_RECEIVE_NSEC",
-        "ACORN_RECIPIENT_NIP05",
-        "ACORN_TEST_RELAY",
     )
+    source_config = require_source_config()
     amount = int(os.getenv("ACORN_TEST_AMOUNT", "1"))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
+    test_wallet_config = await _await_or_skip(
+        ensure_test_wallet_config(),
+        "test wallet init",
+        timeout,
+    )
+    source_nsec = source_config["nsec"]
+    source_relay = source_config["home_relay"]
+    test_nsec = test_wallet_config["nsec"]
+    test_relay = test_wallet_config["home_relay"]
+    transfer_relay = get_test_transfer_relay(test_relay)
+    recipient = os.getenv("ACORN_RECIPIENT_NIP05") or Keys(priv_k=env["ACORN_RECEIVE_NSEC"]).public_key_bech32()
 
     sender = Acorn(
-        nsec=env["ACORN_SENDER_NSEC"],
-        home_relay=env["ACORN_TEST_RELAY"],
-        relays=[env["ACORN_TEST_RELAY"]],
+        nsec=source_nsec,
+        home_relay=source_relay,
+        relays=[source_relay],
     )
     try:
         await _await_or_skip(sender.load_data(), "sender wallet load", timeout)
     except RuntimeError as exc:
         pytest.skip(
-            "ACORN_SENDER_NSEC must be an initialized, funded Acorn wallet "
-            f"on {env['ACORN_TEST_RELAY']}: {exc}"
+            "source wallet config must point to an initialized, funded Acorn wallet "
+            f"on {source_relay}: {exc}"
         )
     before = sender.get_balance()
     if before < amount:
         pytest.skip(
-            "ACORN_SENDER_NSEC must have enough spendable balance for the live "
+            "source wallet must have enough spendable balance for the live "
             f"test: balance={before}, amount={amount}"
         )
 
-    transfer = await _await_or_skip(
-        sender.send_ecash_transfer(
-            amount=amount,
-            recipient=env["ACORN_RECIPIENT_NIP05"],
-            relay=env["ACORN_TEST_RELAY"],
-            comment="pytest live gift-wrapped transfer",
-        ),
-        "ecash transfer publish",
-        timeout,
-    )
-
-    assert transfer["kind"] == 7378
-    assert transfer["mode"] == "gift-wrapped"
-    assert transfer["deletable_by_sender"] is False
-    assert transfer["event_id"]
-
     receiver_wallet = Acorn(
-        nsec=env["ACORN_SENDER_NSEC"],
-        home_relay=env["ACORN_TEST_RELAY"],
-        relays=[env["ACORN_TEST_RELAY"]],
-    )
-    await _await_or_skip(receiver_wallet.load_data(), "receiver wallet load", timeout)
-
-    receive = await _await_or_skip(
-        receiver_wallet.sweep_ecash_transfers(
-            relays=[env["ACORN_TEST_RELAY"]],
-            receive_nsec=env["ACORN_RECEIVE_NSEC"],
-            event_id=transfer["event_id"],
-        ),
-        "ecash transfer receive",
-        timeout,
+        nsec=test_nsec,
+        home_relay=test_relay,
+        relays=[test_relay],
     )
 
-    assert receive["accepted_count"] == 1
-    assert receive["accepted_amount"] == amount
-    assert receive["accepted"][0]["mode"] == "gift-wrapped"
+    try:
+        transfer = await _await_or_skip(
+            sender.send_ecash_transfer(
+                amount=amount,
+                recipient=recipient,
+                relay=transfer_relay,
+                comment="pytest live gift-wrapped transfer",
+            ),
+            "ecash transfer publish",
+            timeout,
+        )
 
-    await _await_or_skip(receiver_wallet.load_data(), "final wallet reload", timeout)
-    assert receiver_wallet.get_balance() >= before
+        assert transfer["kind"] == 7378
+        assert transfer["mode"] == "gift-wrapped"
+        assert transfer["deletable_by_sender"] is False
+        assert transfer["event_id"]
+
+        await _await_or_skip(receiver_wallet.load_data(), "receiver wallet load", timeout)
+        receiver_before = receiver_wallet.get_balance()
+
+        receive = await _await_or_skip(
+            receiver_wallet.sweep_ecash_transfers(
+                relays=[transfer_relay],
+                receive_nsec=env["ACORN_RECEIVE_NSEC"],
+                event_id=transfer["event_id"],
+            ),
+            "ecash transfer receive",
+            timeout,
+        )
+
+        assert receive["accepted_count"] == 1
+        assert receive["accepted_amount"] == amount
+        assert receive["accepted"][0]["mode"] == "gift-wrapped"
+
+        await _await_or_skip(receiver_wallet.load_data(), "final wallet reload", timeout)
+        assert receiver_wallet.get_balance() >= receiver_before + amount
+
+    finally:
+        if should_burn_test_wallet(test_wallet_config):
+            with contextlib.suppress(Exception):
+                await _await_or_skip(receiver_wallet.load_data(), "cleanup wallet load", timeout)
+            source_recipient = Keys(priv_k=source_nsec).public_key_bech32()
+            burn_result = None
+            with contextlib.suppress(Exception):
+                burn_result = await _await_or_skip(
+                    receiver_wallet.burn_wallet(
+                        send_to=source_recipient,
+                        send_relay=transfer_relay,
+                        relays=[test_relay],
+                        allow_funded=True,
+                    ),
+                    "test wallet burn cleanup",
+                    timeout,
+                )
+            if burn_result and burn_result.get("sweep", {}).get("event_id"):
+                with contextlib.suppress(Exception):
+                    await _await_or_skip(
+                        sender.sweep_ecash_transfers(
+                            relays=[transfer_relay],
+                            event_id=burn_result["sweep"]["event_id"],
+                        ),
+                        "source wallet sweep-back receive",
+                        timeout,
+                    )
+            remove_test_wallet_config(test_wallet_config)
