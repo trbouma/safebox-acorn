@@ -141,6 +141,59 @@ failure output may include recovery material. Treat that output as sensitive.
 Some commands may expose `--raw` for debugging internal objects. Raw output is
 not considered a stable machine contract. Prefer `--json` for scripts.
 
+## Ecash transfer commands
+
+`acorn ecash-transfer` and `acorn receive-ecash` expose the Acorn
+transferable-record path for ecash.
+
+Default transfer mode is gift-wrapped:
+
+```text
+outer relay-visible event: kind 1059
+inner Acorn transfer: kind 7378
+durable proof state after acceptance: kind 7375
+transaction history: kind 7377
+```
+
+Human output for `acorn ecash-transfer` should make the outer/inner distinction
+clear:
+
+```text
+Ecash transfer published.
+Kind: 1059
+Inner transfer kind: 7378
+Mode: gift-wrapped
+```
+
+The `--direct` option is for debugging and legacy compatibility. It publishes a
+sender-authored direct kind `7378` event instead of a default NIP-59 kind `1059`
+gift wrap.
+
+`acorn receive-ecash` should receive:
+
+- standard kind `1059` gift wraps containing inner kind `7378` transfers;
+- legacy kind `7378` gift wraps;
+- direct sender-authored kind `7378` transfers.
+
+Receiving ecash is an explicit mutating operation. It may accept a token through
+the mint, refresh proofs, write updated kind `7375` proof state, and write kind
+`7377` transaction history. It must not be hidden inside `acorn balance`.
+
+When `--receive-nsec` is supplied, the key is transient receiving material. It
+may be used to unwrap incoming transfer events, but it must not be stored in the
+wallet config.
+
+JSON output for these commands should include enough protocol detail for
+scripts to distinguish transport from transfer intent, including:
+
+```json
+{
+  "kind": 1059,
+  "transfer_kind": 7378,
+  "mode": "gift-wrapped"
+}
+```
+
 ## Read-only inspection options
 
 Inspection flags under `acorn set` should be read-only when used by themselves.

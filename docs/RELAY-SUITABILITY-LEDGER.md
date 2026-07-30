@@ -30,11 +30,14 @@ Last updated: 2026-07-29
 
 | Relay | Status | Observed result | Observed time | Notes |
 | --- | --- | --- | --- | --- |
-| `ws://beelink:8735` | Suitable | Passed controlled live test matrix | ~58s to ~60s | Local controlled relay used for development. |
+| `wss://purplerelay.com/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~48.7s | Real third-party relay. Passed core Acorn capabilities. |
+| `wss://relay.mostr.pub/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~49.4s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.openetr.org` | Suitable | Passed third-party scenario live test matrix | ~55s | Independently deployed relay controlled by the project operator. |
-| `wss://nos.lol` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~62.1s | Real third-party relay. Passed core Acorn capabilities. |
+| `ws://beelink:8735` | Suitable | Passed controlled live test matrix | ~58s to ~60s | Local controlled relay used for development. |
 | `wss://nostr.oxtr.dev` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~61.3s | Real third-party relay. Passed core Acorn capabilities. |
+| `wss://nos.lol` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~62.1s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.primal.net` | Suitable | Passed third-party scenario live test matrix | ~99s | Real third-party relay. Passed core Acorn capabilities, but slower than `relay.openetr.org` in the observed run. |
+| `wss://espelho.girino.org` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~108.8s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://nostr.openhoofd.nl` | Suitable | Passed third-party scenario live test matrix | ~114s | Real third-party relay. Passed burn sweep, gift-wrapped ecash transfer, and private record lifecycle. |
 | `wss://custom.fiatjaf.com` | Unsuitable as tested | wallet-bootstrap-readback: wallet bootstrap state was not readable after initialization | ~0.0s | Failed the basic Acorn home-relay bootstrap readback requirement. |
 | `wss://dwebcamp.nos.social` | Unsuitable as tested | wallet-bootstrap-readback: wallet bootstrap state was not readable after initialization | ~0.0s | Failed the basic Acorn home-relay bootstrap readback requirement. |

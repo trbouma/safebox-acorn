@@ -101,7 +101,33 @@ acorn swap --consolidate
 acorn deposit
 acorn pay
 acorn issue_token
+acorn receive-ecash
 ```
+
+## Received ecash proof state
+
+Incoming ecash transfers are delivery events, not durable proof state.
+
+The default receive path is:
+
+```text
+kind 1059 gift wrap
+  -> unwrap inner kind 7378 Acorn transfer
+  -> extract Cashu token
+  -> accept token through the mint
+  -> refresh/swap proofs as needed
+  -> persist spendable proofs as kind 7375 proof state
+  -> write transaction history as kind 7377
+```
+
+The relay-visible transfer event is therefore not the balance. It is an inbox
+delivery mechanism. The wallet balance comes from the refreshed proofs that are
+accepted by the mint and then persisted into the normal kind `7375` proof
+state.
+
+This is why `receive-ecash` is explicit and mutating. It turns received transfer
+material into current wallet proof state. In contrast, `balance` must remain a
+read-only inspection command.
 
 ## Explicit repair model
 
@@ -227,4 +253,3 @@ repair proofs explicitly;
 trust the mint for spend state;
 verify balance before spending again.
 ```
-
