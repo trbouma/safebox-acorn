@@ -150,6 +150,27 @@ These layers can move and harden independently. For example, data can be
 replicated to a community relay, keys can eventually live in protected hardware,
 and application code can be replaced without losing the user's protocol state.
 
+### Becoming concrete
+
+The sovereign protocol component idea becomes concrete when Acorn can operate
+against infrastructure that the Safebox project does not control.
+
+Recent live testing has shown that Acorn can use both a third-party Nostr relay
+and a third-party Cashu mint while preserving the same user-controlled wallet
+model:
+
+- the user's `nsec` remains the continuity boundary;
+- wallet state and private records remain relay-backed and encrypted;
+- ecash proofs are accepted, refreshed, and stored back into Acorn state;
+- transaction history remains visible to compatible application surfaces;
+- relay and mint choice remain explicit infrastructure decisions rather than
+  application lock-in.
+
+This is the practical difference between an application feature and a sovereign
+protocol component. A feature works inside one product boundary. A sovereign
+protocol component keeps working when the surrounding relay, mint, app, or
+deployment operator changes.
+
 ### It carries its own identity
 
 Acorn identity is rooted in user key material:

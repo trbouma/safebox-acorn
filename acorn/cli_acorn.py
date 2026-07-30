@@ -252,6 +252,52 @@ def _format_tx_history_entry(entry: dict) -> str:
     return "\n".join(lines)
 
 
+def _balance_by_mint(acorn_obj: Acorn) -> list[dict]:
+    all_proofs, keyset_amounts = acorn_obj._proofs_by_keyset()
+    mint_rows: dict[str, dict] = {}
+
+    for keyset, amount in keyset_amounts.items():
+        mint = acorn_obj.known_mints.get(keyset) or "unknown"
+        row = mint_rows.setdefault(
+            mint,
+            {
+                "mint": mint,
+                "balance": 0,
+                "unit": "sat",
+                "proof_count": 0,
+                "keysets": [],
+            },
+        )
+        proofs = all_proofs.get(keyset, [])
+        row["balance"] += amount
+        row["proof_count"] += len(proofs)
+        row["keysets"].append(
+            {
+                "keyset": keyset,
+                "balance": amount,
+                "unit": "sat",
+                "proof_count": len(proofs),
+            }
+        )
+
+    return sorted(mint_rows.values(), key=lambda row: (-row["balance"], row["mint"]))
+
+
+def _format_balance_by_mint(rows: list[dict]) -> str:
+    if not rows:
+        return "No mint balances found."
+
+    lines = ["Mint balances:"]
+    for row in rows:
+        lines.append(f"- {row['mint']}: {row['balance']} sats in {row['proof_count']} proofs")
+        for keyset in sorted(row["keysets"], key=lambda each: each["keyset"]):
+            lines.append(
+                f"  - keyset {keyset['keyset']}: "
+                f"{keyset['balance']} sats in {keyset['proof_count']} proofs"
+            )
+    return "\n".join(lines)
+
+
 
 @click.group()
 @click.option("--config", "config_path", default=None, help="Path to Acorn config file; defaults to ~/.acorn/config.yml or ACORN_CONFIG")
@@ -1132,17 +1178,21 @@ def delete_kind(kind):
 @click.command("burn", help="Burn this wallet's relay data and remove local wallet config")
 @click.option("--send-to", default=None, help="NIP-05/npub/pubkey recipient for remaining ecash before burn")
 @click.option("--send-relay", default=None, help="Relay to publish the optional ecash sweep transfer")
+@click.option("--pay-to", default=None, help="Lightning address recipient for remaining funds before burn")
+@click.option("--pay-amount", default=None, type=int, help="Lightning amount in sats; defaults to the maximum amount that fits mint fees")
 @click.option("--relay", "relays", default=None, help="Comma-separated relays to burn from; defaults to home relay")
 @click.option("--kinds", default=None, help="Comma-separated event kinds to burn; defaults to Acorn wallet/data kinds")
-@click.option("--allow-funded", is_flag=True, default=False, help="Burn even if funds remain and --send-to is not provided")
+@click.option("--allow-funded", is_flag=True, default=False, help="Burn even if funds remain and no sweep/payment recipient is provided")
 @click.option("--keep-local-config", is_flag=True, default=False, help="Do not remove the local Acorn config file after burn")
 @click.option("--limit", default=1024, show_default=True, help="Maximum events to query for deletion")
 @click.option("--force", "-f", is_flag=True, default=False, help="Bypass confirmation prompts")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output")
-def burn(send_to, send_relay, relays, kinds, allow_funded, keep_local_config, limit, force, json_output):
+def burn(send_to, send_relay, pay_to, pay_amount, relays, kinds, allow_funded, keep_local_config, limit, force, json_output):
     burn_relays = [_normalize_relay(each) for each in _split_csv(relays)] if relays else None
     burn_kinds = [int(each) for each in _split_csv(kinds)] if kinds else None
     transfer_relay = _normalize_relay(send_relay) if send_relay else None
+    if send_to and pay_to:
+        raise click.ClickException("Use only one of --send-to for Acorn ecash or --pay-to for Lightning.")
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
 
     try:
@@ -1159,8 +1209,10 @@ def burn(send_to, send_relay, relays, kinds, allow_funded, keep_local_config, li
         click.echo(f"npub: {acorn_obj.pubkey_bech32}")
         click.echo(f"home_relay: {acorn_obj.home_relay}")
         click.echo(f"balance: {acorn_obj.get_balance()} sats")
-        if acorn_obj.get_balance() > 0 and not send_to and not allow_funded:
-            raise click.ClickException("Wallet has funds. Provide --send-to or --allow-funded.")
+        if pay_to and pay_amount is None:
+            click.echo("Lightning pay amount will be reduced automatically, if needed, to fit mint fee reserve.")
+        if acorn_obj.get_balance() > 0 and not send_to and not pay_to and not allow_funded:
+            raise click.ClickException("Wallet has funds. Provide --send-to, --pay-to, or --allow-funded.")
         expected = f"burn {acorn_obj.pubkey_bech32[-8:]}"
         entered = click.prompt(f"Type '{expected}' to continue", default="", show_default=False)
         if entered.strip() != expected:
@@ -1171,6 +1223,8 @@ def burn(send_to, send_relay, relays, kinds, allow_funded, keep_local_config, li
             acorn_obj.burn_wallet(
                 send_to=send_to,
                 send_relay=transfer_relay,
+                pay_to=pay_to,
+                pay_amount=pay_amount,
                 relays=burn_relays,
                 kinds=burn_kinds,
                 allow_funded=allow_funded,
@@ -1205,6 +1259,16 @@ def burn(send_to, send_relay, relays, kinds, allow_funded, keep_local_config, li
         click.echo("Funds swept before burn.")
         click.echo(f"Sweep event: {result['sweep']['event_id']}")
         click.echo(f"Sweep amount: {result['sweep']['amount']} {result['sweep']['unit']}")
+    elif result.get("payment"):
+        click.echo("Funds paid by Lightning before burn.")
+        click.echo(f"Payment recipient: {result['payment']['pay_to']}")
+        click.echo(f"Payment amount: {result['payment']['amount']} {result['payment']['unit']}")
+        click.echo(f"Payment fees: {result['payment']['fees']} sats")
+        if result["payment"].get("auto_amount"):
+            click.echo(f"Auto amount: yes (balance before: {result['payment'].get('balance_before')} sats)")
+            if result["payment"].get("estimated_total") is not None:
+                click.echo(f"Estimated total with fee reserve: {result['payment']['estimated_total']} sats")
+        click.echo(f"Payment message: {result['payment']['message']}")
     elif result.get("balance_before", 0) > 0:
         click.echo("Funds were present and were not swept.")
 
@@ -1296,7 +1360,8 @@ def get_user_records(kind, since, relays, labels, raw, json_output):
 
 @click.command("balance", help="show balance")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
-def balance(json_output):
+@click.option("--mints", "show_mints", is_flag=True, help="Show balance grouped by mint and keyset.")
+def balance(json_output, show_mints):
     
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -1311,14 +1376,20 @@ def balance(json_output):
 
     balance_sats = acorn_obj.get_balance()
     proof_count = len(acorn_obj.proofs)
+    mint_balances = _balance_by_mint(acorn_obj) if show_mints else []
     if json_output:
-        _emit_json({
+        payload = {
             "balance": balance_sats,
             "unit": "sat",
             "proof_count": proof_count,
-        })
+        }
+        if show_mints:
+            payload["mints"] = mint_balances
+        _emit_json(payload)
     else:
         click.echo(f"{balance_sats} sats in {proof_count} proofs.")
+        if show_mints:
+            click.echo(_format_balance_by_mint(mint_balances))
 
 @click.command("receive-ecash", help="Receive Acorn ecash transfers into this Acorn")
 @click.option("--since", default=None, type=int, help="Override incoming ecash transfer cursor.")

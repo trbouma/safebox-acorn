@@ -14,6 +14,11 @@ This scenario validates that Acorn state is not trapped inside one interface.
 The CLI and web app should share the same protocol-level wallet identity,
 relay-backed records, Cashu proof state, and transaction history.
 
+The source wallet should be treated as the funding and recovery anchor. It
+should remain clean enough to recover in the Safebox web app and inspect by
+hand. Most mutation-heavy live checks should use disposable wallets that can be
+created, funded, burned, and removed during the test run.
+
 The current acceptance flow confirms:
 
 - a wallet can be created from the Acorn CLI;
@@ -71,11 +76,88 @@ wallet recovery path.
    source wallet's relay-backed home mint. Set `ACORN_TEST_MINT` only when you
    intentionally want to override that behavior for a specific mint test.
 
-   Similarly, do not set `ACORN_RECEIVE_NSEC` for the normal source-wallet
-   interoperability flow. If it is unset, the live tests receive using the
-   source wallet nsec and ignore any ambient `ACORN_RECIPIENT_NIP05`. Set both
-   `ACORN_RECEIVE_NSEC` and `ACORN_RECIPIENT_NIP05` only when you intentionally
-   want to test a different receive identity.
+   Testing lanes:
+
+   - Source wallet: funds the suite, receives sweep-backs, and runs the narrow
+     source-wallet ecash self-transfer used for web-app interoperability.
+   - Disposable wallets: carry most test mutations, including private record
+     lifecycle and burn-wallet flows.
+   - Separate opt-in tests: cover NIP-05 recipient resolution and real
+     lightning-address payments.
+
+   The normal source-wallet ecash transfer test is deliberately narrow. The
+   source wallet funds the transfer, sends to its own npub through the active
+   relay scenario, receives the gift-wrapped transfer, refreshes proofs, and
+   writes transaction history to the same source wallet. This proves
+   source-wallet/web-app interoperability without moving the rest of the test
+   suite away from disposable wallets.
+
+   Override rules:
+
+   | Variable | Default behavior | Set only when |
+   | --- | --- | --- |
+   | `ACORN_SOURCE_CONFIG` | Uses `~/.acorn/config.yml` as the funded source wallet. | You want a different source wallet config file. |
+   | `ACORN_TEST_MINT` | Disposable wallets inherit the source wallet's relay-backed mint. | You are intentionally testing a different mint. |
+   | `ACORN_TEST_TRANSFER_RELAY` | Uses the active relay scenario. | You want transfers published to a relay different from the scenario relay. |
+   | `ACORN_NIP05_RECIPIENT` | NIP-05 tests are skipped. | You want to run the separate source-wallet NIP-05 ecash transfer test. |
+   | `ACORN_LIGHTNING_ADDRESS` | Lightning payment tests are skipped. | You intentionally want to spend sats in the separate lightning-address test. |
+
+   Before running tests, it is useful to check for exported shell variables that
+   can override `.env`:
+
+   ```sh
+   env | grep '^ACORN_'
+   ```
+
+   Keep NIP-05 and lightning-address tests separate from the default
+   interoperability flow. They exercise different behavior:
+
+   - NIP-05 tests prove recipient identifier resolution and relay hints.
+   - Lightning-address tests prove mint melt/payment behavior and spend real
+     sats.
+   - The default source-wallet ecash transfer proves Acorn's core
+     gift-wrapped transfer, receive, proof refresh, and web-app-visible
+     transaction history.
+   - Disposable-wallet tests protect the source wallet from noisy record and
+     burn lifecycle churn.
+
+   Source wallet versus disposable wallets:
+
+   Use the source wallet when the test is proving interoperability or real
+   payment behavior. Use disposable wallets when the test is proving relay
+   suitability or record/proof lifecycle behavior.
+
+   The source wallet is the wallet a user can recover in the Safebox web app.
+   It is therefore the right place to test behavior where web-app-visible
+   continuity matters:
+
+   - initial deposit visibility;
+   - source-wallet gift-wrapped ecash self-transfer;
+   - source-wallet NIP-05 recipient resolution;
+   - source-wallet lightning-address payment;
+   - source-wallet transaction history rendering.
+
+   These tests answer: can one funded Acorn wallet operate across CLI, relay,
+   mint, and web-app surfaces without losing the user's recoverable state?
+
+   Disposable wallets are better for relay suitability and churn-heavy lifecycle
+   tests:
+
+   - wallet bootstrap/readback on a candidate relay;
+   - private record put/get/list/delete;
+   - burn-wallet flows;
+   - relay deletion advisory behavior;
+   - repeated third-party relay compatibility checks.
+
+   These tests answer: can a relay support Acorn's event patterns reliably
+   enough without polluting the long-lived source wallet?
+
+   In short:
+
+   ```text
+   Source wallet       -> interoperability and real payment behavior
+   Disposable wallets  -> relay suitability and lifecycle churn
+   ```
 
 4. Run the live test flow.
 
@@ -166,8 +248,6 @@ understands where the accepted proofs will be written.
 
 For the normal source-wallet interoperability flow:
 
-- leave `ACORN_RECEIVE_NSEC` unset;
-- ignore ambient `ACORN_RECIPIENT_NIP05`;
 - send to the source wallet npub;
 - receive with the source wallet;
 - verify the resulting credit in source wallet kind `7377` history.
@@ -215,6 +295,17 @@ This is stronger than a CLI smoke test. It proves that Acorn is behaving like a
 sovereign protocol component rather than a feature trapped inside one
 application boundary.
 
+The concept became more concrete once the same flows were exercised against
+both a third-party relay and a third-party Cashu mint not controlled by the
+Safebox project. That combination matters: the relay validates that Acorn state
+can live on replaceable Nostr infrastructure, while the mint validates that
+Cashu proofs can move through independently operated value infrastructure.
+
+Together, those tests show that Acorn is not merely abstracting Safebox's
+current backend. It is carrying user-controlled identity, encrypted records,
+wallet proofs, recovery context, and transaction history across independently
+operated protocol services.
+
 The same user-controlled recovery material can move between:
 
 - the installable Acorn Python package;
@@ -225,6 +316,18 @@ The same user-controlled recovery material can move between:
 That makes Acorn easier to harden independently. Safebox can then consume Acorn
 as a reusable component while still preserving the user's ability to recover,
 replicate, migrate, and operate their wallet through other compatible surfaces.
+
+This is the practical test for Acorn as a sovereign protocol component:
+
+```text
+Can the user keep operating when the app, relay, mint, or deployment operator
+changes?
+```
+
+The answer is increasingly yes, provided the chosen relay and mint satisfy the
+required protocol behavior. That is why relay suitability testing, mint
+compatibility testing, recovery checks, and web-app-visible transaction history
+are all part of the same hardening effort.
 
 ## Notes and cautions
 

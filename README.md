@@ -108,6 +108,10 @@ Live tests use the default Acorn profile, normally `~/.acorn/config.yml`, as
 the source wallet. This source wallet should already be initialized and should
 have a small spendable balance when running ecash transfer tests.
 
+The source wallet is the funding and recovery anchor for live testing. Most
+mutation-heavy tests should run against disposable wallets so the source wallet
+stays understandable and easy to inspect in the Safebox web app.
+
 Disposable test wallets use an explicit config file, configured by
 `ACORN_TEST_WALLET_CONFIG`. By default, live tests create this wallet if it is
 missing and burn/remove it after the test. Unless `ACORN_TEST_MINT` is set
@@ -182,6 +186,17 @@ set, otherwise to `ACORN_TEST_RELAY`, otherwise to the test wallet's
 third-party relay scenario to publish transfer events to
 `ACORN_THIRD_PARTY_RELAY` as well.
 
+Testing lanes:
+
+- Source wallet: funds the suite, receives sweep-backs, and runs the minimal
+  source-wallet ecash self-transfer used for web-app interoperability. It is
+  also used for opt-in NIP-05 and lightning-address payment tests because those
+  prove source-wallet interoperability and real payment behavior.
+- Disposable wallet: receives most test mutations, including record lifecycle
+  and burn-wallet flows.
+- Separate opt-in tests: NIP-05 recipient resolution and real
+  lightning-address payments.
+
 The burn live test creates a separate disposable burn wallet config next to the
 main test wallet, funds it from the source wallet, burns it, and verifies that
 remaining funds are swept back.
@@ -192,12 +207,44 @@ verify that deposits, ecash transfers, burn sweeps, balances, and transaction
 history are visible from both surfaces. See
 [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md).
 
-Ecash receive tests use the source wallet nsec as the recipient identity by
-default. Set `ACORN_RECEIVE_NSEC` only when you intentionally want to receive
-with a different/transient key. `ACORN_RECIPIENT_NIP05` is used only with an
-explicit `ACORN_RECEIVE_NSEC`; otherwise the recipient npub is derived from the
-source wallet nsec. If you need to override the source wallet path, set
-`ACORN_SOURCE_CONFIG`.
+The default source-wallet ecash transfer test is intentionally narrow. It exists
+to prove web-app interoperability: the source wallet funds the transfer, sends
+to its own npub through the active relay scenario, receives the gift-wrapped
+transfer, refreshes proofs, and writes web-app-visible transaction history back
+to the same source wallet. Broader mutation-heavy behavior should remain on
+disposable wallets.
+
+Recommended default for source-wallet/web-app interoperability testing:
+
+```env
+ACORN_SOURCE_CONFIG=~/.acorn/config.yml
+# ACORN_TEST_MINT=
+```
+
+Before a live run, check for ambient shell overrides that may not be visible in
+`.env`:
+
+```sh
+env | grep '^ACORN_'
+```
+
+The most common testing mistake is leaving old `ACORN_*` variables exported
+from an older wallet. In the default flow, the source wallet should provide
+funding and stay recoverable/inspectable, while disposable wallets carry most
+test churn.
+
+NIP-05 recipient resolution and lightning-address payments are separate opt-in
+tests:
+
+```env
+# Source-wallet-only NIP-05 ecash transfer test. The identifier must resolve to
+# the source wallet pubkey.
+# ACORN_NIP05_RECIPIENT=trbouma@getsafebox.app
+
+# Real lightning-address payment test. This spends sats and runs when set.
+# ACORN_LIGHTNING_ADDRESS=someone@example.com
+# ACORN_LIGHTNING_TEST_AMOUNT=1
+```
 
 The real `.env` file is gitignored. Do not commit real `nsec` values.
 
@@ -228,10 +275,33 @@ and removes the local wallet config by default.
 acorn burn --send-to alice@example.com
 ```
 
-If the wallet has funds, provide `--send-to` to sweep the balance as an Acorn
-ecash transfer before deletion, or explicitly use `--allow-funded`. Use
-`--keep-local-config` for dry-run-like development flows where you want relay
-deletion without removing the local config file.
+If the wallet has funds, choose one of the explicit fund handling modes before
+deletion:
+
+```sh
+# Sweep remaining funds as Acorn/Nostr ecash to a NIP-05, npub, or pubkey.
+acorn burn --send-to alice@example.com
+
+# Pay a Lightning address before burning.
+acorn burn --pay-to alice@example.com --pay-amount 21
+
+# Sweep the maximum payable amount to a Lightning address.
+acorn burn --pay-to alice@example.com
+```
+
+`--send-to` is an Acorn ecash transfer rail. `--pay-to` is a Lightning address
+payment rail. Do not use both in the same burn command.
+
+If `--pay-amount` is omitted, Acorn quotes the Lightning invoice and mint melt
+fee reserve first, then automatically reduces the payment amount so the payment
+amount plus fees fit the wallet's spendable proofs. If `--pay-amount` is
+provided, Acorn treats it as an exact requested payment amount and may fail if
+that amount plus fees cannot be paid from the wallet.
+
+Use `--allow-funded` only when you intentionally want to burn relay data while
+leaving funds unswept/unpaid. Use `--keep-local-config` for dry-run-like
+development flows where you want relay deletion without removing the local
+config file.
 
 NIP-09 deletion is advisory: relays and clients ultimately decide whether
 matching events are hidden, retained, or garbage-collected.

@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import pytest
 import yaml
+from click.testing import CliRunner
 
 
 def _load_cli(monkeypatch, tmp_path):
@@ -336,3 +337,150 @@ def test_format_tx_history_entry_handles_missing_optional_fields(monkeypatch, tm
 
     assert "Credit" in rendered
     assert "+2 sats" in rendered
+
+
+def test_balance_by_mint_groups_keysets(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class Wallet:
+        known_mints = {
+            "keyset-a": "https://mint.one",
+            "keyset-b": "https://mint.one",
+            "keyset-c": "https://mint.two",
+        }
+
+        def _proofs_by_keyset(self):
+            return (
+                {
+                    "keyset-a": [object(), object()],
+                    "keyset-b": [object()],
+                    "keyset-c": [object()],
+                },
+                {
+                    "keyset-a": 3,
+                    "keyset-b": 5,
+                    "keyset-c": 2,
+                },
+            )
+
+    rows = cli._balance_by_mint(Wallet())
+
+    assert rows == [
+        {
+            "mint": "https://mint.one",
+            "balance": 8,
+            "unit": "sat",
+            "proof_count": 3,
+            "keysets": [
+                {"keyset": "keyset-a", "balance": 3, "unit": "sat", "proof_count": 2},
+                {"keyset": "keyset-b", "balance": 5, "unit": "sat", "proof_count": 1},
+            ],
+        },
+        {
+            "mint": "https://mint.two",
+            "balance": 2,
+            "unit": "sat",
+            "proof_count": 1,
+            "keysets": [
+                {"keyset": "keyset-c", "balance": 2, "unit": "sat", "proof_count": 1},
+            ],
+        },
+    ]
+
+
+def test_format_balance_by_mint(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_balance_by_mint(
+        [
+            {
+                "mint": "https://mint.one",
+                "balance": 8,
+                "proof_count": 3,
+                "keysets": [
+                    {"keyset": "keyset-b", "balance": 5, "proof_count": 1},
+                    {"keyset": "keyset-a", "balance": 3, "proof_count": 2},
+                ],
+            }
+        ]
+    )
+
+    assert "Mint balances:" in rendered
+    assert "https://mint.one: 8 sats in 3 proofs" in rendered
+    assert "keyset keyset-a: 3 sats in 2 proofs" in rendered
+    assert "keyset keyset-b: 5 sats in 1 proofs" in rendered
+
+
+def test_burn_rejects_ecash_and_lightning_recipients(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.burn,
+        [
+            "--send-to",
+            "alice@example.com",
+            "--pay-to",
+            "alice@example.com",
+            "--force",
+        ],
+    )
+
+    assert result.exit_code != 0
+    assert "Use only one of --send-to" in result.output
+
+
+@pytest.mark.asyncio
+async def test_burn_lightning_auto_amount_uses_fee_aware_quote():
+    from acorn.acorn import Acorn
+
+    wallet = object.__new__(Acorn)
+    wallet.home_relay = "wss://relay.example.com"
+    wallet.pubkey_hex = "00" * 32
+    wallet.pubkey_bech32 = "npub1example"
+
+    captured = {}
+
+    wallet._normalize_relays = lambda relays: relays
+    wallet.get_balance = lambda: 21
+
+    async def max_payable_lightning_amount(lnaddress, balance, comment):
+        captured["quote"] = {
+            "lnaddress": lnaddress,
+            "balance": balance,
+            "comment": comment,
+        }
+        return {
+            "amount": 20,
+            "fee_reserve": 1,
+            "total": 21,
+            "mode": "lightning",
+            "mint": "https://mint.example.com",
+        }
+
+    async def pay_multi(amount, lnaddress, comment):
+        captured["payment"] = {
+            "amount": amount,
+            "lnaddress": lnaddress,
+            "comment": comment,
+        }
+        return "Payment of 20 sats with fee 1 sats successful!", 1
+
+    async def load_data():
+        return None
+
+    async def query_authored_events_for_burn(relays, kinds, limit):
+        return []
+
+    wallet._max_payable_lightning_amount = max_payable_lightning_amount
+    wallet.pay_multi = pay_multi
+    wallet.load_data = load_data
+    wallet._query_authored_events_for_burn = query_authored_events_for_burn
+
+    result = await wallet.burn_wallet(pay_to="alice@example.com")
+
+    assert captured["quote"]["balance"] == 21
+    assert captured["payment"]["amount"] == 20
+    assert result["payment"]["auto_amount"] is True
+    assert result["payment"]["amount"] == 20
+    assert result["payment"]["fees"] == 1
+    assert result["payment"]["estimated_total"] == 21

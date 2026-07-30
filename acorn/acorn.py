@@ -358,10 +358,108 @@ class Acorn:
             unique_events.append(event)
         return unique_events
 
+    async def _max_payable_lightning_amount(
+        self,
+        lnaddress: str,
+        balance: int,
+        comment: str,
+    ) -> Dict[str, Any]:
+        """Return the largest Lightning payment amount that fits mint fees.
+
+        Cashu Lightning payments require paying both the recipient amount and
+        the mint's melt fee reserve from one spendable keyset. When a caller
+        wants to sweep a wallet, the intuitive request is "send everything",
+        but the actual Lightning amount often needs to be reduced by the fee
+        reserve. This helper quotes the recipient invoice and mint melt before
+        mutating proofs, then returns the largest amount that can be paid.
+        """
+
+        if balance <= 0:
+            raise ValueError("wallet balance must be positive")
+
+        _keyset_proofs, keyset_amounts = self._proofs_by_keyset()
+        if not keyset_amounts:
+            raise ValueError("wallet has no spendable keysets")
+
+        headers = {"Content-Type": "application/json"}
+        timeout = httpx.Timeout(30.0, connect=5.0)
+        candidate = min(int(balance), max(int(each) for each in keyset_amounts.values()))
+        last_error: str | None = None
+
+        while candidate > 0:
+            try:
+                callback, safebox, nonce = lightning_address_pay(candidate, lnaddress, comment=comment)
+            except Exception as exc:
+                raise RuntimeError(f"Lightning address lookup failed for {lnaddress}: {exc}") from exc
+
+            if not isinstance(callback, dict):
+                raise RuntimeError(f"Lightning address callback returned an invalid response for {lnaddress}")
+            if callback.get("status") == "ERROR":
+                raise RuntimeError(callback.get("reason") or f"Lightning address lookup failed for {lnaddress}")
+            if safebox:
+                return {
+                    "amount": candidate,
+                    "fee_reserve": 0,
+                    "total": candidate,
+                    "mode": "safebox",
+                    "nonce": nonce,
+                }
+
+            pr = callback.get("pr")
+            if not pr:
+                raise RuntimeError(f"Lightning address callback did not return an invoice for {lnaddress}")
+
+            next_candidates: List[int] = []
+            for keyset, available in sorted(keyset_amounts.items(), key=lambda item: int(item[1]), reverse=True):
+                available = int(available)
+                if available < candidate:
+                    continue
+                mint = self.known_mints.get(keyset)
+                if not mint:
+                    continue
+
+                melt_quote_url = f"{mint}/v1/melt/quote/bolt11"
+                data_to_send = {"request": pr, "unit": "sat"}
+                try:
+                    async with httpx.AsyncClient(timeout=timeout) as client:
+                        response = await client.post(url=melt_quote_url, json=data_to_send, headers=headers)
+                        response.raise_for_status()
+                        post_melt_response = PostMeltQuoteResponse(**response.json())
+                except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+                    last_error = f"{mint}: {exc}"
+                    continue
+
+                fee_reserve = int(post_melt_response.fee_reserve)
+                total_needed = candidate + fee_reserve
+                if total_needed <= available:
+                    return {
+                        "amount": candidate,
+                        "fee_reserve": fee_reserve,
+                        "total": total_needed,
+                        "mode": "lightning",
+                        "keyset": keyset,
+                        "mint": mint,
+                        "quote": post_melt_response.quote,
+                    }
+                next_candidates.append(max(0, available - fee_reserve))
+
+            smaller_candidates = [each for each in next_candidates if 0 < each < candidate]
+            if smaller_candidates:
+                candidate = max(smaller_candidates)
+            else:
+                candidate -= 1
+
+        detail = f"; last quote error: {last_error}" if last_error else ""
+        raise ValueError(
+            f"no payable Lightning amount fits wallet balance {balance} sats and mint fee reserve{detail}"
+        )
+
     async def burn_wallet(
         self,
         send_to: str | None = None,
         send_relay: str | None = None,
+        pay_to: str | None = None,
+        pay_amount: int | None = None,
         relays: List[str] | None = None,
         kinds: List[int] | None = None,
         allow_funded: bool = False,
@@ -370,10 +468,15 @@ class Acorn:
         """Burn this wallet's relay-backed data by publishing NIP-09 deletions.
 
         If `send_to` is provided and the wallet has a spendable balance, the
-        balance is first sent as a kind 7378 ecash transfer. NIP-09 deletion is
-        advisory: relays and clients ultimately decide whether matching events
-        are hidden, retained, or garbage-collected.
+        balance is first sent as a kind 7378 ecash transfer. If `pay_to` is
+        provided, funds are paid to a Lightning address using the wallet's mint
+        melt flow. NIP-09 deletion is advisory: relays and clients ultimately
+        decide whether matching events are hidden, retained, or
+        garbage-collected.
         """
+
+        if send_to and pay_to:
+            raise ValueError("provide only one of send_to or pay_to")
 
         burn_relays = self._normalize_relays(relays or [self.home_relay])
         if not burn_relays:
@@ -385,6 +488,7 @@ class Acorn:
 
         balance_before = int(self.get_balance())
         sweep_result: Dict[str, Any] | None = None
+        payment_result: Dict[str, Any] | None = None
         if balance_before > 0:
             if send_to:
                 sweep_result = await self.send_ecash_transfer(
@@ -396,9 +500,57 @@ class Acorn:
                 # Refresh local state after issuing the sweep token.
                 with contextlib.suppress(Exception):
                     await self.load_data()
+            elif pay_to:
+                lightning_sweep_quote: Dict[str, Any] | None = None
+                if pay_amount is None:
+                    lightning_sweep_quote = await self._max_payable_lightning_amount(
+                        lnaddress=pay_to,
+                        balance=balance_before,
+                        comment="acorn wallet burn lightning sweep",
+                    )
+                    amount_to_pay = int(lightning_sweep_quote["amount"])
+                else:
+                    amount_to_pay = int(pay_amount)
+                if amount_to_pay <= 0:
+                    raise ValueError("pay_amount must be positive")
+                if amount_to_pay > balance_before:
+                    raise ValueError(
+                        f"pay_amount exceeds wallet balance: pay_amount={amount_to_pay}, balance={balance_before}"
+                    )
+                msg_out, fees = await self.pay_multi(
+                    amount=amount_to_pay,
+                    lnaddress=pay_to,
+                    comment="acorn wallet burn lightning sweep",
+                )
+                payment_result = {
+                    "status": "OK",
+                    "pay_to": pay_to,
+                    "amount": amount_to_pay,
+                    "unit": "sat",
+                    "fees": fees,
+                    "auto_amount": pay_amount is None,
+                    "balance_before": balance_before,
+                    "message": msg_out,
+                }
+                if lightning_sweep_quote:
+                    payment_result["estimated_fees"] = lightning_sweep_quote.get("fee_reserve")
+                    payment_result["estimated_total"] = lightning_sweep_quote.get("total")
+                    payment_result["mint"] = lightning_sweep_quote.get("mint")
+                    payment_result["mode"] = lightning_sweep_quote.get("mode")
+                    payment_result["advisory"] = (
+                        "Lightning sweep amount was automatically reduced, if needed, "
+                        "so amount plus mint fee reserve fit the wallet's spendable proofs."
+                    )
+                else:
+                    payment_result["advisory"] = (
+                        "Explicit Lightning pay amounts can fail if amount plus mint fee reserve "
+                        "exceeds the wallet's spendable proofs."
+                    )
+                with contextlib.suppress(Exception):
+                    await self.load_data()
             elif not allow_funded:
                 raise ValueError(
-                    "wallet has a positive balance; provide send_to or set allow_funded=True"
+                    "wallet has a positive balance; provide send_to, pay_to, or set allow_funded=True"
                 )
 
         events = await self._query_authored_events_for_burn(
@@ -432,6 +584,7 @@ class Acorn:
             "balance_before": balance_before,
             "balance_after": balance_after,
             "sweep": sweep_result,
+            "payment": payment_result,
             "matched": len(event_ids),
             "deleted": len(event_ids),
             "by_kind": by_kind,

@@ -75,6 +75,40 @@ acorn get_user_records --labels --json
 
 JSON output should avoid extra human text, debug lines, or incidental prints.
 
+## Wallet burn
+
+`acorn burn` deletes local bootstrap config by default and publishes NIP-09
+deletion requests for relay-backed wallet data. Because NIP-09 deletion is
+advisory, this command must describe deletion as a request, not a guaranteed
+erase.
+
+Funded wallets require an explicit fund-handling choice:
+
+```sh
+# Acorn/Nostr ecash sweep.
+acorn burn --send-to alice@example.com
+
+# Lightning address payment.
+acorn burn --pay-to alice@example.com --pay-amount 21
+
+# Lightning address sweep, automatically reduced for mint fee reserve.
+acorn burn --pay-to alice@example.com
+
+# Dangerous/explicit: burn while funds remain.
+acorn burn --allow-funded
+```
+
+`--send-to` treats the recipient as a NIP-05, npub, or raw pubkey and sends a
+gift-wrapped Acorn ecash transfer before deletion.
+
+`--pay-to` treats the recipient as a Lightning address and pays through the
+wallet's mint melt flow before deletion. If `--pay-amount` is omitted, Acorn
+first quotes the Lightning invoice and mint melt fee reserve, then pays the
+largest amount that fits the wallet's spendable proofs after fees. If
+`--pay-amount` is provided, it is treated as an exact requested payment amount
+and may fail if that amount plus fees cannot be paid. `--send-to` and
+`--pay-to` are mutually exclusive.
+
 ## Wallet initialization
 
 `acorn init` creates or replaces the local wallet bootstrap configuration.
