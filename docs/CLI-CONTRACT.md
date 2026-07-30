@@ -25,6 +25,33 @@ nsec: nsec1...
 home_relay: wss://relay.getsafebox.app
 ```
 
+The config contains sensitive bootstrap material. Acorn therefore:
+
+- creates a new config directory with mode `0700`;
+- writes config files with mode `0600`;
+- serializes a complete replacement before changing the existing file;
+- uses an atomic replacement so an interrupted write preserves the previous
+  valid config;
+- uses a file lock to prevent concurrent writers from interleaving;
+- treats malformed or non-mapping YAML as an explicit configuration error;
+- does not create a key, directory, or config merely because the CLI module is
+  imported or help is displayed.
+
+When a real CLI command opens a valid config created by an older Acorn version,
+Acorn upgrades the file permissions without rewriting its YAML. The default
+`.acorn` directory is also upgraded to `0700`.
+
+Configuration creation must be intentional. Supported creation paths are:
+
+```sh
+acorn init
+acorn recover "<seed phrase>"
+acorn set --nsec nsec1... --home relay.example.com
+```
+
+An ordinary command without an initialized config should explain how to run
+`acorn init`; it must not silently generate a replacement identity.
+
 The command:
 
 ```sh
@@ -32,6 +59,9 @@ acorn set --minimal
 ```
 
 rewrites compatible expanded configs to the minimal form.
+
+Ordinary `acorn set` output redacts the `nsec`. Recovery material is displayed
+only through an explicit recovery flow with confirmation.
 
 ## Human output
 

@@ -26,6 +26,12 @@ import json
 
 from time import sleep, time
 import qrcode
+from acorn.config import (
+    ConfigError,
+    harden_config_permissions,
+    load_config,
+    write_config as persist_config,
+)
 from acorn.prompts import (
     WELCOME_MSG,
     INFO_HELP,
@@ -80,6 +86,13 @@ def _minimize_config(config: dict) -> dict:
     }
 
 
+def _config_for_display(config: dict) -> dict:
+    displayed = dict(config)
+    if displayed.get("nsec"):
+        displayed["nsec"] = "<redacted; use 'acorn set --show-recovery'>"
+    return displayed
+
+
 def _format_recovery_material(recovery: dict) -> str:
     return "\n".join(
         [
@@ -109,6 +122,7 @@ def _resolve_config_path(config_path: str | None = None) -> str:
 file_path = _resolve_config_path()
 config_directory = os.path.dirname(file_path)
 CONFIG_FILE_EXISTED = False
+CONFIG_LOAD_ERROR = None
 config_obj = {}
 HOME_RELAY = default_home_relay
 RELAYS = [HOME_RELAY]
@@ -120,26 +134,18 @@ LOGGING_LEVEL = default_logging_level
 
 
 def write_config():
-    os.makedirs(config_directory, exist_ok=True)
-    with open(file_path, 'w') as file:
-        yaml.dump(config_obj, file)
+    persist_config(
+        file_path,
+        config_obj,
+        harden_directory=os.path.basename(config_directory) == ".acorn",
+    )
 
 
 def _load_config():
     global CONFIG_FILE_EXISTED, config_obj, HOME_RELAY, RELAYS, PUBLIC_RELAYS, NSEC, MINTS, REPLICATE_RELAYS, LOGGING_LEVEL
 
-    os.makedirs(config_directory, exist_ok=True)
     CONFIG_FILE_EXISTED = os.path.exists(file_path)
-
-    if CONFIG_FILE_EXISTED:
-        with open(file_path, 'r') as file:
-            config_obj = yaml.safe_load(file) or {}
-    else:
-        config_obj = {
-            'nsec': Keys().private_key_bech32(),
-            "home_relay": default_home_relay,
-        }
-        write_config()
+    config_obj = load_config(file_path)
 
     HOME_RELAY = config_obj.get('home_relay', default_home_relay)
     RELAYS = config_obj.get('relays') or [HOME_RELAY]
@@ -149,16 +155,11 @@ def _load_config():
     REPLICATE_RELAYS = config_obj.get('replicate_relays') or []
     LOGGING_LEVEL = int(config_obj.get('logging_level', default_logging_level))
 
-    if NSEC is None:
-        click.echo("Private key is not set")
-        if click.confirm("Do you want to generate a new key?"):
-            write_config()
-        sys.exit()
 
-    write_config()
-
-
-_load_config()
+try:
+    _load_config()
+except ConfigError as exc:
+    CONFIG_LOAD_ERROR = exc
 
 
 def _configure_cli_logging(verbose: bool = False) -> int:
@@ -291,11 +292,42 @@ def _format_balance_by_mint(rows: list[dict]) -> str:
 @click.option("--verbose", "-v", is_flag=True, help="Show debug logs.")
 @click.pass_context
 def cli(ctx, config_path, verbose):
-    global LOGGING_LEVEL
+    global file_path, config_directory, CONFIG_LOAD_ERROR, LOGGING_LEVEL
+    if config_path:
+        requested_path = _resolve_config_path(config_path)
+        if requested_path != file_path:
+            file_path = requested_path
+            config_directory = os.path.dirname(file_path)
+            try:
+                _load_config()
+            except ConfigError as exc:
+                CONFIG_LOAD_ERROR = exc
+            else:
+                CONFIG_LOAD_ERROR = None
+
     ctx.ensure_object(dict)
     LOGGING_LEVEL = _configure_cli_logging(verbose)
     ctx.obj["logging_level"] = LOGGING_LEVEL
     ctx.obj["config_path"] = file_path
+
+    if CONFIG_LOAD_ERROR is not None:
+        raise click.ClickException(str(CONFIG_LOAD_ERROR))
+
+    if CONFIG_FILE_EXISTED:
+        try:
+            harden_config_permissions(
+                file_path,
+                harden_directory=os.path.basename(config_directory) == ".acorn",
+            )
+        except ConfigError as exc:
+            raise click.ClickException(str(exc)) from exc
+
+    config_creation_commands = {"init", "recover", "set"}
+    if ctx.invoked_subcommand not in config_creation_commands and NSEC is None:
+        raise click.ClickException(
+            f"No initialized Acorn config found at {file_path}. "
+            f"Run 'acorn --config {file_path} init' first."
+        )
 
 @click.command("info", help=INFO_HELP)
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
@@ -593,7 +625,7 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
 def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, show_mint, show_recovery, logging: int, minimal):
     
     if nsec == None and relays == None and mints == None and home == None and xrelays==None and public_relays == None and not show_public_relays and not show_mint and not show_recovery and logging == None and not minimal:
-        click.echo(yaml.dump(config_obj, default_flow_style=False))
+        click.echo(yaml.safe_dump(_config_for_display(config_obj), default_flow_style=False, sort_keys=False))
         return
 
     show_only = (show_public_relays or show_mint or show_recovery) and nsec == None and relays == None and mints == None and home == None and xrelays == None and public_relays == None and logging == None and not minimal
@@ -670,9 +702,8 @@ def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, s
     click.echo("set!")
 
     # print(config_obj)
-    click.echo(yaml.dump(config_obj,default_flow_style=False))
-    with open(file_path, 'w') as file:        
-        yaml.dump(config_obj, file)
+    click.echo(yaml.safe_dump(_config_for_display(config_obj), default_flow_style=False, sort_keys=False))
+    write_config()
 
 
 

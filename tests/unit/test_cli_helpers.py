@@ -72,6 +72,22 @@ def test_minimize_config_defaults_home_relay(monkeypatch, tmp_path):
     }
 
 
+def test_config_for_display_redacts_nsec(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    displayed = cli._config_for_display(
+        {
+            "nsec": "nsec1secret",
+            "home_relay": "wss://relay.example.com",
+        }
+    )
+
+    assert displayed == {
+        "nsec": "<redacted; use 'acorn set --show-recovery'>",
+        "home_relay": "wss://relay.example.com",
+    }
+
+
 def test_format_recovery_material(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 
