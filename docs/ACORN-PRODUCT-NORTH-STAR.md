@@ -15,7 +15,7 @@ The north star is:
 ```text
 Acorn lets a user carry cryptographic identity, private records, and value
 across applications and infrastructure without being trapped by any single app,
-relay, mint, or service provider.
+service provider, or infrastructure operator.
 ```
 
 Put another way:
