@@ -53,6 +53,11 @@ This separation is central to the component boundary:
   records where appropriate;
 - data can be replicated without handing hosts plaintext access.
 
+This follows the architectural inversion described in
+[Acorn Product North Star](./ACORN-PRODUCT-NORTH-STAR.md): applications should
+be replaceable interfaces over user-controlled protocol state, not the only
+system of record for the user's funds, records, identity, or recovery path.
+
 ### Key and wallet identity
 
 Acorn owns:

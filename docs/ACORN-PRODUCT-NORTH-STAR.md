@@ -69,6 +69,37 @@ Acorn takes a different approach. It treats identity, private records, and
 wallet state as user-controlled protocol state that applications can use but do
 not own.
 
+## Architectural inversion
+
+Acorn inverts the usual architecture for safekeeping user-controlled resources.
+
+In a conventional application model:
+
+```text
+application/provider owns the system of record
+user accesses an account inside that system
+security, recovery, and availability are provider responsibilities
+```
+
+In the Acorn model:
+
+```text
+user-controlled cryptographic material is the continuity layer
+funds and records are controllable protocol objects
+applications are replaceable interfaces
+relays and mints are replaceable infrastructure
+communities can support availability without taking custody
+```
+
+The system of record is no longer primarily an application database. It is the
+user's signed and encrypted protocol state, anchored by keys and recoverable
+through chosen infrastructure.
+
+That inversion explains why Acorn should remain a component rather than a
+single product surface. Applications can provide excellent user experience,
+workflow, compliance, support, and polish, but they should not become the only
+place where the user's funds, records, identity, or recovery path can exist.
+
 ## Havens for funds and records
 
 Acorn is inspired by the broader idea of a haven: a place or system built to
@@ -142,7 +173,7 @@ I can help keep you recoverable without holding your secrets.
 You can help keep me recoverable without holding mine.
 ```
 
-The model is closer to reciprocal safes than to a shared folder:
+The model is reciprocal safes, not a shared folder:
 
 ```text
 I can host your encrypted Acorn tenant;

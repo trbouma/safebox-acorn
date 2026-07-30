@@ -63,9 +63,12 @@ One relay gives the wallet a home. A community of relays creates continuity.
 Additional relays can hold encrypted copies of the same signed event set. Those
 relays improve availability without receiving plaintext access.
 
-The goal is not a shared folder or a shared account. The goal is isolated,
-encrypted tenant-like state that can be mirrored across infrastructure chosen by
-the user.
+The goal is reciprocal safes, not a shared folder. Each participant can help
+hold another participant's encrypted recovery path, but nobody receives pooled
+plaintext access or shared account control.
+
+The useful object is isolated, encrypted tenant-like state that can be mirrored
+across infrastructure chosen by the user.
 
 The value proposition is reciprocal resilience:
 
