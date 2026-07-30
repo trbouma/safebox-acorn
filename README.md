@@ -23,6 +23,7 @@ without requiring the Safebox web application.
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)
 - [Mint Configuration Specification](./docs/MINT-CONFIGURATION-SPEC.md)
 - [CLI Contract](./docs/CLI-CONTRACT.md)
+- [Safebox App Boundary](./docs/SAFEBOX-APP-BOUNDARY.md)
 - [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
@@ -109,7 +110,8 @@ have a small spendable balance when running ecash transfer tests.
 
 Disposable test wallets use an explicit config file, configured by
 `ACORN_TEST_WALLET_CONFIG`. By default, live tests create this wallet if it is
-missing and burn/remove it after the test:
+missing and burn/remove it after the test. Unless `ACORN_TEST_MINT` is set
+explicitly, disposable wallets inherit the mint from the loaded source wallet:
 
 ```env
 ACORN_TEST_WALLET_CONFIG=./.acorn-test/test-wallet.yml
@@ -190,9 +192,11 @@ verify that deposits, ecash transfers, burn sweeps, balances, and transaction
 history are visible from both surfaces. See
 [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md).
 
-Ecash receive tests use `ACORN_RECEIVE_NSEC` for the recipient identity. If
-`ACORN_RECIPIENT_NIP05` is omitted, the recipient npub is derived from
-`ACORN_RECEIVE_NSEC`. If you need to override the source wallet path, set
+Ecash receive tests use the source wallet nsec as the recipient identity by
+default. Set `ACORN_RECEIVE_NSEC` only when you intentionally want to receive
+with a different/transient key. `ACORN_RECIPIENT_NIP05` is used only with an
+explicit `ACORN_RECEIVE_NSEC`; otherwise the recipient npub is derived from the
+source wallet nsec. If you need to override the source wallet path, set
 `ACORN_SOURCE_CONFIG`.
 
 The real `.env` file is gitignored. Do not commit real `nsec` values.

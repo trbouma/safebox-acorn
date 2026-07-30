@@ -18,8 +18,8 @@ from tests.helpers import (
     relay_suitable,
     relay_unsuitable,
     remove_test_wallet_config,
-    require_env,
     require_source_config,
+    wait_for_tx_history_entry,
 )
 
 
@@ -69,7 +69,6 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
         scenario=relay_scenario["name"],
         relay=relay_scenario["relay"],
     )
-    env = require_env("ACORN_RECEIVE_NSEC")
     source_config = require_source_config()
     amount = int(os.getenv("ACORN_TEST_AMOUNT", "1"))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
@@ -96,7 +95,10 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
     test_nsec = test_wallet_config["nsec"]
     test_relay = test_wallet_config["home_relay"]
     transfer_relay = get_test_transfer_relay(test_relay, relay=relay_scenario["relay"])
-    test_recipient = Keys(priv_k=env["ACORN_RECEIVE_NSEC"]).public_key_bech32()
+    receive_nsec = os.getenv("ACORN_RECEIVE_NSEC") or test_nsec
+    if receive_nsec == test_nsec:
+        live_progress("burn test: receive nsec inherited from disposable wallet")
+    test_recipient = Keys(priv_k=receive_nsec).public_key_bech32()
     source_recipient = Keys(priv_k=source_nsec).public_key_bech32()
 
     live_progress("burn test: loading source wallet", relay=source_relay)
@@ -132,6 +134,24 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             timeout,
         )
         assert fund_transfer["event_id"]
+        source_debit_history = await _await_or_skip(
+            wait_for_tx_history_entry(
+                source_wallet,
+                lambda entry: entry.get("tx_type") == "D"
+                and entry.get("amount") == amount
+                and "pytest burn test funding" in entry.get("comment", ""),
+                timeout,
+                "source debit for burn test funding",
+            ),
+            "source debit transaction history readback",
+            timeout + 2,
+        )
+        assert any(
+            entry.get("tx_type") == "D"
+            and entry.get("amount") == amount
+            and "pytest burn test funding" in entry.get("comment", "")
+            for entry in source_debit_history
+        )
 
         live_progress("burn test: loading funded wallet")
         await _await_or_skip(test_wallet.load_data(), "funded test wallet load", timeout)
@@ -140,7 +160,7 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
         receive = await _await_or_skip(
             test_wallet.sweep_ecash_transfers(
                 relays=[transfer_relay],
-                receive_nsec=env["ACORN_RECEIVE_NSEC"],
+                receive_nsec=receive_nsec,
                 event_id=fund_transfer["event_id"],
             ),
             "burn test wallet receive funding",
@@ -188,7 +208,7 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
                 expected=f"{amount} sats",
                 accepted=f"{sweep_back['accepted_amount']} sats",
                 queried=sweep_back.get("queried_count"),
-            )
+        )
         assert sweep_back["accepted_amount"] >= amount, (
             "relay compatibility: burn sweep transfer was published but the "
             "source wallet did not accept the expected sats. "
@@ -203,6 +223,24 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             "direct/legacy kind 7378 events, may have delayed propagation, "
             "or may apply filtering/"
             "retention policies that make it unsuitable as an Acorn relay."
+        )
+        source_credit_history = await _await_or_skip(
+            wait_for_tx_history_entry(
+                source_wallet,
+                lambda entry: entry.get("tx_type") == "C"
+                and entry.get("amount") >= amount
+                and "acorn wallet burn sweep" in entry.get("comment", ""),
+                timeout,
+                "source credit for burn sweep",
+            ),
+            "source credit transaction history readback",
+            timeout + 2,
+        )
+        assert any(
+            entry.get("tx_type") == "C"
+            and entry.get("amount") >= amount
+            and "acorn wallet burn sweep" in entry.get("comment", "")
+            for entry in source_credit_history
         )
         relay_suitable(
             relay_scenario,

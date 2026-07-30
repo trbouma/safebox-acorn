@@ -1,0 +1,129 @@
+# Safebox App Boundary
+
+Safebox should be rebuilt as a product application on top of the Acorn kernel,
+not inside the Acorn component itself.
+
+This note sketches the intended boundary so the future web app can be built
+cleanly without re-coupling product/UI concerns back into `safebox-acorn`.
+
+## Repository boundary
+
+Recommended split:
+
+```text
+safebox-acorn
+  installable kernel / protocol component
+
+safebox-app
+  web application depending on safebox-acorn
+```
+
+Acorn should stay small, reusable, testable, and protocol-first. Safebox should
+own user experience, product workflows, web sessions, deployment defaults, and
+support surfaces.
+
+## What the app consumes from Acorn
+
+The web app should call Acorn for wallet and record primitives rather than
+reimplementing them.
+
+Core Acorn capabilities to consume:
+
+- initialize or recover wallet from recovery material;
+- show balance and proof count;
+- deposit funds;
+- pay or issue ecash tokens;
+- send ecash transfers;
+- receive ecash transfers;
+- show transaction history;
+- put, get, list, and delete private records;
+- issue private records to holders;
+- create grant/request flows where still in scope;
+- configure home relay, public relay preferences, and home mint;
+- replicate wallet events to another relay;
+- burn disposable wallets and sweep remaining funds;
+- display recovery material with explicit confirmation.
+
+## Event-kind model the app must respect
+
+The app should treat the Acorn event-kind model as a contract:
+
+| Kind | Meaning |
+| --- | --- |
+| `1059` | Relay-visible NIP-59 gift-wrap envelope for private ecash delivery. |
+| `7378` | Inner Acorn ecash-transfer application kind. |
+| `7375` | Durable spendable wallet proof state. |
+| `7377` | Transaction history. |
+| `37375` | Default encrypted private records. |
+
+The app should not treat relay-visible transfer events as wallet balance. A
+received ecash transfer becomes balance only after Acorn accepts the token
+through the mint, refreshes proofs, and persists the updated proof state as kind
+`7375`.
+
+## What stays out of Acorn
+
+The following should belong to the web app or a domain-specific layer, not the
+Acorn kernel:
+
+- web framework routes and templates;
+- session cookies and browser authentication UX;
+- branding and product copy;
+- admin dashboards;
+- support workflows;
+- product-specific onboarding;
+- deployment-specific reverse proxy configuration;
+- healthcare, trade, identity, or other domain schemas beyond generic record
+  primitives.
+
+Acorn may provide generic private records and issue/present mechanics. Domain
+applications should define the schema and workflow semantics.
+
+## Recovery and sensitive material
+
+The web app should preserve the same recovery discipline as the CLI:
+
+- never display `nsec` or seed material without explicit confirmation;
+- make recovery material easy to back up when a wallet is created;
+- make imported/recovered wallets obvious to the user;
+- avoid storing transient receive keys supplied for `receive-ecash`;
+- distinguish local browser/session state from durable Acorn relay-backed
+  wallet state.
+
+## Testing contract
+
+The app should have acceptance tests that mirror the Acorn kernel tests:
+
+```text
+create/recover wallet
+deposit
+send gift-wrapped ecash
+receive ecash
+verify 7375 proof-state update
+verify 7377 transaction-history update
+put/get/list/delete private record
+recover same wallet in another surface
+```
+
+The Acorn live relay suitability suite should remain in `safebox-acorn`. The
+web app should consume its results rather than duplicate the relay-compatibility
+matrix.
+
+## Migration approach
+
+The existing Safebox web app should be treated as a reference implementation
+and migration source, not as the new foundation.
+
+A clean rebuild should proceed by:
+
+1. depending on `safebox-acorn`;
+2. implementing minimal wallet init/recover;
+3. adding balance and transaction history;
+4. adding deposit/pay/ecash transfer/receive;
+5. adding private record CRUD;
+6. adding issued private record workflows;
+7. adding relay/mint configuration and recovery UX;
+8. hardening deployment, tests, and support flows.
+
+This keeps the app focused on product polish while Acorn remains the sovereign
+protocol component.

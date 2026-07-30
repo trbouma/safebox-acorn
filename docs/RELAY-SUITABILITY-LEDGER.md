@@ -28,6 +28,12 @@ limits, authentication requirements, or infrastructure at any time.
 
 Last updated: 2026-07-29
 
+The preferred relay suitability signal is a post-`1059` test result. Earlier
+results gathered while Acorn used kind `7378` as the relay-visible outer
+gift-wrap kind should be retested where possible. New results should validate
+standard kind `1059` gift wraps carrying inner Acorn kind `7378` transfer
+payloads.
+
 | Relay | Status | Observed result | Observed time | Notes |
 | --- | --- | --- | --- | --- |
 | `wss://purplerelay.com/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~48.7s | Real third-party relay. Passed core Acorn capabilities. |

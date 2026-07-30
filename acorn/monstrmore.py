@@ -109,10 +109,12 @@ class KindOtherGiftWrap:
         our_pub_k = await self._signer.get_public_key()
 
         if to_pub_k is None:
-            raise KindOtherGiftWrap('wraped event is not addressed to anyone, no p ptags!')
+            raise KindOtherGiftWrapException('wraped event is not addressed to anyone, no p ptags!')
         if to_pub_k != our_pub_k:
-            raise KindOtherGiftWrap(f'wraped event is not addressed to us,'
-                                    f' {util_funcs.str_tails(our_pub_k)} != {util_funcs.str_tails(to_pub_k)}')
+            raise KindOtherGiftWrapException(
+                f'wraped event is not addressed to us,'
+                f' {util_funcs.str_tails(our_pub_k)} != {util_funcs.str_tails(to_pub_k)}'
+            )
 
         # unwrap the seal event
         seal_evt = await self._unwrap(evt)

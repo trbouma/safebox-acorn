@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import os
+import asyncio
 from pathlib import Path
 from time import monotonic
 from time import strftime
+from typing import Callable
 
 import pytest
 import yaml
@@ -11,6 +13,7 @@ import yaml
 
 UNSUITABLE_RELAYS: dict[str, str] = {}
 RELAY_SUITABILITY_RESULTS: dict[str, dict] = {}
+DEFAULT_TEST_MINT = "https://mint.getsafebox.app"
 
 
 def _relay_result(relay: str) -> dict:
@@ -36,6 +39,33 @@ def live_progress(message: str, **details) -> None:
         rendered = ", ".join(f"{key}={value}" for key, value in details.items())
         suffix = f" ({rendered})"
     print(f"[{strftime('%H:%M:%S')}] {message}{suffix}", flush=True)
+
+
+async def wait_for_tx_history_entry(
+    wallet,
+    predicate: Callable[[dict], bool],
+    timeout: float,
+    label: str,
+    interval: float = 1.0,
+) -> list[dict]:
+    """Poll relay-backed tx history until a matching entry is readable."""
+
+    deadline = monotonic() + timeout
+    last_history: list[dict] = []
+    while monotonic() < deadline:
+        last_history = await wallet.get_tx_history()
+        if any(predicate(entry) for entry in last_history):
+            live_progress("transaction history readback passed", label=label)
+            return last_history
+        await asyncio.sleep(interval)
+
+    live_progress(
+        "transaction history readback missing",
+        label=label,
+        entries=len(last_history),
+        timeout=f"{timeout:g}s",
+    )
+    return last_history
 
 
 def relay_suitable(scenario: dict, capability: str, **details) -> None:
@@ -199,6 +229,17 @@ def require_env_value(name: str, *fallback_names: str) -> str:
     pytest.skip(f"missing env var: one of {expected}")
 
 
+def get_receive_nsec(source_config: dict) -> str:
+    receive_nsec = os.getenv("ACORN_RECEIVE_NSEC")
+    if receive_nsec:
+        return receive_nsec
+    receive_nsec = source_config.get("nsec")
+    if not receive_nsec:
+        pytest.skip("missing receive nsec: set ACORN_RECEIVE_NSEC or provide source wallet nsec")
+    live_progress("receive nsec inherited from source wallet")
+    return receive_nsec
+
+
 def require_config(path: str | Path, label: str) -> dict:
     config_path = Path(path).expanduser()
     if not config_path.is_absolute():
@@ -218,6 +259,23 @@ def require_config(path: str | Path, label: str) -> dict:
     return config
 
 
+def optional_config(path: str | Path) -> dict | None:
+    config_path = Path(path).expanduser()
+    if not config_path.is_absolute():
+        config_path = Path.cwd() / config_path
+    if not config_path.exists():
+        return None
+
+    with config_path.open("r") as file:
+        config = yaml.safe_load(file) or {}
+
+    if not config.get("nsec") or not config.get("home_relay"):
+        return None
+
+    config["_path"] = str(config_path)
+    return config
+
+
 def require_source_config() -> dict:
     if os.getenv("ACORN_SOURCE_NSEC") and os.getenv("ACORN_SOURCE_RELAY"):
         return {
@@ -228,6 +286,18 @@ def require_source_config() -> dict:
 
     source_path = os.getenv("ACORN_SOURCE_CONFIG", "~/.acorn/config.yml")
     return require_config(source_path, "source wallet")
+
+
+def optional_source_config() -> dict | None:
+    if os.getenv("ACORN_SOURCE_NSEC") and os.getenv("ACORN_SOURCE_RELAY"):
+        return {
+            "nsec": os.environ["ACORN_SOURCE_NSEC"],
+            "home_relay": os.environ["ACORN_SOURCE_RELAY"],
+            "_path": "(ACORN_SOURCE_NSEC/ACORN_SOURCE_RELAY)",
+        }
+
+    source_path = os.getenv("ACORN_SOURCE_CONFIG", "~/.acorn/config.yml")
+    return optional_config(source_path)
 
 
 def _add_config_suffix(path: Path, suffix: str = "") -> Path:
@@ -257,7 +327,47 @@ def get_test_wallet_config_path(config_suffix: str = "") -> Path:
     return _add_config_suffix(config_path, config_suffix)
 
 
-def write_test_wallet_config(nsec: str, home_relay: str, config_suffix: str = "") -> dict:
+def configured_test_mints(fallback_mints: list[str] | None = None) -> list[str]:
+    if os.getenv("ACORN_TEST_MINT"):
+        return [normalize_mint(each) for each in os.environ["ACORN_TEST_MINT"].split(",") if each.strip()]
+    if fallback_mints:
+        return [normalize_mint(each) for each in fallback_mints if str(each).strip()]
+    return [DEFAULT_TEST_MINT]
+
+
+async def resolve_test_mints(fallback_mints: list[str] | None = None) -> list[str]:
+    explicit_mints = configured_test_mints(fallback_mints=None)
+    if os.getenv("ACORN_TEST_MINT"):
+        return explicit_mints
+
+    source_config = optional_source_config()
+    if source_config:
+        try:
+            from acorn.acorn import Acorn
+
+            source_wallet = Acorn(
+                nsec=source_config["nsec"],
+                home_relay=normalize_relay(source_config["home_relay"]),
+                relays=[normalize_relay(source_config["home_relay"])],
+                mints=source_config.get("mints"),
+            )
+            await source_wallet.load_data()
+            if source_wallet.home_mint:
+                resolved = normalize_mint(source_wallet.home_mint)
+                live_progress("test mint inherited from source wallet", mint=resolved)
+                return [resolved]
+        except Exception as exc:
+            live_progress("test mint inheritance unavailable", source=source_config.get("_path"), error=exc)
+
+    return configured_test_mints(fallback_mints=fallback_mints)
+
+
+def write_test_wallet_config(
+    nsec: str,
+    home_relay: str,
+    config_suffix: str = "",
+    mints: list[str] | None = None,
+) -> dict:
     config_path = get_test_wallet_config_path(config_suffix=config_suffix)
     try:
         config_path.parent.mkdir(parents=True, exist_ok=True)
@@ -266,7 +376,7 @@ def write_test_wallet_config(nsec: str, home_relay: str, config_suffix: str = ""
     config = {
         "nsec": nsec,
         "home_relay": normalize_relay(home_relay),
-        "mints": [normalize_mint(os.getenv("ACORN_TEST_MINT", "https://mint.getsafebox.app"))],
+        "mints": configured_test_mints(fallback_mints=mints),
         "test_wallet": True,
     }
     try:
@@ -285,6 +395,7 @@ async def ensure_test_wallet_config(relay: str | None = None, config_suffix: str
     if config_path.exists():
         config = require_test_wallet_config(relay=relay, config_suffix=config_suffix)
         config.setdefault("test_wallet", True)
+        config["mints"] = await resolve_test_mints(fallback_mints=config.get("mints"))
         if relay:
             config["home_relay"] = normalize_relay(relay)
         elif os.getenv("ACORN_TEST_RELAY"):
@@ -306,7 +417,13 @@ async def ensure_test_wallet_config(relay: str | None = None, config_suffix: str
     from monstr.encrypt import Keys
 
     test_relay = normalize_relay(relay or os.getenv("ACORN_TEST_RELAY", "ws://beelink:7777"))
-    config = write_test_wallet_config(Keys().private_key_bech32(), test_relay, config_suffix=config_suffix)
+    test_mints = await resolve_test_mints()
+    config = write_test_wallet_config(
+        Keys().private_key_bech32(),
+        test_relay,
+        config_suffix=config_suffix,
+        mints=test_mints,
+    )
     await initialize_test_wallet_config(config)
     return config
 

@@ -40,6 +40,32 @@ The current default home mint constant is:
 https://mint.getsafebox.app
 ```
 
+## Mint API proof serialization
+
+Mint-facing API calls must use Cashu proof serialization, not broad wallet model
+serialization. In practice this means sending only the fields required by the
+mint for proof validation, swap, or melt:
+
+```json
+{
+  "id": "...",
+  "amount": 1,
+  "secret": "...",
+  "C": "..."
+}
+```
+
+Optional proof fields such as `witness` must be omitted unless they are actually
+present and required by a spending condition. Empty/default witness values are
+not harmless with all mints; stricter mints can reject them with errors such as:
+
+```text
+witness data not allowed without a spending condition
+```
+
+Wallet-local fields, reserved flags, derivation paths, and empty/default values
+belong in Acorn's local or relay-backed state, not in mint API payloads.
+
 ## Where the home mint is stored
 
 When a wallet is created, Acorn writes the home mint into the encrypted wallet
@@ -157,4 +183,3 @@ It should not print the paid BOLT11 invoice as the success message.
 - Whether `acorn set --mint` should update the encrypted wallet mint, not just
   local CLI config.
 - Whether multi-mint policy should be exposed as a first-class component API.
-

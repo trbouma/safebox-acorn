@@ -154,6 +154,56 @@ def test_transfer_relay_uses_relay_scenario_when_no_explicit_override(monkeypatc
     )
 
 
+def test_configured_test_mints_prefers_explicit_override(monkeypatch):
+    from tests.helpers import configured_test_mints
+
+    monkeypatch.setenv("ACORN_TEST_MINT", "mint.endfiat.money")
+
+    assert configured_test_mints(fallback_mints=["https://mint.getsafebox.app"]) == [
+        "https://mint.endfiat.money"
+    ]
+
+
+def test_configured_test_mints_uses_fallback_when_no_override(monkeypatch):
+    from tests.helpers import configured_test_mints
+
+    monkeypatch.delenv("ACORN_TEST_MINT", raising=False)
+
+    assert configured_test_mints(fallback_mints=["mint.endfiat.money"]) == [
+        "https://mint.endfiat.money"
+    ]
+
+
+def test_get_receive_nsec_prefers_explicit_override(monkeypatch):
+    from tests.helpers import get_receive_nsec
+
+    monkeypatch.setenv("ACORN_RECEIVE_NSEC", "nsec1override")
+
+    assert get_receive_nsec({"nsec": "nsec1source"}) == "nsec1override"
+
+
+def test_get_receive_nsec_defaults_to_source_wallet(monkeypatch, capsys):
+    from tests.helpers import get_receive_nsec
+
+    monkeypatch.delenv("ACORN_RECEIVE_NSEC", raising=False)
+
+    assert get_receive_nsec({"nsec": "nsec1source"}) == "nsec1source"
+    assert "receive nsec inherited from source wallet" in capsys.readouterr().out
+
+
+def test_proof_to_dict_omits_empty_witness_for_mint_api():
+    from acorn.models import Proof
+
+    proof = Proof(id="00abc", amount=1, secret="secret", C="02abc", Y="03abc")
+
+    assert proof.to_dict() == {
+        "id": "00abc",
+        "amount": 1,
+        "secret": "secret",
+        "C": "02abc",
+    }
+
+
 def test_live_relay_scenarios_include_optional_third_party(monkeypatch):
     from tests.helpers import live_relay_scenarios
 
@@ -213,20 +263,19 @@ def test_live_relay_scenarios_can_select_controlled_only(monkeypatch):
     ]
 
 
-def test_skip_if_relay_unsuitable_short_circuits_later_scenarios(monkeypatch):
+def test_skip_if_relay_unsuitable_short_circuits_later_scenarios(monkeypatch, capsys):
     from tests import helpers
 
     helpers.UNSUITABLE_RELAYS.clear()
     helpers.RELAY_SUITABILITY_RESULTS.clear()
-    helpers.relay_unsuitable(
-        "relay.unsuitable.example.com",
-        capability="wallet-bootstrap-readback",
-        reason="wallet bootstrap state was not readable after initialization",
+    helpers.UNSUITABLE_RELAYS["wss://relay.unsuitable.example.com"] = (
+        "wallet-bootstrap-readback: wallet bootstrap state was not readable after initialization"
     )
 
     with pytest.raises(pytest.skip.Exception) as exc:
         helpers.skip_if_relay_unsuitable("wss://relay.unsuitable.example.com")
 
+    capsys.readouterr()
     assert "already marked unsuitable" in str(exc.value)
     helpers.UNSUITABLE_RELAYS.clear()
     helpers.RELAY_SUITABILITY_RESULTS.clear()
