@@ -67,7 +67,7 @@ The goal is reciprocal safes, not a shared folder. Each participant can help
 hold another participant's encrypted recovery path, but nobody receives pooled
 plaintext access or shared account control.
 
-The useful object is isolated, encrypted tenant-like state that can be mirrored
+The useful object is isolated encrypted tenant state that can be mirrored
 across infrastructure chosen by the user.
 
 The value proposition is reciprocal resilience:
@@ -103,6 +103,56 @@ The useful unit is an isolated encrypted tenant. In Acorn, this means:
 
 The infrastructure operator can host that tenant's encrypted events without
 being able to read the tenant's records or spend its proofs.
+
+### Tenant on relays, client to mints, component behind services
+
+An Acorn instance has several complementary infrastructure relationships:
+
+```text
+relay relationship      -> encrypted tenant
+mint relationship       -> value client
+execution relationship  -> user-authorized component
+```
+
+On a relay, an Acorn instance is best understood as an encrypted tenant: a
+signed event set associated with one wallet identity and record namespace. The
+relay hosts availability for the tenant. It does not become the owner of the
+tenant's contents, keys, funds, or record-control decisions.
+
+With a mint, the same Acorn instance is a client. The mint issues, swaps,
+melts, and verifies Cashu proofs. The mint is authoritative for proof spend
+state, but it is not the user's application account and it does not host the
+user's private record namespace.
+
+Acorn may also run as a private component inside an execution environment
+operated for the user. The operator is whoever provides the running code or
+execution context: the user, a household, a community, an employer, a hosted
+service, an appliance, or a product such as Safebox. In that deployment, the
+operator can provide web presence, Lightning address support, default relays,
+operational monitoring, onboarding, and customer support. The service may make
+Acorn accessible to ordinary users without requiring them to run their own
+infrastructure.
+
+This operator-run model must be described honestly. If the operator holds or
+can exercise key material, the user is delegating operational control to that
+operator. If keys are held locally, in hardware, or in a constrained signing
+environment, the operator is running more of the service surface than the
+authority boundary. Both models can be useful, but they have different trust
+assumptions.
+
+This distinction matters:
+
+- relays provide availability for encrypted state;
+- mints provide issuance and spend-state validation for ecash proofs;
+- applications provide user experience and workflows;
+- trusted operators may run user-authorized Acorn components and service
+  endpoints;
+- the user-controlled key material remains the continuity boundary.
+
+An Acorn tenant can be replicated across relays while remaining a client of one
+or more mints. Relay migration changes where encrypted state is available. Mint
+choice changes where value proofs are issued and redeemed. Neither should
+change the user's application-level identity or private record namespace.
 
 ### Reciprocal resilience
 

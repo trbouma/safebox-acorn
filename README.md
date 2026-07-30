@@ -29,6 +29,7 @@ without requiring the Safebox web application.
 - [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
+- [Roadmap to Releasability](./docs/ROADMAP-TO-RELEASABILITY.md)
 
 ## Install from this repository
 
@@ -46,6 +47,22 @@ poetry install
 poetry run acorn --help
 ```
 
+The ordinary installation does not require Open Quantum Safe. Experimental
+post-quantum event support can be installed explicitly:
+
+```sh
+pip install "safebox-acorn[post-quantum] @ git+https://github.com/trbouma/safebox-acorn.git"
+```
+
+For local development:
+
+```sh
+poetry install -E post-quantum
+```
+
+This extra enables the experimental `acorn.post_quantum.PQEvent` implementation.
+It is not used by ordinary wallet, record, relay, mint, or ecash operations.
+
 ## Smoke test
 
 After installing into a fresh virtual environment:
@@ -60,16 +77,9 @@ Expected result:
 - Python prints the `acorn.acorn.Acorn` class.
 - The `acorn` command lists the available CLI commands.
 
-If you see an Open Quantum Safe warning such as:
-
-```text
-liboqs version (major, minor) ... differs from liboqs-python version ...
-```
-
-that warning is currently non-blocking if the import completes and the CLI
-loads. It indicates that the native `liboqs` library and Python wrapper are not
-the same release series. Future releases should document a known-good OQS
-version matrix.
+An ordinary installation should not import `oqs` or emit Open Quantum Safe
+version warnings. When the optional post-quantum extra is installed, its Python
+wrapper and native `liboqs` library still need to be a compatible pair.
 
 ## Testing
 
@@ -374,10 +384,10 @@ You can still override per command:
 acorn zap 21 <event-id> -c "from acorn" -r relay.damus.io,nos.lol
 ```
 
-If you need to see import-time OQS warnings while debugging:
+To inspect the optional OQS provider after installing the `post-quantum` extra:
 
 ```sh
-ACORN_SHOW_IMPORT_WARNINGS=1 acorn --help
+python -c "import oqs; print(oqs.oqs_version())"
 ```
 
 ## Python usage

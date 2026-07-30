@@ -996,13 +996,13 @@ files = [
 
 [[package]]
 name = "filelock"
-version = "3.32.0"
+version = "3.32.2"
 description = "A platform independent file lock."
 optional = false
 python-versions = ">=3.10"
 files = [
-    {file = "filelock-3.32.0-py3-none-any.whl", hash = "sha256:d396bea984af47333ef05e50eae7eff88c84256de6112aea0ec48a233c064fe3"},
-    {file = "filelock-3.32.0.tar.gz", hash = "sha256:7be2ad23a14607ccc71808e68fe30848aeace7058ace17852f68e2a68e310402"},
+    {file = "filelock-3.32.2-py3-none-any.whl", hash = "sha256:87dd94cf281e586d135fa51132b8e3d9a598b316e90377a288663c9321036c82"},
+    {file = "filelock-3.32.2.tar.gz", hash = "sha256:c33351e1f49cae33414acbc6d56784e6ecee82514ec90795da1161fc4836b5b8"},
 ]
 
 [[package]]
@@ -1251,7 +1251,7 @@ files = [
 name = "liboqs-python"
 version = "0.16.0"
 description = "Python bindings for liboqs, providing post-quantum public key cryptography algorithms"
-optional = false
+optional = true
 python-versions = ">=3.10"
 files = [
     {file = "liboqs_python-0.16.0-py3-none-any.whl", hash = "sha256:50bb11a9767b88f68099cedef8de09f798f31eaba1aa18b483988bfcd50df440"},
@@ -2696,7 +2696,10 @@ idna = ">=2.0"
 multidict = ">=4.0"
 propcache = ">=0.2.1"
 
+[extras]
+post-quantum = ["liboqs-python"]
+
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "d8409cb4e1ed8472cd7aaeef42658f816efaf24b3d1b55325ee6f6fbce0a6951"
+content-hash = "bd8d883deff361df58ea71aaa750348faf22fb5c33ad8f36fe8440bded9aee2d"

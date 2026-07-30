@@ -22,6 +22,38 @@ Acorn should stay small, reusable, testable, and protocol-first. Safebox should
 own user experience, product workflows, web sessions, deployment defaults, and
 support surfaces.
 
+## Safebox as a trusted operator
+
+The trusted operator is whoever provides the execution environment or running
+code for an Acorn instance. That may be the user, a household, a community, an
+employer, a hosted service, an appliance, or a product such as Safebox.
+
+Safebox may operate Acorn as a private component for a user. In this model,
+Safebox is not merely a web UI over a local library; it can provide a managed
+execution and service surface around Acorn:
+
+- web presence and browser UX;
+- hosted onboarding and recovery flows;
+- Lightning address support;
+- default relay and mint configuration;
+- monitoring and operational support;
+- appliance, jail, or hosted deployment defaults;
+- compatibility with the standalone Acorn CLI and package.
+
+This is a valid model, especially for users who want user-controlled funds and
+records without becoming infrastructure operators. The app should make the
+trust boundary clear. An operator-run Acorn component can improve availability
+and usability, but it should not remove the user's practical exit path.
+
+Safebox should therefore preserve:
+
+- recovery export with explicit confirmation;
+- compatibility with relay-backed Acorn state;
+- the ability to replicate or migrate to another relay;
+- clear display of the effective home relay, public relays, and home mint;
+- eventual support for stronger key custody boundaries, such as local hardware,
+  HSM-like devices, or constrained signing environments.
+
 ## What the app consumes from Acorn
 
 The web app should call Acorn for wallet and record primitives rather than

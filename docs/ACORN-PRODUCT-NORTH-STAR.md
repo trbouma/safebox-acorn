@@ -89,6 +89,7 @@ funds and records are controllable protocol objects
 applications are replaceable interfaces
 relays and mints are replaceable infrastructure
 communities can support availability without taking custody
+trusted operators can provide execution environments and service surfaces
 ```
 
 The system of record is no longer primarily an application database. It is the
@@ -99,6 +100,21 @@ That inversion explains why Acorn should remain a component rather than a
 single product surface. Applications can provide excellent user experience,
 workflow, compliance, support, and polish, but they should not become the only
 place where the user's funds, records, identity, or recovery path can exist.
+
+This does not require every user to run Acorn personally. A trusted operator is
+whoever provides the execution environment or running code for an Acorn
+instance. That operator may be the user, a family member, a community, an
+employer, a service provider, an appliance, or a product such as Safebox. The
+operator may provide web presence, service endpoints, Lightning address
+support, hosted relay defaults, monitoring, and support. That is a valid
+deployment model when the trust boundary is explicit.
+
+The important distinction is between service operation and architectural
+lock-in. An operator-run Acorn instance can make the system easier to use, but
+it should still preserve the user's ability to export recovery material,
+replicate relay-backed state, change operators, recover through another
+compatible surface, or move toward stronger custody such as local hardware or
+an HSM-like device.
 
 ## Havens for funds and records
 
@@ -213,6 +229,16 @@ data
 
 configuration state
   home relay, public relays, home mint, recovery context, replication policy
+```
+
+The operational frame is:
+
+```text
+keys  -> continuity and authority
+code  -> execution environment and trusted operator
+data  -> encrypted tenant on relays
+mint  -> value and spend-state authority
+app   -> user experience and workflows
 ```
 
 These layers can move and harden independently. For example, data can be

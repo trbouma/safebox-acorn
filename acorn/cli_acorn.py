@@ -1,29 +1,16 @@
-import asyncio, sys, click, os, yaml, logging, warnings, contextlib, io
+import asyncio, sys, click, os, yaml, logging
 from typing import List
 from monstr.encrypt import Keys
 from monstr.client.client import Client, ClientPool
 from monstr.event.event import Event
 from monstr.util import util_funcs
 def _import_acorn_runtime():
-    warnings.filterwarnings(
-        "ignore",
-        message=r"liboqs version .* differs from liboqs-python version .*",
-        category=UserWarning,
-        module=r"oqs.*",
-    )
-    if os.getenv("ACORN_SHOW_IMPORT_WARNINGS"):
-        from acorn.acorn import Acorn
-        from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
-        from acorn.lightning import lightning_address_pay
-        from acorn.func_utils import recover_nsec_from_seed
-        return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
+    from acorn.acorn import Acorn
+    from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
+    from acorn.lightning import lightning_address_pay
+    from acorn.func_utils import recover_nsec_from_seed
 
-    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
-        from acorn.acorn import Acorn
-        from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
-        from acorn.lightning import lightning_address_pay
-        from acorn.func_utils import recover_nsec_from_seed
-        return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
+    return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
 
 
 (

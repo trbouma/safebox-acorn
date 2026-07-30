@@ -354,11 +354,12 @@ include:
 - optional support until compatibility is mature;
 - clear distinction between experimental PQC and stable record formats.
 
-Acorn currently contains Open Quantum Safe (`liboqs` / `liboqs-python`) related
-code paths for experimental post-quantum signatures and KEM-assisted flows. Those
-dependencies should be treated as experimental until the project documents a
-known-good version matrix, conformance tests, and stable interoperability
-behavior.
+Acorn contains an optional Open Quantum Safe (`liboqs` / `liboqs-python`) code
+path for experimental post-quantum event signatures. It is isolated in
+`acorn.post_quantum`, is installed through the `post-quantum` package extra,
+and is not loaded by ordinary Acorn operations. These dependencies should be
+treated as experimental until the project documents a known-good version
+matrix, conformance tests, and stable interoperability behavior.
 
 The desired long-term posture is:
 

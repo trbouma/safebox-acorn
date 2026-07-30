@@ -54,6 +54,10 @@ state is portable;
 infrastructure is replaceable.
 ```
 
+Operationally, an Acorn instance is an encrypted tenant on relays and a client
+to mints. Relays make encrypted state available. Mints validate and refresh
+spendable value records.
+
 ## Transferable records
 
 Transferable records represent controlled state that can move between holders.

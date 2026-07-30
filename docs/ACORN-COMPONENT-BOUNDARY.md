@@ -44,6 +44,16 @@ configuration state
   home relay, public relays, home mint, recovery context, replication policy
 ```
 
+In deployment terms:
+
+```text
+keys  -> continuity and authority
+code  -> execution environment and trusted operator
+data  -> encrypted tenant on relays
+mint  -> value and spend-state authority
+app   -> user experience and workflows
+```
+
 This separation is central to the component boundary:
 
 - applications can be replaced without losing user state;

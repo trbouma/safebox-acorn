@@ -8,6 +8,22 @@ while still allowing the local config to remain minimal.
 
 ## Terms
 
+### Acorn tenant and mint client
+
+An Acorn instance is an encrypted tenant on one or more relays, and a client to
+one or more mints.
+
+Relays provide availability for signed encrypted wallet and record state. Mints
+provide issuance, swap, melt, and spend-state validation for ecash proofs.
+
+In an operator-run deployment, the party providing the execution environment or
+running code may also provide web presence and Lightning address support around
+the Acorn component. That service layer can improve usability, but it should
+not obscure which mint is issuing or redeeming proofs for the wallet.
+
+The tenant/client distinction is specified in
+[Relay Resilience and Replication Design](./RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md).
+
 ### Mint
 
 A Cashu mint issues and redeems ecash proofs.
