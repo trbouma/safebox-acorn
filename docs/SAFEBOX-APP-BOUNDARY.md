@@ -125,5 +125,5 @@ A clean rebuild should proceed by:
 7. adding relay/mint configuration and recovery UX;
 8. hardening deployment, tests, and support flows.
 
-This keeps the app focused on product polish while Acorn remains the sovereign
-protocol component.
+This keeps the app focused on product polish while Acorn remains the
+user-controlled protocol component.

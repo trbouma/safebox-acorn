@@ -1,6 +1,6 @@
 # Relay Suitability Ledger
 
-Acorn uses Nostr relays as sovereign, user-selectable infrastructure for
+Acorn uses Nostr relays as user-selectable infrastructure for
 wallet bootstrap state, private records, gift-wrapped ecash transfers, and
 relay-backed recovery. Not every public relay is suitable for this role.
 
@@ -121,5 +121,5 @@ the relay is optimized for social Nostr traffic rather than Acorn's relay-backed
 wallet and record lifecycle.
 
 The goal of this ledger is practical: identify relays that can support Acorn's
-protocol-first sovereign data model, and make relay choice an explicit,
+protocol-first user-controlled record model, and make relay choice an explicit,
 testable deployment decision.

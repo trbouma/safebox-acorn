@@ -1,8 +1,8 @@
 # Acorn Record Model
 
-Acorn implements a sovereign record model for funds and private records. The
-core idea is that user-controlled wallets can hold, receive, issue, present, and
-replicate encrypted records over Nostr relay infrastructure.
+Acorn implements a user-controlled record model for funds and private records.
+The core idea is that user-controlled wallets can hold, receive, issue,
+present, and replicate encrypted records over Nostr relay infrastructure.
 
 This model has two major record classes:
 
@@ -13,6 +13,46 @@ This model has two major record classes:
 
 Ecash is the most concrete transferable-record example. Private issued records
 are the complementary Safebox record primitive.
+
+## Controllable records
+
+The broader concept is a controllable record: a protocol object whose useful
+state is defined not only by its content, but by who can control, update,
+present, transfer, spend, revoke, or recover it.
+
+This is why Acorn's primary description is:
+
+```text
+Acorn is a protocol-first component for user-controlled funds and records.
+```
+
+In this model, "user-controlled" is not just a privacy preference. It is a
+record property. A record is more useful and resilient when the user can
+preserve control of it across applications, relays, mints, devices, and
+deployment operators.
+
+Control can mean different things for different record classes:
+
+| Record class | What control means |
+| --- | --- |
+| Transferable records | The current holder can transfer or spend the record, and the protocol can determine when control has moved. |
+| Non-transferable private issued records | The holder can store, recover, decrypt, and present the record, but presentation does not by itself transfer ownership or spendable control. |
+| Configuration records | The user can recover and change the infrastructure pointers that make the wallet usable, such as home relay, public relays, and home mint. |
+
+This framing helps keep Acorn small and reusable. Acorn does not need to own
+every possible domain schema. It needs to provide the mechanics for
+user-controlled records: cryptographic identity, encrypted relay-backed
+storage, transfer/receive flows, proof refresh, transaction history, recovery,
+and replication.
+
+The result is a common kernel for both funds and records:
+
+```text
+content is private;
+control is explicit;
+state is portable;
+infrastructure is replaceable.
+```
 
 ## Transferable records
 
@@ -138,7 +178,7 @@ This class emphasizes:
 ## Why both classes belong in Acorn
 
 The Acorn kernel is not only a wallet and not only a document store. It supports
-sovereign encrypted records with different control semantics.
+encrypted user-controlled records with different control semantics.
 
 Transferable records answer:
 
@@ -191,5 +231,5 @@ Domain-specific schemas for healthcare, trade documentation, identity,
 membership, or other ecosystems should build on top of Acorn's record model
 without forcing Acorn to become a domain-specific application.
 
-This keeps Acorn reusable as a sovereign protocol component while allowing
+This keeps Acorn reusable as a user-controlled protocol component while allowing
 Safebox and other applications to specialize.

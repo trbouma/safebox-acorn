@@ -336,10 +336,10 @@ def info(ctx, json_output):
      / ___ |/ /__/ /_/ / /  / / / /    
     /_/  |_|\___/\____/_/  /_/ /_/     
 
-      A Protocol-First Sovereign Data Haven
+      User-Controlled Funds and Records
     """.rstrip())
     click.echo()
-    click.echo("A sovereign protocol component for identity, records, value, and recovery.")
+    click.echo("A protocol-first component for user-controlled funds, records, and recovery.")
     click.echo("Reciprocal resilience without shared secrets.")
     click.echo()
     click.echo(WELCOME_MSG.strip())

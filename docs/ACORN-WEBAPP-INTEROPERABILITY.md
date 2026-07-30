@@ -292,7 +292,7 @@ C 1 sat  ecash transfer received from ...: acorn wallet burn sweep
 ## Why this matters
 
 This is stronger than a CLI smoke test. It proves that Acorn is behaving like a
-sovereign protocol component rather than a feature trapped inside one
+user-controlled protocol component rather than a feature trapped inside one
 application boundary.
 
 The concept became more concrete once the same flows were exercised against
@@ -317,7 +317,7 @@ That makes Acorn easier to harden independently. Safebox can then consume Acorn
 as a reusable component while still preserving the user's ability to recover,
 replicate, migrate, and operate their wallet through other compatible surfaces.
 
-This is the practical test for Acorn as a sovereign protocol component:
+This is the practical test for Acorn as a user-controlled protocol component:
 
 ```text
 Can the user keep operating when the app, relay, mint, or deployment operator

@@ -1,7 +1,6 @@
 # Safebox Acorn
 
-Acorn is a protocol-first sovereign data haven: a sovereign protocol component
-for identity, records, value, recovery, and reciprocal resilience.
+Acorn is a protocol-first component for user-controlled funds and records.
 
 Safebox Acorn is the standalone Acorn component extracted from Safebox. It
 provides:

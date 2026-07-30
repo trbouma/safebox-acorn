@@ -2,12 +2,12 @@
 
 ## Summary
 
-Acorn is a protocol-first sovereign data haven.
+Acorn is a protocol-first component for user-controlled funds and records.
 
 It is not merely a wallet library, a command-line tool, or the code extracted
-from Safebox. Acorn is intended to be a sovereign protocol component that gives
-applications user-controlled identity, encrypted records, relay-backed
-resilience, Cashu value transfer, recovery, and reciprocal resilience across
+from Safebox. Acorn is intended to be a user-controlled protocol component that
+gives applications portable identity, encrypted records, relay-backed
+availability, value transfer, recovery, and reciprocal resilience across
 replaceable infrastructure.
 
 The north star is:
@@ -21,8 +21,8 @@ relay, mint, or service provider.
 Put another way:
 
 ```text
-Acorn is a sovereign protocol component for building protocol-first sovereign
-data havens.
+Acorn gives applications a protocol-first way to build user-controlled havens
+for funds, records, identity, and recovery.
 ```
 
 The core value proposition can be summarized as:
@@ -33,6 +33,26 @@ reciprocal resilience, protocol-first.
 
 Acorn should make it simple for people and communities to help each other stay
 recoverable without surrendering secrets to each other or to a central provider.
+
+## Language and roots
+
+Acorn's language has become calmer over time. Earlier descriptions leaned more
+heavily on terms like self-sovereignty, data havens, and infrastructure
+independence. Those ideas helped shape the architecture, but they can also
+sound ideological, cypherpunk, or unnecessarily alarming to people who simply
+need dependable tools for funds and records.
+
+The current language is intentionally plainer:
+
+```text
+user-controlled funds and records
+```
+
+This does not dilute the principles. It makes them easier to evaluate. Acorn is
+still rooted in user control, cryptographic continuity, encrypted records,
+replaceable infrastructure, reciprocal resilience, and recoverability across
+applications. The shift is from provocative language to operational language:
+less manifesto, more dependable component.
 
 ## Why Acorn exists
 
@@ -49,14 +69,15 @@ Acorn takes a different approach. It treats identity, private records, and
 wallet state as user-controlled protocol state that applications can use but do
 not own.
 
-## Sovereign data haven
+## Havens for funds and records
 
-Acorn is inspired by the broader idea of a data haven: a place or system built
-to keep important data available and protected when ordinary devices, accounts,
+Acorn is inspired by the broader idea of a haven: a place or system built to
+keep important things available and protected when ordinary devices, accounts,
 buildings, providers, or people are unavailable.
 
-Acorn's version is a sovereign data haven: user-controlled identity, private
-records, wallet state, and recovery context that can survive application,
+Acorn's concrete focus is narrower and more practical: user-controlled funds
+and records. It gives applications a way to create havens for private records,
+wallet state, identity, and recovery context that can survive application,
 provider, relay, mint, and device failure.
 
 The design is protocol-first and hardware-enabled over time. Acorn should work
@@ -96,6 +117,24 @@ This is reciprocal resilience: people, families, teams, or communities can help
 keep each other recoverable without taking custody of each other's plaintext
 data.
 
+The pattern is closer to older forms of mutual assurance than to centralized
+insurance or custodial service provision: participants improve each other's
+continuity without pooling control of the underlying assets or records.
+
+This also points to a middle path between cloud/SaaS dependency and extreme
+self-hosting. Acorn should not require every user to become a full-time
+infrastructure operator. Instead, it should make community-supported continuity
+practical: families, teams, local organizations, professional communities, or
+trusted operators can help provide availability while control remains with the
+user.
+
+This becomes especially relevant in turbulent environments where local
+infrastructure can fail. Wildfires, floods, earthquakes, storms, power outages,
+or regional network disruptions can make a single home, office, provider, or
+device unavailable. Acorn's model is intended to let encrypted state survive
+those local failures by being recoverable from independently operated relays,
+replicas, and recovery material.
+
 In plain language:
 
 ```text
@@ -114,18 +153,18 @@ neither of us receives the other's contents.
 The useful object is the isolated encrypted tenant: the wallet identity, record
 namespace, recovery context, and signed event set controlled by the user.
 
-## Sovereign protocol component
+## User-controlled protocol component
 
-A sovereign protocol component has several properties.
+A user-controlled protocol component has several properties.
 
 For Acorn, the term means a compartmentalized protocol boundary that gives
 applications portable identity, encrypted user-controlled state, recovery, and
 migration across replaceable infrastructure.
 
 This is different from an ordinary library or backend module. A library provides
-functions. A backend module usually serves one application. A sovereign protocol
-component carries interoperable user state across applications, relays, mints,
-devices, and providers.
+functions. A backend module usually serves one application. A user-controlled
+protocol component carries interoperable user state across applications,
+relays, mints, devices, and providers.
 
 The continuity boundary is the user and their cryptographic material, not the
 application operator.
@@ -152,8 +191,8 @@ and application code can be replaced without losing the user's protocol state.
 
 ### Becoming concrete
 
-The sovereign protocol component idea becomes concrete when Acorn can operate
-against infrastructure that the Safebox project does not control.
+The user-controlled protocol component idea becomes concrete when Acorn can
+operate against infrastructure that the Safebox project does not control.
 
 Recent live testing has shown that Acorn can use both a third-party Nostr relay
 and a third-party Cashu mint while preserving the same user-controlled wallet
@@ -166,10 +205,10 @@ model:
 - relay and mint choice remain explicit infrastructure decisions rather than
   application lock-in.
 
-This is the practical difference between an application feature and a sovereign
-protocol component. A feature works inside one product boundary. A sovereign
-protocol component keeps working when the surrounding relay, mint, app, or
-deployment operator changes.
+This is the practical difference between an application feature and a
+user-controlled protocol component. A feature works inside one product
+boundary. A user-controlled protocol component keeps working when the
+surrounding relay, mint, app, or deployment operator changes.
 
 ### It carries its own identity
 
@@ -196,8 +235,9 @@ becomes unreliable or adversarial.
 Human-readable record labels and payloads are encrypted before publication.
 Relays see metadata, but not record contents.
 
-The record model is specified in
-[Record Encryption Specification](./RECORD-ENCRYPTION-SPEC.md).
+The broader controllable-record model is specified in
+[Acorn Record Model](./ACORN-RECORD-MODEL.md). The encryption details are
+specified in [Record Encryption Specification](./RECORD-ENCRYPTION-SPEC.md).
 
 ### It should have a quantum-safe migration path
 
@@ -298,7 +338,7 @@ Acorn should be useful to multiple application families:
 - Safebox-style personal data wallets;
 - healthcare record pilots;
 - digital trade documentation;
-- sovereign infrastructure appliances;
+- user-controlled infrastructure appliances;
 - agent wallets;
 - Nostr-native private record systems;
 - Cashu-enabled applications.
@@ -331,6 +371,22 @@ with existing protocol ecosystems.
 
 Relays, mints, and application services should be replaceable. A user should not
 lose continuity because one provider fails.
+
+Replaceable infrastructure is the design principle. Redundant architecture is
+one way to implement it.
+
+In practice, this can mean:
+
+- more than one relay can hold the user's encrypted signed state;
+- wallet state can be replicated before a home relay becomes unreliable;
+- a new relay can be promoted without changing the user's identity;
+- compatible applications can recover from the same user-controlled material;
+- alternate deployment paths, including hosted relays, private relays, FreeBSD
+  jails, and future appliances, can coexist.
+
+The goal is not redundancy for its own sake. The goal is user continuity. If one
+operator, relay, mint, application, or device fails, the user should still have
+a practical path to recover, replicate, and keep operating.
 
 ### Let users choose their security boundary
 
@@ -371,8 +427,8 @@ learned from actual failures, migrations, and edge cases.
 The near-term goal is to harden the Python Acorn component until it is stable
 enough to support Safebox-next as a clean dependency.
 
-The medium-term goal is to make Acorn a reusable sovereign protocol component
-with:
+The medium-term goal is to make Acorn a reusable user-controlled protocol
+component with:
 
 - stable Python API;
 - stable CLI contract;

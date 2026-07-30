@@ -119,6 +119,23 @@ The broader principle is reciprocal resilience: a community can improve each
 member's continuity by hosting encrypted replicas, while cryptographic
 boundaries keep custody with each user.
 
+It is closer to mutual assurance than to centralized insurance: participants
+help each other stay recoverable without transferring custody of funds,
+records, or secrets.
+
+This is also a practical alternative to the false choice between SaaS/cloud
+dependency and extreme self-hosting. Not every user should need to operate
+their own full infrastructure. Acorn should support community-backed models in
+which trusted people, groups, or service operators provide availability while
+cryptographic control stays with the user.
+
+The same model is useful when physical infrastructure becomes unreliable.
+Natural hazards such as wildfires, earthquakes, floods, storms, and extended
+power or network outages can make local homes, offices, devices, or data
+centres temporarily unreachable. Relay replication gives the user more than one
+path back to their encrypted wallet and record state, provided recovery
+material remains available.
+
 This should become a core Acorn design value, not merely a replication feature.
 Relay pools, migration tools, recovery exports, and future hardware deployments
 should all preserve this distinction between helping someone remain recoverable
@@ -471,10 +488,10 @@ can choose a stricter relay boundary:
 - a relay reachable only over VPN, Tor, WireGuard, or Tailscale;
 - a relay mirrored between trusted homes, offices, or jurisdictions.
 
-This is part of the sovereignty model. Security is not delegated entirely to a
-corporate provider. The user can decide where encrypted protocol state lives,
-who operates the infrastructure, and how many independent locations should hold
-replicas.
+This is part of the user-controlled security model. Security is not delegated
+entirely to a corporate provider. The user can decide where encrypted protocol
+state lives, who operates the infrastructure, and how many independent
+locations should hold replicas.
 
 ## Near-term implementation roadmap
 
