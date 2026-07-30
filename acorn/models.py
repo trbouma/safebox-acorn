@@ -350,6 +350,7 @@ class EncryptionResult(BaseModel):
     aad: Optional[bytes] = None
 
 class SafeboxRecord(BaseModel):
+    version: int = 1
     tag: list[str]                     # e.g. ["my_record"]
     type: str                          # e.g. "offer"
     payload: Any                       # can hold any JSON-serializable value

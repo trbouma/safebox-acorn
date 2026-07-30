@@ -149,7 +149,10 @@ async def test_live_record_lifecycle_round_trip(relay_scenario):
             "record delete",
             timeout,
         )
-        assert delete_result == f"{label} deleted."
+        assert delete_result["status"] == "DELETE_REQUESTED"
+        assert delete_result["label"] == label
+        assert delete_result["kind"] == 37375
+        assert delete_result["delete_event_id"]
         deleted = True
 
         live_progress("record lifecycle test: verifying label removal")

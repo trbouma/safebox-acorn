@@ -113,6 +113,7 @@ similar to:
 
 ```json
 {
+  "version": 1,
   "tag": ["Field Notes"],
   "type": "generic",
   "payload": "Apr 30: Moving\n\nApr 25: Dog Walk",
@@ -153,6 +154,17 @@ content: NIP-44 encrypted record metadata
 
 The event is signed by the user's private key.
 
+### 6. Verify relay readback
+
+The public `put_record` path does not treat an enqueued websocket publish as
+durable success. It queries each selected write relay until the new event is
+both readable and canonical for its `(kind, pubkey, d)` coordinate.
+
+When replacing a record, Acorn assigns a timestamp later than the currently
+observed canonical version. This avoids ambiguous same-second replacement
+races. If readback cannot be verified, the write raises an error rather than
+reporting success.
+
 ## Record read flow
 
 To retrieve a record by label, Acorn reverses the lookup process.
@@ -167,7 +179,7 @@ label_hash = sha256(privkey_hex || record_label)
 
 ### 2. Query relays
 
-Acorn queries relays for an event matching:
+Acorn queries the selected relay pool for events matching:
 
 ```json
 {
@@ -176,6 +188,11 @@ Acorn queries relays for an event matching:
   "#d": ["<label_hash>"]
 }
 ```
+
+Every point lookup includes the requested kind. Acorn deduplicates event IDs
+and selects the NIP-01 canonical addressable event: greatest `created_at`, then
+lexically lowest event ID when timestamps are equal. This also reconciles
+different views returned by multiple relays.
 
 ### 3. Decrypt event content
 
@@ -205,6 +222,38 @@ or emit it as JSON:
 ```sh
 acorn get "Field Notes" --json
 ```
+
+Point operations may target a relay pool:
+
+```sh
+acorn get "Field Notes" --relays ws://local-relay:8735,wss://backup.example
+```
+
+## Internal-state separation
+
+Acorn operational state and ordinary user records currently use compatible
+encrypted addressable-event mechanics. The public `put_record` API protects
+known internal labels—including `wallet`, `lock`, `pending_melts`, cursors,
+relay configuration, and mint configuration—and reserves the `__acorn_`
+prefix. Callers must use the dedicated configuration, payment, and recovery
+APIs for those records.
+
+This preserves backward compatibility with existing relay data while preventing
+ordinary CLI or component record writes from replacing operational state.
+
+## Record deletion
+
+Deletion is a NIP-09 request, not a guaranteed erase. Acorn publishes kind `5`
+with:
+
+- an `e` tag for the currently selected event;
+- an `a` tag for the full addressable coordinate;
+- a `k` tag for the record kind.
+
+The request can be sent to a relay pool. Acorn reports where the record was no
+longer visible after publication and retains the explicit advisory that relays
+or clients may keep it. Optional blob cleanup attempts deletion from every
+configured blob server.
 
 ## Blob encryption
 
@@ -334,6 +383,13 @@ visible.
 
 Relays and blob servers can refuse service, delete data, censor events, or be
 unavailable. Encryption protects confidentiality, not availability.
+
+### Schema versioning
+
+`SafeboxRecord.version` is `1` for the current envelope. Older stored records
+without the field parse as version `1`. Future incompatible lookup or
+encryption changes must use a documented migration rather than silently
+changing the existing label hash or ciphertext interpretation.
 
 ### Quantum-safe cryptography
 

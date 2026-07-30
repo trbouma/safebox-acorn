@@ -87,6 +87,30 @@ DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
 MELT_RECOVERY_ATTEMPTS: int = 4
+INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
+    {
+        "balance",
+        "default",
+        "ecash_latest",
+        "ecash_transfer_latest",
+        "home_relay",
+        "index",
+        "last_dm",
+        "lock",
+        "mints",
+        "payment_request",
+        PENDING_MELTS_LABEL,
+        "privkey",
+        "profile",
+        "public_relays",
+        "quote",
+        "relays",
+        "trusted_mints",
+        "user_records",
+        "wallet",
+        "wallet_config",
+    }
+)
 
 
 class PaymentOutcomeUnknownError(RuntimeError):
@@ -151,7 +175,7 @@ class Acorn:
     balance: int
     proof_events: proofEvents 
     replicate: bool
-    RESERVED_RECORDS: List[str] = ["balance","privkey","public_relays"]
+    RESERVED_RECORDS: List[str] = sorted(INTERNAL_RECORD_LABELS)
     wallet_reserved_records: object
     logger: logging.Logger
     TZ: str = "America/New_York"
@@ -301,7 +325,17 @@ class Acorn:
         if not target:
             raise ValueError("target relay is required")
 
-        event_kinds = kinds or [0, 5, 37375, 7375, 30000, 30001, 30002]
+        event_kinds = kinds or [
+            0,
+            5,
+            17375,
+            37375,
+            37376,
+            7375,
+            30000,
+            30001,
+            30002,
+        ]
         normalized_kinds = sorted({int(each) for each in event_kinds})
         if not normalized_kinds:
             raise ValueError("at least one event kind is required")
@@ -331,6 +365,17 @@ class Acorn:
         async with ClientPool(target) as c:
             for event in unique_events:
                 c.publish(event)
+            await asyncio.sleep(0.3)
+
+        async with ClientPool(target) as c:
+            target_events: List[Event] = await c.query(query_filter)
+        target_event_ids = {str(each.id) for each in target_events}
+        missing_event_ids = [
+            str(each.id)
+            for each in unique_events
+            if str(each.id) not in target_event_ids
+        ]
+        source_may_be_truncated = len(events) >= query_limit
 
         by_kind: Dict[str, int] = {}
         for event in unique_events:
@@ -338,12 +383,19 @@ class Acorn:
             by_kind[kind_key] = by_kind.get(kind_key, 0) + 1
 
         return {
-            "status": "OK",
+            "status": (
+                "OK"
+                if not missing_event_ids and not source_may_be_truncated
+                else "PARTIAL"
+            ),
             "source_relay": source[0],
             "target_relay": target[0],
             "kinds": normalized_kinds,
             "queried": len(events),
             "replicated": len(unique_events),
+            "verified": not missing_event_ids,
+            "missing_event_ids": missing_event_ids,
+            "source_may_be_truncated": source_may_be_truncated,
             "by_kind": by_kind,
             "event_ids": [str(event.id) for event in unique_events],
         }
@@ -1212,19 +1264,45 @@ class Acorn:
                 }]
                
         else:
-                FILTER = [{
+                record_filter = {
                 'limit': RECORD_LIMIT,
                 'authors': [self.pubkey_hex],
                 'kinds': [record_kind]   
-                
-            }]
+                }
+                if since is not None:
+                    record_filter["since"] = int(since)
+                FILTER = [record_filter]
 
         # print(f"kind: {record_kind} relays to use: {relays_to_use}")
         self.logger.debug(f"kind: {record_kind} relays to use: {relays_to_use} filter: {FILTER}")
         async with ClientPool(relays_to_use) as c:  
             events = await c.query(FILTER)           
-        
-        events.sort(reverse=reverse)
+
+        if 30000 <= int(record_kind) < 40000:
+            events = self._canonical_record_events(events)
+            internal_labels = set(INTERNAL_RECORD_LABELS)
+            if getattr(self, "name", None):
+                internal_labels.add(str(self.name))
+            internal_hashes = {
+                self._record_label_hash(label)
+                for label in internal_labels
+            }
+            events = [
+                each
+                for each in events
+                if self._record_event_tag(each, "d") not in internal_hashes
+            ]
+        else:
+            deduplicated: dict[str, Event] = {
+                str(each.id): each for each in events
+            }
+            events = list(deduplicated.values())
+            events.sort(
+                key=lambda each: (
+                    -self._event_timestamp(each),
+                    str(each.id),
+                )
+            )
 
         each: Event
         for each in events:
@@ -1290,10 +1368,20 @@ class Acorn:
             else: # otherwise record is self-originating
                 try:
                     decrypt_content = my_enc.decrypt(each.content, self.pubkey_hex)
-                except (ValueError, TypeError) as exc:
+                except (ValueError, TypeError, RuntimeError) as exc:
                     # Try Gift Unwrapping
-                    decrypt_event = my_enc.decrypt_event(each)
-                    decrypt_content = decrypt_event.content
+                    try:
+                        decrypt_event = my_enc.decrypt_event(each)
+                        decrypt_content = decrypt_event.content
+                    except Exception as fallback_exc:
+                        self.logger.warning(
+                            "op=get_user_records status=decrypt_failed "
+                            "event=%s error=%s fallback_error=%s",
+                            each.id,
+                            exc,
+                            fallback_exc,
+                        )
+                        continue
             
                 try:
                     parsed_record = json.loads(decrypt_content)
@@ -1663,7 +1751,7 @@ class Acorn:
             self.accept_token(each)
         
         self.logger.debug("op=get_ecash_dm status=final_dm final_dm=%s", final_dm)
-        self.set_wallet_info("last_dm", str(final_dm))
+        await self.set_wallet_info("last_dm", str(final_dm))
         # self.swap_multi_each()
         
         return final_dm
@@ -2450,58 +2538,201 @@ class Acorn:
 
        
 
-    async def set_wallet_info(self,label: str,label_info: str, replicate_relays: List[str]=None, record_kind: int=37375):
-        await self._async_set_wallet_info(label,label_info,replicate_relays=replicate_relays, record_kind=record_kind)  
-    
-    async def _async_set_wallet_info(self, label:str, label_info: str, replicate_relays:List[str]=None, record_kind: int = 37375):
+    @staticmethod
+    def _record_event_tag(event: Event, tag_name: str) -> str:
+        for tag in event.tags:
+            if len(tag) > 1 and tag[0] == tag_name:
+                return str(tag[1])
+        return ""
 
-        m = hashlib.sha256()
-        m.update(self.privkey_hex.encode())
-        m.update(label.encode())
-                 
-        label_name_hash = m.digest().hex()
-        
-        # print(f"set wallet info {label}, {label_info}")
-        my_enc = NIP44Encrypt(self.k)
-        wallet_info_encrypt = my_enc.encrypt(label_info,to_pub_k=self.pubkey_hex)
-        # wallet_name_encrypt = my_enc.encrypt(wallet_name,to_pub_k=self.pubkey_hex)
-       
-        # print(wallet_info_encrypt)
+    def _canonical_record_events(self, events: List[Event]) -> List[Event]:
+        """Return one canonical event for each addressable record coordinate."""
+        unique: dict[str, Event] = {}
+        for event in events:
+            unique[str(event.id)] = event
 
-        tags = [['d',label_name_hash]]
-        
-        if replicate_relays:
-            write_relays = replicate_relays
+        grouped: dict[tuple, List[Event]] = {}
+        for event in unique.values():
+            d_tag = self._record_event_tag(event, "d")
+            if 30000 <= int(event.kind) < 40000 and d_tag:
+                coordinate = (int(event.kind), str(event.pub_key), d_tag)
+            else:
+                coordinate = ("event", str(event.id))
+            grouped.setdefault(coordinate, []).append(event)
+
+        canonical: List[Event] = []
+        for candidates in grouped.values():
+            candidates.sort(
+                key=lambda each: (-self._event_timestamp(each), str(each.id))
+            )
+            canonical.append(candidates[0])
+        canonical.sort(
+            key=lambda each: (-self._event_timestamp(each), str(each.id))
+        )
+        return canonical
+
+    def _record_relay_pool(self, relays: List[str] | str | None = None) -> List[str]:
+        if relays is None:
+            candidates = [self.home_relay]
+        elif isinstance(relays, str):
+            candidates = [
+                each.strip() for each in relays.split(",") if each.strip()
+            ]
         else:
-            write_relays = [self.home_relay]
+            candidates = [
+                str(each).strip() for each in relays if str(each).strip()
+            ]
+        normalized = self._normalize_relays(candidates)
+        if not normalized:
+            raise ValueError("at least one record relay is required")
+        return normalized
+
+    def _record_label_hash(self, label: str) -> str:
+        """Return the legacy-compatible private record lookup tag."""
+        if not isinstance(label, str) or not label:
+            raise ValueError("record label must be a non-empty string")
+        digest = hashlib.sha256()
+        digest.update(self.privkey_hex.encode())
+        digest.update(label.encode())
+        return digest.hexdigest()
+
+    async def set_wallet_info(
+        self,
+        label: str,
+        label_info: str,
+        replicate_relays: List[str] = None,
+        record_kind: int = 37375,
+        verify: bool = False,
+        verify_timeout: float = 8.0,
+    ) -> dict:
+        return await self._async_set_wallet_info(
+            label,
+            label_info,
+            replicate_relays=replicate_relays,
+            record_kind=record_kind,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def _async_set_wallet_info(
+        self,
+        label: str,
+        label_info: str,
+        replicate_relays: List[str] = None,
+        record_kind: int = 37375,
+        verify: bool = False,
+        verify_timeout: float = 8.0,
+    ) -> dict:
+        label_name_hash = self._record_label_hash(label)
+
+        my_enc = NIP44Encrypt(self.k)
+        wallet_info_encrypt = my_enc.encrypt(
+            label_info,
+            to_pub_k=self.pubkey_hex,
+        )
+        tags = [["d", label_name_hash]]
+        write_relays = self._record_relay_pool(
+            replicate_relays if replicate_relays else [self.home_relay]
+        )
+
+        created_at = int(datetime.now().timestamp())
+        if verify:
+            existing_filter = [{
+                "limit": RECORD_LIMIT,
+                "authors": [self.pubkey_hex],
+                "kinds": [record_kind],
+                "#d": [label_name_hash],
+            }]
+            async with ClientPool(write_relays) as c:
+                existing = await c.query(existing_filter)
+            canonical_existing = self._canonical_record_events(existing)
+            if canonical_existing:
+                created_at = max(
+                    created_at,
+                    self._event_timestamp(canonical_existing[0]) + 1,
+                )
 
         async with ClientPool(write_relays) as c:
-        # async with Client(relay) as c:
-            n_msg = Event(kind=record_kind,
-                        content=wallet_info_encrypt,
-                        pub_key=self.pubkey_hex,
-                        tags=tags)
-            
-            # n_msg = my_enc.encrypt_event(evt=n_msg,
-            #                         to_pub_k=self.pubkey_hex)
-            
+            n_msg = Event(
+                kind=record_kind,
+                content=wallet_info_encrypt,
+                pub_key=self.pubkey_hex,
+                tags=tags,
+                created_at=created_at,
+            )
             n_msg.sign(self.privkey_hex)
-            # print("label, event id:", label, n_msg.id)
             c.publish(n_msg)
             await asyncio.sleep(0.2)
-            self.logger.debug(f"wrote event {label} to {write_relays}")
+            self.logger.debug("wrote event %s to %s", label, write_relays)
+
+        verification = {
+            relay: {"readable": False, "canonical": False}
+            for relay in write_relays
+        }
+        if verify:
+            deadline = monotonic() + max(0.5, float(verify_timeout))
+            verify_filter = [{
+                "limit": RECORD_LIMIT,
+                "authors": [self.pubkey_hex],
+                "kinds": [record_kind],
+                "#d": [label_name_hash],
+            }]
+            while monotonic() < deadline:
+                for relay in write_relays:
+                    if verification[relay]["canonical"]:
+                        continue
+                    try:
+                        async with ClientPool([relay]) as c:
+                            observed = await c.query(verify_filter)
+                        canonical = self._canonical_record_events(observed)
+                        verification[relay]["readable"] = any(
+                            str(each.id) == str(n_msg.id)
+                            for each in observed
+                        )
+                        verification[relay]["canonical"] = bool(
+                            canonical
+                            and str(canonical[0].id) == str(n_msg.id)
+                        )
+                    except Exception as exc:
+                        verification[relay]["error"] = str(exc)
+                if all(
+                    each["canonical"] for each in verification.values()
+                ):
+                    break
+                await asyncio.sleep(0.4)
+
+            failed = [
+                relay for relay, state in verification.items()
+                if not state["canonical"]
+            ]
+            if failed:
+                raise RuntimeError(
+                    "Record publish could not be verified as canonical on: "
+                    + ", ".join(failed)
+                )
+
+        return {
+            "status": "OK",
+            "event_id": str(n_msg.id),
+            "kind": int(record_kind),
+            "label_hash": label_name_hash,
+            "relays": write_relays,
+            "verified": bool(verify),
+            "verification": verification,
+        }
 
     async def get_label_hash(self, label:str=None):
         """get label hash used for d tag"""
+        return self._record_label_hash(label)
 
-        m = hashlib.sha256()
-        m.update(self.privkey_hex.encode())
-        m.update(label.encode())
-        label_hash = m.digest().hex()
-
-        return label_hash
-
-    async def get_wallet_info(self, label:str=None, record_kind:int=37375, record_by_hash: str = None, record_origin: str = None):
+    async def get_wallet_info(
+        self,
+        label: str = None,
+        record_kind: int = 37375,
+        record_by_hash: str = None,
+        record_origin: str = None,
+        relays: List[str] | str | None = None,
+    ):
         my_enc = NIP44Encrypt(self.k)
 
         if record_origin:
@@ -2510,10 +2741,7 @@ class Acorn:
         if record_by_hash:
             label_hash = record_by_hash
         else:
-            m = hashlib.sha256()
-            m.update(self.privkey_hex.encode())
-            m.update(label.encode())
-            label_hash = m.digest().hex()
+            label_hash = self._record_label_hash(label)
         
         decrypt_content = None
         
@@ -2534,7 +2762,11 @@ class Acorn:
         }]
 
         # print("are we here?", label_hash)
-        event = await self._async_get_wallet_info(FILTER, label_hash)
+        event = await self._async_get_wallet_info(
+            FILTER,
+            label_hash,
+            relays=relays,
+        )
         if not event:
             self.logger.debug(
                 "op=get_wallet_info status=missing label=%s kind=%s hash=%s",
@@ -2561,22 +2793,19 @@ class Acorn:
 
         return decrypt_content
     
-    async def delete_record(self, label:str=None, record_kind:int=37375):
-        my_enc = NIP44Encrypt(self.k)
+    async def delete_record(
+        self,
+        label: str = None,
+        record_kind: int = 37375,
+        record_origin: str = None,
+        relays: List[str] | str | None = None,
+        delete_blob: bool = False,
+    ):
+        if record_origin:
+            label = ":".join([record_origin, label])
 
-        m = hashlib.sha256()
-        m.update(self.privkey_hex.encode())
-        m.update(label.encode())
-        label_hash = m.digest().hex()
-        decrypt_content = None
-        
-        # d_tag_encrypt = my_enc.encrypt(d_tag,to_pub_k=self.pubkey_hex)
-        # a_tag = ["a", label_hash]
-        # print("a_tag:",a_tag)
-       
-        self.logger.debug(f"getting record for: {label}")
-        
-        # DEFAULT_RELAY = self.relays[0]
+        label_hash = self._record_label_hash(label)
+        delete_relays = self._record_relay_pool(relays)
         FILTER = [{
             'limit': RECORD_LIMIT,
             'authors': [self.pubkey_hex],
@@ -2587,17 +2816,74 @@ class Acorn:
         }]
 
         # print("are we here?", label_hash)
-        event = await self._async_get_wallet_info(FILTER, label_hash)
+        event = await self._async_get_wallet_info(
+            FILTER,
+            label_hash,
+            relays=delete_relays,
+        )
         if not event:
-            return f"{label} not found."
+            return {
+                "status": "NOT_FOUND",
+                "label": label,
+                "kind": int(record_kind),
+                "relays": delete_relays,
+                "message": f"{label} not found.",
+            }
+
+        blob_cleanup = None
+        if delete_blob:
+            try:
+                record = await self.get_record_safebox(
+                    record_name=label,
+                    record_kind=record_kind,
+                    relays=delete_relays,
+                )
+                if record.blobsha256:
+                    blob_cleanup = {
+                        "requested": True,
+                        "sha256": record.blobsha256,
+                        "deleted": False,
+                        "servers": [],
+                    }
+                    client = BlossomClient(
+                        nsec=self.privkey_bech32,
+                        default_servers=self.blossom_servers,
+                    )
+                    for server in self.blossom_servers:
+                        try:
+                            client.delete_blob(
+                                server=server,
+                                sha256=record.blobsha256,
+                            )
+                            blob_cleanup["servers"].append(
+                                {"server": server, "deleted": True}
+                            )
+                            blob_cleanup["deleted"] = True
+                        except Exception as exc:
+                            blob_cleanup["servers"].append(
+                                {
+                                    "server": server,
+                                    "deleted": False,
+                                    "error": str(exc),
+                                }
+                            )
+            except Exception as exc:
+                blob_cleanup = {
+                    "requested": True,
+                    "deleted": False,
+                    "error": str(exc),
+                }
         
-        # Do the delete here
-        tags = [["e", event.id]]
+        tags = [
+            ["e", str(event.id)],
+            ["a", f"{int(record_kind)}:{self.pubkey_hex}:{label_hash}"],
+            ["k", str(int(record_kind))],
+        ]
         self.logger.debug("op=delete_record status=tags tags=%s", tags)
-        async with ClientPool([self.home_relay]) as c:
+        async with ClientPool(delete_relays) as c:
         
             n_msg = Event(kind=Event.KIND_DELETE,
-                        content=None,
+                        content=f"Delete Acorn record {label_hash}",
                         pub_key=self.pubkey_hex,
                         tags=tags)
             n_msg.sign(self.privkey_hex)
@@ -2605,9 +2891,65 @@ class Acorn:
             # added a delay here so the delete event get published
             await asyncio.sleep(1)
         
-        return f"{label} deleted."    
+        hidden_on: List[str] = []
+        for relay in delete_relays:
+            try:
+                async with ClientPool([relay]) as c:
+                    remaining = await c.query(FILTER)
+                if not remaining:
+                    hidden_on.append(relay)
+            except Exception:
+                continue
+
+        index_updated = False
+        index_error = None
+        if isinstance(getattr(self, "acorn_tags", None), list):
+            original_tags = list(self.acorn_tags)
+            self.acorn_tags = [
+                tag
+                for tag in self.acorn_tags
+                if not (
+                    isinstance(tag, list)
+                    and len(tag) > 1
+                    and tag[0] == "user_record"
+                    and tag[1] == label
+                )
+            ]
+            if self.acorn_tags != original_tags:
+                try:
+                    await self.set_wallet_info(
+                        label=self.name,
+                        label_info=json.dumps(self.acorn_tags),
+                    )
+                    await self.set_wallet_config()
+                    index_updated = True
+                except Exception as exc:
+                    index_error = str(exc)
+
+        return {
+            "status": "DELETE_REQUESTED",
+            "label": label,
+            "kind": int(record_kind),
+            "event_id": str(event.id),
+            "delete_event_id": str(n_msg.id),
+            "relays": delete_relays,
+            "hidden_on": hidden_on,
+            "advisory": (
+                "NIP-09 deletion is advisory; relays and clients may retain "
+                "the original event."
+            ),
+            "blob_cleanup": blob_cleanup,
+            "index_updated": index_updated,
+            "index_error": index_error,
+            "message": f"{label} deletion requested.",
+        }
     
-    async def _async_get_wallet_info(self, filter: List[dict],label_hash):
+    async def _async_get_wallet_info(
+        self,
+        filter: List[dict],
+        label_hash,
+        relays: List[str] | str | None = None,
+    ):
     # does a one off query to relay prints the events and exits
         self.logger.debug(f"filter {filter}")
         # my_enc = NIP44Encrypt(self.k)
@@ -2616,7 +2958,8 @@ class Acorn:
         events = []
         
         self.logger.debug(f"target tag: {target_tag}")
-        async with ClientPool([self.home_relay]) as c:
+        relay_pool = self._record_relay_pool(relays)
+        async with ClientPool(relay_pool) as c:
         
             
             events = await c.query(filter)
@@ -2629,7 +2972,8 @@ class Acorn:
             self.logger.debug("No wallet info events found for tag=%s", target_tag)
             return None
 
-        return events[0]
+        canonical = self._canonical_record_events(events)
+        return canonical[0] if canonical else None
 
 
     async def set_lock(self, lock: bool):
@@ -2793,10 +3137,23 @@ class Acorn:
         pass  
 
         
-    async def get_record(self,record_name:str=None, record_kind: int =37375, record_by_hash=None, record_origin:str = None):
+    async def get_record(
+        self,
+        record_name: str = None,
+        record_kind: int = 37375,
+        record_by_hash=None,
+        record_origin: str = None,
+        relays: List[str] | str | None = None,
+    ):
         #FIXME - not sure if this function is used - get_wallet_info is doing is
         
-        record_out = await self.get_wallet_info(label=record_name,record_kind=record_kind, record_by_hash=record_by_hash, record_origin=record_origin)
+        record_out = await self.get_wallet_info(
+            label=record_name,
+            record_kind=record_kind,
+            record_by_hash=record_by_hash,
+            record_origin=record_origin,
+            relays=relays,
+        )
         if record_out is None:
             return None
         try:
@@ -2807,7 +3164,14 @@ class Acorn:
 
         return record_obj
 
-    async def get_record_safebox(self, record_name:str=None, record_kind:int=37375, record_by_hash: str = None, record_origin: str = None)->SafeboxRecord:
+    async def get_record_safebox(
+        self,
+        record_name: str = None,
+        record_kind: int = 37375,
+        record_by_hash: str = None,
+        record_origin: str = None,
+        relays: List[str] | str | None = None,
+    ) -> SafeboxRecord:
         my_enc = NIP44Encrypt(self.k)
 
         if record_origin:
@@ -2816,10 +3180,7 @@ class Acorn:
         if record_by_hash:
             label_hash = record_by_hash
         else:
-            m = hashlib.sha256()
-            m.update(self.privkey_hex.encode())
-            m.update(record_name.encode())
-            label_hash = m.digest().hex()
+            label_hash = self._record_label_hash(record_name)
         
         decrypt_content = None
         
@@ -2832,14 +3193,19 @@ class Acorn:
         # DEFAULT_RELAY = self.relays[0]
         FILTER = [{
             'limit': RECORD_LIMIT,
-            'authors': [self.pubkey_hex],            
+            'authors': [self.pubkey_hex],
+            'kinds': [record_kind],
             '#d': [label_hash]   
             
             
         }]
 
         # print("are we here?", label_hash)
-        event =await self._async_get_wallet_info(FILTER, label_hash)
+        event = await self._async_get_wallet_info(
+            FILTER,
+            label_hash,
+            relays=relays,
+        )
         if not event:
             self.logger.warning(
                 "op=get_record_safebox status=missing record=%s kind=%s hash=%s",
@@ -2954,7 +3320,14 @@ class Acorn:
 
         return blob_data, blob_type
     
-    async def get_record_blobdata(self, record_name:str=None, record_kind:int=37375, record_by_hash: str = None, record_origin: str = None)->bytes:
+    async def get_record_blobdata(
+        self,
+        record_name: str = None,
+        record_kind: int = 37375,
+        record_by_hash: str = None,
+        record_origin: str = None,
+        relays: List[str] | str | None = None,
+    ) -> tuple[str | None, bytes | None]:
         blob_data: bytes = None
         blob_type:  str = None
         guessed_blob_type: str = None
@@ -2972,10 +3345,7 @@ class Acorn:
         if record_by_hash:
             label_hash = record_by_hash
         else:
-            m = hashlib.sha256()
-            m.update(self.privkey_hex.encode())
-            m.update(record_name.encode())
-            label_hash = m.digest().hex()
+            label_hash = self._record_label_hash(record_name)
         
         decrypt_content = None
         
@@ -2995,7 +3365,11 @@ class Acorn:
             
         }]
 
-        event =await self._async_get_wallet_info(FILTER, label_hash)
+        event = await self._async_get_wallet_info(
+            FILTER,
+            label_hash,
+            relays=relays,
+        )
         if not event:
             self.logger.warning(
                 "op=get_record_blobdata status=missing record=%s kind=%s hash=%s",
@@ -3016,10 +3390,23 @@ class Acorn:
             safebox_record: SafeboxRecord = SafeboxRecord(**json.loads(decrypt_content))
             blob_sha256 = safebox_record.blobsha256
             blob_type = safebox_record.blobtype
-            if blob_type:                
-                server = blossom_servers[0]
-                # meta = client.head_blob(server, blobsha256)
-                blob_retrieve: BlossomBlob = client.get_blob(server=server,sha256=blob_sha256,)
+            if blob_type:
+                blob_retrieve: BlossomBlob | None = None
+                last_blob_error: Exception | None = None
+                for server in blossom_servers:
+                    try:
+                        blob_retrieve = client.get_blob(
+                            server=server,
+                            sha256=blob_sha256,
+                        )
+                        break
+                    except Exception as exc:
+                        last_blob_error = exc
+                if blob_retrieve is None:
+                    raise RuntimeError(
+                        f"Blob {blob_sha256} was not available from configured "
+                        f"servers: {last_blob_error}"
+                    )
                 
                 if blob_retrieve.mime_type == "application/octet-stream":
                     try:
@@ -3038,8 +3425,6 @@ class Acorn:
 
         if blob_data:
             guessed_blob_type = filetype.guess_mime(blob_data)
-            guessed_extension = '.'+filetype.guess_extension(blob_data)
-            extension = mimetypes.guess_extension(blob_data) or ""
             # with NamedTemporaryFile(
             #   mode="wb",
             #    suffix=guessed_extension,
@@ -3834,61 +4219,119 @@ class Acorn:
             )
             return {"status": "PROCESSING_FAILED", "reason": str(exc)}
 
-    async def put_record(self,record_name, record_value, record_type="generic", record_kind: int = 37375, record_origin: str = None, blob_data: bytes = None):
+    async def put_record(
+        self,
+        record_name,
+        record_value,
+        record_type="generic",
+        record_kind: int = 37375,
+        record_origin: str = None,
+        blob_data: bytes = None,
+        relays: List[str] | str | None = None,
+        verify_timeout: float = 8.0,
+        return_result: bool = False,
+    ):
+        if record_origin:
+            record_name = ':'.join([record_origin,record_name])
+
+        self.logger.debug("op=put_record status=start record=%s kind=%s", record_name, record_kind)
+        base_label = record_name.split(":", 1)[-1] if record_origin else record_name
+        if (
+            record_name in INTERNAL_RECORD_LABELS
+            or base_label in INTERNAL_RECORD_LABELS
+            or str(record_name).startswith("__acorn_")
+        ):
+            raise ValueError(
+                f"{record_name!r} is reserved for Acorn internal state"
+            )
 
         blossom_server = self._default_blossom_home_server()
         mime_type_guess = None
         origsha256 = None
         encrypt_parms = None
+        blob_ref = None
+        sha256 = None
+        if blob_data:
+            self.logger.debug("op=put_record status=blob_upload_start")
+            origsha256 = hashlib.sha256(blob_data).hexdigest()
+            guessed = filetype.guess(blob_data)
+            mime_type_guess = (
+                guessed.mime if guessed else "application/octet-stream"
+            )
+            blob_key = os.urandom(32)
+            encrypt_result: EncryptionResult = encrypt_bytes(blob_data, blob_key)
+            encrypt_parms = EncryptionParms(
+                alg=encrypt_result.alg,
+                key=blob_key.hex(),
+                iv=encrypt_result.iv.hex(),
+            )
+            client = BlossomClient(
+                nsec=self.privkey_bech32,
+                default_servers=[blossom_server],
+            )
+            upload_result = client.upload_blob(
+                blossom_server,
+                data=encrypt_result.cipherbytes,
+                description="Blob to server",
+            )
+            sha256 = upload_result["sha256"]
+            blob_ref = upload_result.get(
+                "url",
+                f"{blossom_server}/{sha256}",
+            )
+            self.logger.debug(
+                "op=put_record status=blob_uploaded sha256=%s",
+                sha256,
+            )
 
+        record_obj = SafeboxRecord(
+            tag=[record_name],
+            type=record_type,
+            payload=record_value,
+            blobref=blob_ref,
+            blobtype=mime_type_guess,
+            blobsha256=sha256,
+            origsha256=origsha256,
+            encryptparms=encrypt_parms,
+        )
+        record_json_str = record_obj.model_dump_json()
+        write_relays = self._record_relay_pool(relays)
 
-        if record_origin:
-            record_name = ':'.join([record_origin,record_name])
+        try:
+            publish_result = await self.set_wallet_info(
+                record_name,
+                record_json_str,
+                replicate_relays=write_relays,
+                record_kind=record_kind,
+                verify=True,
+                verify_timeout=verify_timeout,
+            )
+        except Exception:
+            if sha256:
+                with contextlib.suppress(Exception):
+                    BlossomClient(
+                        nsec=self.privkey_bech32,
+                        default_servers=[blossom_server],
+                    ).delete_blob(server=blossom_server, sha256=sha256)
+            raise
 
-
-
-        self.logger.debug("op=put_record status=start record=%s kind=%s", record_name, record_kind)
-        if record_name in self.RESERVED_RECORDS:
-            self.logger.debug("op=put_record status=reserved_record record=%s", record_name)
-            await self.set_wallet_info(record_name,record_value,record_kind=record_kind)
-            return record_name
-        else:
-            blob_ref = None
-            blob_type = None
-            sha256 = None
-            if blob_data:
-                self.logger.debug("op=put_record status=blob_upload_start")
-                origsha256 = hashlib.sha256(blob_data).hexdigest()
-                self.logger.debug("op=put_record status=origsha256")
-                mime_type_guess = filetype.guess(blob_data).mime
-                self.logger.debug("op=put_record status=mime mime=%s", mime_type_guess)
-                blob_key = os.urandom(32)  # 256-bit key
-                
-                encrypt_result:EncryptionResult = encrypt_bytes(blob_data, blob_key)
-                encrypt_parms = EncryptionParms(alg=encrypt_result.alg,key=blob_key.hex(),iv=encrypt_result.iv.hex())
-        
-                # final_blob_data = blob_data
-                final_blob_data = encrypt_result.cipherbytes
-
-                client = BlossomClient(nsec=self.privkey_bech32, default_servers=[blossom_server])
-                upload_result = client.upload_blob(blossom_server, data=final_blob_data,
-                             description='Blob to server')
-                sha256 = upload_result['sha256']
-                blob_ref = upload_result.get('url', f"{blossom_server}/{sha256}")
-                # blob_ref = upload_result['sha256']
-                blob_type = upload_result['type']
-                self.logger.debug("op=put_record status=blob_uploaded sha256=%s", sha256)
-                
-            record_obj = SafeboxRecord(tag=[record_name], type=record_type,payload=record_value, blobref=blob_ref, blobtype=mime_type_guess, blobsha256=sha256, origsha256=origsha256, encryptparms=encrypt_parms)
-            self.logger.debug("op=put_record status=record_serialized")
-            record_json_str = record_obj.model_dump_json()
-
-            await self.update_tags([["user_record",record_name,record_type]])
-
-            await self.set_wallet_info(record_name,record_json_str,record_kind=record_kind)
-            # print(user_records)
-            await   self.set_wallet_config()
-            return record_name
+        # The encrypted event is authoritative. The legacy wallet index is a
+        # rebuildable compatibility cache and is updated only after readback.
+        await self.update_tags([["user_record", record_name, record_type]])
+        await self.set_wallet_config()
+        if return_result:
+            return {
+                "status": "OK",
+                "label": record_name,
+                "kind": int(record_kind),
+                "event_id": publish_result["event_id"],
+                "relays": publish_result["relays"],
+                "verified": publish_result["verified"],
+                "verification": publish_result["verification"],
+                "blobref": blob_ref,
+                "blobsha256": sha256,
+            }
+        return record_name
     
     async def update_tags(self,tag_values):
         

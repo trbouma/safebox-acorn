@@ -3,6 +3,8 @@ from __future__ import annotations
 import importlib
 import os
 from pathlib import Path
+from unittest.mock import AsyncMock
+
 import pytest
 import yaml
 from click.testing import CliRunner
@@ -40,6 +42,72 @@ def test_split_csv_trims_spaces(monkeypatch, tmp_path):
         "relay.two",
         "relay.three",
     ]
+
+
+def test_normalize_relay_csv_preserves_local_websocket_relays(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    assert cli._normalize_relay_csv(
+        "ws://beelink:8735, relay.example.com"
+    ) == [
+        "ws://beelink:8735",
+        "wss://relay.example.com",
+    ]
+
+
+def test_delete_record_requires_confirmation_before_loading_wallet(
+    monkeypatch,
+    tmp_path,
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    def fail_if_constructed(*args, **kwargs):
+        raise AssertionError("wallet must not load when deletion is declined")
+
+    monkeypatch.setattr(cli, "Acorn", fail_if_constructed)
+
+    result = CliRunner().invoke(
+        cli.delete_record,
+        ["Field Notes"],
+        input="n\n",
+    )
+
+    assert result.exit_code == 1
+    assert "Request deletion of record 'Field Notes' (kind 37375)?" in result.output
+    assert "Aborted!" in result.output
+
+
+def test_delete_record_yes_bypasses_confirmation(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    delete = AsyncMock(
+        return_value={
+            "status": "DELETE_REQUESTED",
+            "message": "Deletion requested.",
+            "advisory": "Relay deletion is advisory.",
+            "hidden_on": [],
+        }
+    )
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            pass
+
+        async def load_data(self):
+            return None
+
+        delete_record = delete
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(
+        cli.delete_record,
+        ["Field Notes", "--yes"],
+    )
+
+    assert result.exit_code == 0
+    assert "Deletion requested." in result.output
+    assert "Request deletion" not in result.output
+    delete.assert_awaited_once()
 
 
 def test_minimize_config_keeps_recovery_essentials(monkeypatch, tmp_path):

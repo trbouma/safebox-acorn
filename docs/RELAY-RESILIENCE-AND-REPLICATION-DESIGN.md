@@ -301,12 +301,20 @@ The default replication kinds include:
 ```text
 0       profile
 5       deletion events
+17375   legacy wallet configuration
 37375   encrypted private records and wallet metadata
+37376   encrypted cursors and operational metadata
 7375    encrypted proof events
 30000   replaceable metadata, if used
 30001   replaceable metadata, if used
 30002   replaceable metadata, if used
 ```
+
+Client-side replication performs target readback and returns `PARTIAL` when
+events are missing or when the source query reaches its configured limit. A
+limit hit means completeness is unknown; large histories should use backend
+negentropy or another paginated replication mechanism rather than treating one
+bounded query as a full backup.
 
 ## Desired workflows
 

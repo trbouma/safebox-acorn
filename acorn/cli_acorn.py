@@ -79,6 +79,12 @@ def _split_csv(value: str) -> list[str]:
     return [each for each in str(value).replace(" ", "").split(",") if each]
 
 
+def _normalize_relay_csv(value: str | None) -> list[str]:
+    if not value:
+        return []
+    return [_normalize_relay(each) for each in _split_csv(value)]
+
+
 def _minimize_config(config: dict) -> dict:
     return {
         "nsec": config.get("nsec"),
@@ -1185,8 +1191,8 @@ def reconcile_payments(json_output):
 @click.option('--kind','-k', default=37375)
 @click.option('--origin','-o', default=None)
 @click.option('--file','-f', default=None)
-def put(label, label_info, kind, origin, file):
-    jsons=None
+@click.option('--relays', '-r', default=None, help=RELAYS_HELP)
+def put(label, label_info, kind, origin, file, relays):
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
     # click.echo(wallet.get_wallet_info())
@@ -1195,17 +1201,34 @@ def put(label, label_info, kind, origin, file):
         with open(file, 'rb') as f:
             blob_data = f.read()
 
-    if click.confirm('Do you want to continue?'):    
-     asyncio.run(acorn_obj.put_record(label, label_info,record_kind=kind, record_origin=origin, blob_data=blob_data))
+    if click.confirm('Do you want to continue?'):
+        try:
+            stored = asyncio.run(
+                acorn_obj.put_record(
+                    label,
+                    label_info,
+                    record_kind=kind,
+                    record_origin=origin,
+                    blob_data=blob_data,
+                    relays=relays,
+                    return_result=True,
+                )
+            )
+        except Exception as exc:
+            raise click.ClickException(str(exc)) from exc
+        click.echo(f"Stored and verified: {stored['label']}")
+        click.echo(f"Event: {stored['event_id']}")
+        click.echo(f"Relays: {', '.join(stored['relays'])}")
 
 @click.command("get", help='get a private wallet record')
 @click.argument('label', default = "default")
 @click.option('--kind','-k', default=37375)
 @click.option('--origin','-o', default=None)
+@click.option('--relays', '-r', default=None, help=RELAYS_HELP)
 @click.option('--raw', is_flag=True, help="Print the raw record object.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
 @click.pass_context
-def get(ctx, label,kind,origin,raw,json_output):
+def get(ctx, label,kind,origin,relays,raw,json_output):
     
     out_info = "None"
     logging_level = ctx.obj.get("logging_level", LOGGING_LEVEL)
@@ -1213,12 +1236,21 @@ def get(ctx, label,kind,origin,raw,json_output):
     asyncio.run(acorn_obj.load_data())
 
     try:
-        out_info = asyncio.run(acorn_obj.get_record_safebox(record_name=label,record_kind=kind,record_origin=origin))
+        out_info = asyncio.run(
+            acorn_obj.get_record_safebox(
+                record_name=label,
+                record_kind=kind,
+                record_origin=origin,
+                relays=relays,
+            )
+        )
         # safebox_info = wallet_obj.get_record(label)
         pass
 
-    except Exception:
-        raise click.ClickException(f"No record found for: {label}")
+    except Exception as exc:
+        raise click.ClickException(
+            f"Unable to read record {label!r}: {exc}"
+        ) from exc
     
     if json_output:
         _emit_json(_record_to_dict(out_info, kind))
@@ -1229,7 +1261,8 @@ def get(ctx, label,kind,origin,raw,json_output):
 @click.argument('label', default = "default")
 @click.option('--kind','-k', default=37375)
 @click.option('--origin','-o', default=None)
-def get_blob(label,kind,origin):
+@click.option('--relays', '-r', default=None, help=RELAYS_HELP)
+def get_blob(label,kind,origin,relays):
     
     out_info = "None"
     blob_type = None
@@ -1237,33 +1270,67 @@ def get_blob(label,kind,origin):
     asyncio.run(acorn_obj.load_data())
 
     try:
-        blob_type, blob_data = asyncio.run(acorn_obj.get_record_blobdata(label,record_kind=kind,record_origin=origin))
+        blob_type, blob_data = asyncio.run(
+            acorn_obj.get_record_blobdata(
+                label,
+                record_kind=kind,
+                record_origin=origin,
+                relays=relays,
+            )
+        )
         # safebox_info = wallet_obj.get_record(label)
         pass
 
-    except:
-        click.echo("Error")
-        out_info = "No label found!"
+    except Exception as exc:
+        raise click.ClickException(
+            f"Unable to read blob record {label!r}: {exc}"
+        ) from exc
     
     click.echo(f"blob type: {blob_type} ")
 
-@click.command("delete", help='get a private wallet record')
+@click.command("delete", help='request deletion of a private wallet record')
 @click.argument('label', default = "default")
-def delete_record(label):
-    
+@click.option('--kind','-k', default=37375)
+@click.option('--origin','-o', default=None)
+@click.option('--relays', '-r', default=None, help=RELAYS_HELP)
+@click.option('--delete-blob', is_flag=True, help="Also request deletion of an associated encrypted blob.")
+@click.option('--yes', '-y', is_flag=True, help="Skip the deletion confirmation.")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def delete_record(label, kind, origin, relays, delete_blob, yes, json_output):
+    if not yes:
+        target = f"record {label!r} (kind {kind})"
+        if delete_blob:
+            target += " and its associated encrypted blob"
+        click.confirm(
+            f"Request deletion of {target}?",
+            default=False,
+            abort=True,
+        )
+
     out_info = "None"
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints= MINTS, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
 
     try:
-        out_info = asyncio.run(acorn_obj.delete_record(label))
-        # safebox_info = wallet_obj.get_record(label)
-        pass
+        out_info = asyncio.run(
+            acorn_obj.delete_record(
+                label,
+                record_kind=kind,
+                record_origin=origin,
+                relays=relays,
+                delete_blob=delete_blob,
+            )
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
-    except:
-        out_info = "No label found!"
-    
-    click.echo(out_info)
+    if json_output:
+        _emit_json(out_info)
+    else:
+        click.echo(out_info["message"])
+        click.echo(out_info.get("advisory", ""))
+        if out_info.get("hidden_on"):
+            click.echo(f"No longer visible on: {', '.join(out_info['hidden_on'])}")
 
 @click.command("deletekind", help='delete kind records')
 @click.option('--kind','-k', default=30000)
@@ -1411,11 +1478,7 @@ def get_user_records(kind, since, relays, labels, raw, json_output):
     if relays != None:
         
         relay_array = str(relays).replace(" ","").split(',')
-        
-        for each in relay_array:
-            if each.startswith("ws://"):
-                continue
-            relay_array_wss.append(each if "wss://" in each else "wss://"+each)
+        relay_array_wss = _normalize_relay_csv(relays)
         if not json_output:
             click.echo(relay_array_wss)
 
@@ -1875,10 +1938,18 @@ def replicate(target, source, kinds, limit, yes, json_output):
         _emit_json(result)
         return
 
-    click.echo("Replicated wallet events.")
+    click.echo(f"Replication status: {result['status']}")
     click.echo(f"Source: {result['source_relay']}")
     click.echo(f"Target: {result['target_relay']}")
     click.echo(f"Events: {result['replicated']}")
+    click.echo(f"Target readback verified: {result['verified']}")
+    if result["missing_event_ids"]:
+        click.echo(f"Missing after readback: {len(result['missing_event_ids'])}")
+    if result["source_may_be_truncated"]:
+        click.echo(
+            "Warning: source query reached the event limit; replication may "
+            "be incomplete. Increase --limit or use a backend replication tool."
+        )
     click.echo("Kinds:")
     for kind, count in sorted(result["by_kind"].items(), key=lambda item: int(item[0])):
         click.echo(f"- {kind}: {count}")

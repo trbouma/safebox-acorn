@@ -370,13 +370,14 @@ acorn replicate --target new-relay.example.com
 The command must show the source and target relay and ask for confirmation
 before publishing, unless `--yes` is supplied.
 
-Expected success style:
+Expected verified style:
 
 ```text
-Replicated wallet events.
+Replication status: OK
 Source: wss://relay.getsafebox.app
 Target: wss://new-relay.example.com
 Events: 42
+Target readback verified: True
 Kinds:
 - 0: 1
 - 37375: 36
@@ -391,6 +392,29 @@ acorn replicate --target new-relay.example.com --yes --json
 
 The operator runbook is documented in
 [Relay Migration Runbook](./RELAY-MIGRATION-RUNBOOK.md).
+
+Reaching the source query limit or failing target readback produces
+`Replication status: PARTIAL`; it must not be presented as complete success.
+
+## Relay-backed record commands
+
+Record point operations accept an explicit relay pool:
+
+```sh
+acorn put "Field Notes" "text" --relays ws://local:8735,wss://backup.example
+acorn get "Field Notes" --relays ws://local:8735,wss://backup.example
+acorn delete "Field Notes" --relays ws://local:8735,wss://backup.example
+```
+
+`ws://` is retained for explicitly supplied local test relays. Ordinary
+production configuration should use `wss://`.
+
+`put` reports success only after the new event is canonical and readable on
+each selected relay. `delete` reports a NIP-09 deletion request and advisory,
+not a guaranteed erase. It requires interactive confirmation before loading
+the wallet and publishing the request. `--yes` (or `-y`) bypasses confirmation
+for deliberate automation. `--delete-blob` additionally requests cleanup of
+an associated encrypted blob and is named explicitly in the confirmation.
 
 ## Deposit contract
 
