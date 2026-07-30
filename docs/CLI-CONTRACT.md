@@ -99,11 +99,38 @@ Current examples:
 acorn info --json
 acorn init --json
 acorn balance --json
+acorn check-proofs --json
 acorn get "Field Notes" --json
 acorn get_user_records --labels --json
 ```
 
 JSON output should avoid extra human text, debug lines, or incidental prints.
+
+## Read-only proof inspection
+
+Before choosing a mutating repair, operators can inspect proof state at the
+relevant mints:
+
+```sh
+acorn check-proofs
+acorn check-proofs --json
+```
+
+`check-proofs` loads the wallet's relay-backed state and calls each mint's
+Cashu `/v1/checkstate` endpoint. It reports wallet-visible proof totals and
+mint-reported `UNSPENT`, `SPENT`, `PENDING`, and `UNKNOWN` totals.
+
+The command is strictly read-only: it does not acquire the wallet lock, swap
+proofs, delete events, rewrite proof state, or create transaction history.
+Duplicate copies are queried only once so the mint-confirmed amount is not
+overstated. A pending, unknown, or unreachable state is reported as
+inconclusive and should be rechecked before running a repair.
+
+Proof mutation remains an explicit operator decision:
+
+```sh
+acorn repair-proofs
+```
 
 ## Wallet burn
 

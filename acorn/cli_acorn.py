@@ -286,6 +286,51 @@ def _format_balance_by_mint(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _format_proof_check(report: dict) -> str:
+    wallet = report["wallet"]
+    confirmed = report["mint_confirmed_unspent"]
+    lines = [
+        "Proof check (read-only)",
+        f"Status: {report['status']}",
+        (
+            f"Wallet state: {wallet['amount']} sats in "
+            f"{wallet['proof_count']} proofs"
+        ),
+        (
+            f"Mint-confirmed unspent: {confirmed['amount']} sats in "
+            f"{confirmed['proof_count']} proofs"
+        ),
+        "Proof states:",
+    ]
+    for state in ("UNSPENT", "SPENT", "PENDING", "UNKNOWN"):
+        totals = report["states"][state]
+        lines.append(
+            f"- {state}: {totals['amount']} sats in "
+            f"{totals['proof_count']} proofs"
+        )
+
+    structural = report["structural"]
+    if structural["duplicate_proofs"]:
+        lines.append(f"Structural warning: {structural['duplicate_proofs']} duplicate proofs")
+    if structural["invalid_proofs"]:
+        lines.append(f"Structural warning: {structural['invalid_proofs']} invalid proofs")
+    if structural["unknown_keysets"]:
+        lines.append(
+            "Structural warning: unknown keysets "
+            + ", ".join(structural["unknown_keysets"])
+        )
+    for error in report["errors"]:
+        lines.append(f"Check warning: {error}")
+
+    lines.extend(
+        [
+            f"Recommendation: {report['recommendation']}",
+            "No wallet state was changed.",
+        ]
+    )
+    return "\n".join(lines)
+
+
 
 @click.group()
 @click.option("--config", "config_path", default=None, help="Path to Acorn config file; defaults to ~/.acorn/config.yml or ACORN_CONFIG")
@@ -1062,6 +1107,23 @@ def repair_proofs(force):
     click.echo("Repair proofs")
     result_out = asyncio.run(acorn_obj.repair_proofs(force_prune_stale=force))
     click.echo(result_out)
+
+@click.command("check-proofs", help="Check proof state at each mint without changing the wallet")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def check_proofs(json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        mints=MINTS,
+        home_relay=HOME_RELAY,
+        logging_level=LOGGING_LEVEL,
+    )
+    asyncio.run(acorn_obj.load_data())
+    report = asyncio.run(acorn_obj.check_proofs())
+    if json_output:
+        _emit_json(report)
+    else:
+        click.echo(_format_proof_check(report))
 
 @click.command("pay", help="Payout funds to lightning address")
 @click.argument('amount', default=21)
@@ -2066,6 +2128,7 @@ cli.add_command(tx_history)
 cli.add_command(deposit)
 cli.add_command(proofs)
 cli.add_command(swap)
+cli.add_command(check_proofs)
 cli.add_command(repair_proofs)
 cli.add_command(pay)
 cli.add_command(put)

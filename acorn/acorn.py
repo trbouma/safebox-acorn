@@ -4703,6 +4703,170 @@ class Acorn:
 
         return report
 
+    async def check_proofs(self) -> dict:
+        """
+        Inspect the wallet's currently loaded proofs against their mints.
+
+        This is a read-only preflight. It does not acquire the wallet lock,
+        reload relay state, swap proofs, write proof events, or update wallet
+        attributes. Duplicate proof copies are checked only once so the
+        mint-confirmed amount is not overstated.
+        """
+        state_names = ("UNSPENT", "SPENT", "PENDING", "UNKNOWN")
+
+        def empty_state_totals() -> dict:
+            return {
+                state: {"proof_count": 0, "amount": 0}
+                for state in state_names
+            }
+
+        structural = await self.proof_safety_audit(check_relay=False)
+        report: dict = {
+            "read_only": True,
+            "status": "clean",
+            "requires_repair": False,
+            "wallet": {
+                "proof_count": len(self.proofs),
+                "amount": sum(
+                    int(each.amount)
+                    for each in self.proofs
+                    if isinstance(getattr(each, "amount", None), int)
+                ),
+            },
+            "checked": {"proof_count": 0, "amount": 0},
+            "mint_confirmed_unspent": {"proof_count": 0, "amount": 0},
+            "states": empty_state_totals(),
+            "keysets": [],
+            "structural": structural,
+            "errors": [],
+            "recommendation": "No repair indicated.",
+        }
+
+        unique_by_keyset: dict[str, list[tuple[Proof, str]]] = {}
+        seen: set[tuple[str, str]] = set()
+
+        for proof in self.proofs:
+            try:
+                keyset = str(proof.id)
+                secret = str(proof.secret)
+                amount = int(proof.amount)
+                if not keyset or not secret or amount <= 0:
+                    continue
+                proof_key = (keyset, secret)
+                if proof_key in seen:
+                    continue
+                seen.add(proof_key)
+                proof_y = str(proof.Y or "")
+                if not proof_y:
+                    proof_y = hash_to_curve(secret.encode("utf-8")).serialize().hex()
+                unique_by_keyset.setdefault(keyset, []).append((proof, proof_y))
+            except Exception:
+                # The structural audit reports malformed proofs. Do not mutate
+                # or attempt to manufacture a state for one here.
+                continue
+
+        headers = {"Content-Type": "application/json"}
+        timeout = httpx.Timeout(30.0, connect=5.0)
+
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for keyset, proof_rows in unique_by_keyset.items():
+                mint_url = self.known_mints.get(keyset)
+                keyset_states = empty_state_totals()
+                keyset_amount = sum(int(proof.amount) for proof, _ in proof_rows)
+                keyset_report = {
+                    "keyset": keyset,
+                    "mint": mint_url,
+                    "proof_count": len(proof_rows),
+                    "amount": keyset_amount,
+                    "states": keyset_states,
+                    "error": None,
+                }
+                report["keysets"].append(keyset_report)
+
+                if not mint_url:
+                    error = f"No mint mapping for keyset {keyset}"
+                    keyset_report["error"] = error
+                    report["errors"].append(error)
+                    keyset_states["UNKNOWN"]["proof_count"] = len(proof_rows)
+                    keyset_states["UNKNOWN"]["amount"] = keyset_amount
+                    report["states"]["UNKNOWN"]["proof_count"] += len(proof_rows)
+                    report["states"]["UNKNOWN"]["amount"] += keyset_amount
+                    continue
+
+                try:
+                    response = await client.post(
+                        url=f"{mint_url.rstrip('/')}/v1/checkstate",
+                        json={"Ys": [proof_y for _, proof_y in proof_rows]},
+                        headers=headers,
+                    )
+                    response.raise_for_status()
+                    response_body = response.json()
+                    states = (
+                        response_body.get("states", [])
+                        if isinstance(response_body, dict)
+                        else []
+                    )
+                    if len(states) != len(proof_rows):
+                        raise RuntimeError(
+                            f"checkstate returned {len(states)} states for "
+                            f"{len(proof_rows)} proofs"
+                        )
+                except Exception as exc:
+                    error = f"Unable to check keyset {keyset} at {mint_url}: {exc}"
+                    keyset_report["error"] = error
+                    report["errors"].append(error)
+                    keyset_states["UNKNOWN"]["proof_count"] = len(proof_rows)
+                    keyset_states["UNKNOWN"]["amount"] = keyset_amount
+                    report["states"]["UNKNOWN"]["proof_count"] += len(proof_rows)
+                    report["states"]["UNKNOWN"]["amount"] += keyset_amount
+                    continue
+
+                for (proof, _proof_y), state_obj in zip(proof_rows, states):
+                    state = (
+                        str(state_obj.get("state", "")).upper()
+                        if isinstance(state_obj, dict)
+                        else ""
+                    )
+                    if state not in state_names:
+                        state = "UNKNOWN"
+                    amount = int(proof.amount)
+                    keyset_states[state]["proof_count"] += 1
+                    keyset_states[state]["amount"] += amount
+                    report["states"][state]["proof_count"] += 1
+                    report["states"][state]["amount"] += amount
+                    report["checked"]["proof_count"] += 1
+                    report["checked"]["amount"] += amount
+
+        unspent = report["states"]["UNSPENT"]
+        report["mint_confirmed_unspent"] = dict(unspent)
+
+        structural_problem = not structural["safe_to_swap"] and structural["reason"] != "no_proofs"
+        spent_found = report["states"]["SPENT"]["proof_count"] > 0
+        inconclusive = bool(
+            report["errors"]
+            or report["states"]["PENDING"]["proof_count"]
+            or report["states"]["UNKNOWN"]["proof_count"]
+        )
+        report["requires_repair"] = bool(structural_problem or spent_found)
+
+        if inconclusive:
+            report["status"] = "inconclusive"
+            report["recommendation"] = (
+                "Recheck before repairing; pending, unknown, or unreachable "
+                "proof state requires investigation."
+            )
+        elif report["requires_repair"]:
+            report["status"] = "repair-recommended"
+            report["recommendation"] = (
+                "Review this report, then run 'acorn repair-proofs' if the "
+                "spent or structurally invalid state is expected."
+            )
+        elif not self.proofs:
+            report["status"] = "empty"
+            report["recommendation"] = "No proofs are present."
+
+        return report
+
     async def repair_proofs(self, force_prune_stale: bool = False) -> str:
         """
         Reconcile local/relay-backed proof state against mint state and

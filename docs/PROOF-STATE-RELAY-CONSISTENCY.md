@@ -131,6 +131,22 @@ read-only inspection command.
 
 ## Explicit repair model
 
+Before repair, the operator can perform a read-only mint-state check:
+
+```sh
+acorn check-proofs
+```
+
+This asks each mapped mint for the current state of the wallet-visible proofs
+and reports `UNSPENT`, `SPENT`, `PENDING`, and `UNKNOWN` totals. It also reports
+local structural problems such as duplicates and unknown keyset mappings.
+Duplicate proof copies are counted once in the mint-confirmed total.
+
+The check deliberately performs no lock acquisition, proof refresh, event
+deletion, proof rewrite, or transaction-history update. `PENDING`, `UNKNOWN`,
+and network-error results are inconclusive; the operator should recheck or
+investigate rather than assume that repair is safe.
+
 `repair-proofs` is the appropriate tool for reconciling stale relay proof state.
 
 It should:

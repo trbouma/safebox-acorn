@@ -427,6 +427,38 @@ def test_format_balance_by_mint(monkeypatch, tmp_path):
     assert "keyset keyset-b: 5 sats in 1 proofs" in rendered
 
 
+def test_format_proof_check_emphasizes_read_only_result(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_proof_check(
+        {
+            "status": "repair-recommended",
+            "wallet": {"amount": 8, "proof_count": 3},
+            "mint_confirmed_unspent": {"amount": 6, "proof_count": 2},
+            "states": {
+                "UNSPENT": {"amount": 6, "proof_count": 2},
+                "SPENT": {"amount": 2, "proof_count": 1},
+                "PENDING": {"amount": 0, "proof_count": 0},
+                "UNKNOWN": {"amount": 0, "proof_count": 0},
+            },
+            "structural": {
+                "duplicate_proofs": 0,
+                "invalid_proofs": 0,
+                "unknown_keysets": [],
+            },
+            "errors": [],
+            "recommendation": "Review, then repair.",
+        }
+    )
+
+    assert "Proof check (read-only)" in rendered
+    assert "Status: repair-recommended" in rendered
+    assert "Mint-confirmed unspent: 6 sats in 2 proofs" in rendered
+    assert "SPENT: 2 sats in 1 proofs" in rendered
+    assert "Recommendation: Review, then repair." in rendered
+    assert rendered.endswith("No wallet state was changed.")
+
+
 def test_burn_rejects_ecash_and_lightning_recipients(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 
