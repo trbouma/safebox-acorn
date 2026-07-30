@@ -1158,7 +1158,7 @@ def delete_record(label):
 @click.option('--kind','-k', default=30000)
 def delete_kind(kind):
     
-    if not click.confirm("Are you really sure? This is a dangerous option"):
+    if not click.confirm("This is a sensitive operation. Continue?"):
         return
     
     out_info = "None"

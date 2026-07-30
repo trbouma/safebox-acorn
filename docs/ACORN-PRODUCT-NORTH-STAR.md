@@ -39,8 +39,8 @@ recoverable without surrendering secrets to each other or to a central provider.
 Acorn's language has become calmer over time. Earlier descriptions leaned more
 heavily on terms like self-sovereignty, data havens, and infrastructure
 independence. Those ideas helped shape the architecture, but they can also
-sound ideological, cypherpunk, or unnecessarily alarming to people who simply
-need dependable tools for funds and records.
+sound ideological or unnecessarily alarming to people who simply need
+dependable tools for funds and records.
 
 The current language is intentionally plainer:
 
@@ -52,7 +52,7 @@ This does not dilute the principles. It makes them easier to evaluate. Acorn is
 still rooted in user control, cryptographic continuity, encrypted records,
 replaceable infrastructure, reciprocal resilience, and recoverability across
 applications. The shift is from provocative language to operational language:
-less manifesto, more dependable component.
+less rhetoric, more dependable component.
 
 ## Why Acorn exists
 
@@ -126,7 +126,7 @@ The result should feel like a protocol-native safe:
 ```text
 encrypted enough for untrusted hosts;
 portable enough to move;
-recoverable enough to survive boring failures;
+recoverable enough for ordinary failures;
 structured enough for applications to build on.
 ```
 
@@ -152,19 +152,18 @@ The pattern is closer to older forms of mutual assurance than to centralized
 insurance or custodial service provision: participants improve each other's
 continuity without pooling control of the underlying assets or records.
 
-This also points to a middle path between cloud/SaaS dependency and extreme
-self-hosting. Acorn should not require every user to become a full-time
-infrastructure operator. Instead, it should make community-supported continuity
-practical: families, teams, local organizations, professional communities, or
-trusted operators can help provide availability while control remains with the
-user.
+This also points to a middle path between cloud/SaaS dependency and
+all-or-nothing self-hosting. Acorn should not require every user to become a
+full-time infrastructure operator. Instead, it should make community-supported
+continuity practical: families, teams, local organizations, professional
+communities, or trusted operators can help provide availability while control
+remains with the user.
 
-This becomes especially relevant in turbulent environments where local
-infrastructure can fail. Wildfires, floods, earthquakes, storms, power outages,
-or regional network disruptions can make a single home, office, provider, or
-device unavailable. Acorn's model is intended to let encrypted state survive
-those local failures by being recoverable from independently operated relays,
-replicas, and recovery material.
+This becomes especially relevant when local infrastructure is disrupted.
+Wildfires, floods, earthquakes, storms, power outages, or regional network
+disruptions can make a single home, office, provider, or device unavailable.
+Acorn's model is intended to keep encrypted state recoverable from
+independently operated relays, replicas, and recovery material.
 
 In plain language:
 
@@ -328,7 +327,7 @@ The long-term relay resilience model is specified in
 Acorn should feel:
 
 - portable;
-- boringly reliable;
+- reliable in ordinary operation;
 - inspectable;
 - recoverable;
 - scriptable;
@@ -336,8 +335,8 @@ Acorn should feel:
 - small enough to understand;
 - strong enough to build on.
 
-The CLI should be calm and explicit. It should avoid spooky side effects, ask
-before displaying secrets, and support JSON output where programs need it.
+The CLI should be calm and explicit. It should avoid surprising side effects,
+ask before displaying secrets, and support JSON output where programs need it.
 
 The CLI contract is specified in
 [CLI Contract](./CLI-CONTRACT.md).
@@ -443,7 +442,7 @@ custody path.
 The user's keys and signed events are the continuity layer. Replication should
 preserve event IDs and signatures where possible.
 
-### Make dangerous operations explicit
+### Make sensitive operations explicit
 
 Commands that display secrets, repair proofs, migrate relays, or change
 infrastructure should be obvious and confirmed.

@@ -127,17 +127,17 @@ help each other stay recoverable without transferring custody of funds,
 records, or secrets.
 
 This is also a practical alternative to the false choice between SaaS/cloud
-dependency and extreme self-hosting. Not every user should need to operate
-their own full infrastructure. Acorn should support community-backed models in
-which trusted people, groups, or service operators provide availability while
-cryptographic control stays with the user.
+dependency and all-or-nothing self-hosting. Not every user should need to
+operate their own full infrastructure. Acorn should support community-backed
+models in which trusted people, groups, or service operators provide
+availability while cryptographic control stays with the user.
 
-The same model is useful when physical infrastructure becomes unreliable.
-Natural hazards such as wildfires, earthquakes, floods, storms, and extended
-power or network outages can make local homes, offices, devices, or data
-centres temporarily unreachable. Relay replication gives the user more than one
-path back to their encrypted wallet and record state, provided recovery
-material remains available.
+The same model is useful when physical infrastructure is disrupted. Natural
+hazards such as wildfires, earthquakes, floods, storms, and extended power or
+network outages can make local homes, offices, devices, or data centres
+temporarily unreachable. Relay replication gives the user more than one path
+back to their encrypted wallet and record state, provided recovery material
+remains available.
 
 This should become a core Acorn design value, not merely a replication feature.
 Relay pools, migration tools, recovery exports, and future hardware deployments
