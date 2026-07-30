@@ -208,6 +208,10 @@ Acorn should assume that relays can be:
 ### The mint is the spend-state authority
 
 For Cashu value, the mint's `checkstate` and swap responses are decisive.
+Lightning melt quotes are also authoritative when a payment response is lost.
+Acorn persists post-swap proofs and a pending-melt journal before submission,
+then uses quote lookup rather than repeating an ambiguous melt request. See
+[Lightning Melt Recovery](LIGHTNING-MELT-RECOVERY.md).
 
 ### Proof writes need verification
 

@@ -159,6 +159,14 @@ restore after proof rewrites. Before a pilot:
 - test duplicate, stale, spent, pending, and unknown proofs;
 - record an operation identifier in logs without logging proof secrets.
 
+The Lightning melt path now establishes a recovery baseline: it checkpoints
+post-swap proofs, stores an encrypted pending-melt journal, never repeats an
+ambiguous melt `POST`, and resumes terminal-state handling by quote ID after a
+restart. Deterministic tests cover delayed success, unresolved timeout,
+confirmed failure, and restart recovery. Remaining release work is to exercise
+the same boundaries with fake relay/mint failure injection and opt-in live
+interoperability tests.
+
 ### Incoming-transfer idempotency
 
 Timestamp cursors alone are insufficient when several events share a timestamp,

@@ -1138,15 +1138,46 @@ def pay(amount,lnaddress: str, comment:str):
         try:
             msg_out, final_fees = await acorn_obj.pay_multi(amount,lnaddress,comment)
             click.echo(msg_out)
-            click.echo(f"MSG OUT: {msg_out}")
-            if "ERROR" in msg_out:
-                raise Exception(f"ERROR {msg_out}")
-            
-            await acorn_obj.add_tx_history(tx_type='D',amount=amount, comment=f"to {lnaddress} {comment}", fees=final_fees)
         except Exception as e:
-            click.echo(f"CLI Error: {e}")
+            raise click.ClickException(str(e)) from e
     
     asyncio.run(async_pay())
+
+@click.command("reconcile-payments", help="Resume pending Lightning payment reconciliation")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def reconcile_payments(json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        home_relay=HOME_RELAY,
+        relays=RELAYS,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+
+    async def run_reconciliation():
+        await acorn_obj.load_data()
+        await acorn_obj.acquire_lock()
+        try:
+            return await acorn_obj.reconcile_pending_melts()
+        finally:
+            await acorn_obj.release_lock()
+
+    result = asyncio.run(run_reconciliation())
+    if json_output:
+        _emit_json(result)
+        return
+
+    click.echo("Lightning payment reconciliation")
+    click.echo(f"Paid and finalized: {result['paid']}")
+    click.echo(f"Confirmed unpaid: {result['unpaid']}")
+    click.echo(f"Still unresolved: {result['unresolved']}")
+    for quote in result["quotes"]:
+        line = f"- {quote.get('quote') or '(invalid quote)'}: {quote['state']}"
+        if quote.get("error"):
+            line += f" ({quote['error']})"
+        click.echo(line)
+    if result["unresolved"]:
+        click.echo("Do not retry unresolved payments; run this command again later.")
 
 @click.command("put", help='write a private record')
 @click.argument('label', default='default')
@@ -2131,6 +2162,7 @@ cli.add_command(swap)
 cli.add_command(check_proofs)
 cli.add_command(repair_proofs)
 cli.add_command(pay)
+cli.add_command(reconcile_payments)
 cli.add_command(put)
 cli.add_command(get)
 cli.add_command(get_blob)

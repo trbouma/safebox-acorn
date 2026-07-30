@@ -132,6 +132,27 @@ Proof mutation remains an explicit operator decision:
 acorn repair-proofs
 ```
 
+## Lightning payment recovery
+
+A Lightning melt timeout is an unknown outcome, not a confirmed failure. Acorn
+checkpoints post-swap proofs and an encrypted pending-melt journal before
+submitting the melt. It never repeats the melt `POST`; it resolves uncertainty
+through the mint's quote-status endpoint.
+
+Operators can resume recovery explicitly:
+
+```sh
+acorn reconcile-payments
+acorn reconcile-payments --json
+```
+
+`PAID` removes the submitted proofs and writes idempotent transaction history.
+`UNPAID` retains the post-swap proofs. `PENDING`, an unknown state, or an
+unreachable mint keeps the recovery journal and blocks another spend.
+
+See [Lightning Melt Recovery](LIGHTNING-MELT-RECOVERY.md) for the state model
+and durable ordering.
+
 ## Wallet burn
 
 `acorn burn` deletes local bootstrap config by default and publishes NIP-09

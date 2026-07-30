@@ -85,6 +85,20 @@ RECEIVE_PROOF_MAINTENANCE_EAGER_BATCH_LIMIT: int = int(
 DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
+PENDING_MELTS_LABEL: str = "pending_melts"
+MELT_RECOVERY_ATTEMPTS: int = 4
+
+
+class PaymentOutcomeUnknownError(RuntimeError):
+    """The mint may have paid, so retrying the payment is unsafe."""
+
+
+class PaymentFinalizationError(RuntimeError):
+    """The mint paid, but local/relay wallet finalization is incomplete."""
+
+
+class PaymentFailedError(RuntimeError):
+    """The mint definitively reports that the payment was not paid."""
 
 def powers_of_2_sum(amount):
     powers = []
@@ -4889,6 +4903,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            await self._require_resolved_pending_melts()
 
             keyset_proofs, _keyset_amounts = self._proofs_by_keyset()
             if not keyset_proofs:
@@ -5139,6 +5154,265 @@ class Acorn:
 
 
 
+    @staticmethod
+    def _melt_state(payload: dict | None) -> str:
+        if not isinstance(payload, dict):
+            return "UNKNOWN"
+        state = str(payload.get("state") or "").upper()
+        if state in {"PAID", "UNPAID", "PENDING"}:
+            return state
+        if payload.get("paid") is True:
+            return "PAID"
+        return "UNKNOWN"
+
+    async def _load_pending_melts(self) -> List[dict]:
+        raw = await self.get_wallet_info(label=PENDING_MELTS_LABEL)
+        if not raw:
+            return []
+        try:
+            loaded = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise PaymentFinalizationError(
+                "Pending Lightning payment journal is unreadable; refusing to spend."
+            ) from exc
+        if not isinstance(loaded, list) or not all(isinstance(each, dict) for each in loaded):
+            raise PaymentFinalizationError(
+                "Pending Lightning payment journal has an invalid format; refusing to spend."
+            )
+        return loaded
+
+    async def _save_pending_melts(self, entries: List[dict]) -> None:
+        await self.set_wallet_info(
+            label=PENDING_MELTS_LABEL,
+            label_info=json.dumps(entries, sort_keys=True),
+        )
+        # A recovery journal is useful only if it is readable after a process
+        # exit. Verify relay readback before allowing a melt submission.
+        for attempt in range(1, 6):
+            try:
+                observed = await self._load_pending_melts()
+                if observed == entries:
+                    return
+            except PaymentFinalizationError:
+                pass
+            await asyncio.sleep(0.4 * attempt)
+        raise PaymentFinalizationError(
+            "Pending Lightning payment journal could not be read back from "
+            "the home relay. No new melt should be submitted."
+        )
+
+    async def _upsert_pending_melt(self, entry: dict) -> None:
+        pending = await self._load_pending_melts()
+        pending = [
+            each for each in pending
+            if str(each.get("quote")) != str(entry.get("quote"))
+        ]
+        pending.append(entry)
+        await self._save_pending_melts(pending)
+
+    async def _remove_pending_melt(self, quote: str) -> None:
+        pending = await self._load_pending_melts()
+        remaining = [
+            each for each in pending
+            if str(each.get("quote")) != str(quote)
+        ]
+        await self._save_pending_melts(remaining)
+
+    async def _query_melt_quote(
+        self,
+        mint: str,
+        quote: str,
+        timeout: httpx.Timeout | None = None,
+    ) -> dict:
+        quote_url = f"{mint.rstrip('/')}/v1/melt/quote/bolt11/{quote}"
+        async with httpx.AsyncClient(
+            timeout=timeout or httpx.Timeout(30.0, connect=5.0)
+        ) as client:
+            response = await client.get(quote_url)
+            response.raise_for_status()
+            payload = response.json()
+        if not isinstance(payload, dict):
+            raise RuntimeError("mint returned a non-object melt quote response")
+        return payload
+
+    async def _resolve_melt_submission(
+        self,
+        *,
+        melt_url: str,
+        mint: str,
+        quote: str,
+        request_payload: dict,
+        headers: dict,
+        timeout: httpx.Timeout,
+        attempts: int = MELT_RECOVERY_ATTEMPTS,
+    ) -> dict:
+        """
+        Submit a melt once, then resolve ambiguous responses by quote lookup.
+
+        The melt POST is never repeated. A timeout, disconnect, HTTP error, or
+        non-terminal response is followed only by idempotent quote queries.
+        """
+        post_error: Exception | None = None
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    url=melt_url,
+                    json=request_payload,
+                    headers=headers,
+                )
+                response.raise_for_status()
+                payload = response.json()
+            state = self._melt_state(payload)
+            if state in {"PAID", "UNPAID"}:
+                return {"state": state, "payload": payload, "source": "melt-response"}
+        except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            post_error = exc
+
+        last_payload: dict | None = None
+        last_error: Exception | None = post_error
+        for attempt in range(max(1, int(attempts))):
+            if attempt:
+                await asyncio.sleep(0.5 * attempt)
+            try:
+                last_payload = await self._query_melt_quote(
+                    mint=mint,
+                    quote=quote,
+                    timeout=timeout,
+                )
+                state = self._melt_state(last_payload)
+                if state in {"PAID", "UNPAID"}:
+                    return {
+                        "state": state,
+                        "payload": last_payload,
+                        "source": "quote-query",
+                    }
+            except (httpx.HTTPError, RuntimeError, ValueError, TypeError) as exc:
+                last_error = exc
+
+        detail = str(last_error) if last_error else self._melt_state(last_payload)
+        raise PaymentOutcomeUnknownError(
+            f"Lightning payment outcome is unresolved for quote {quote}. "
+            "Do not retry the payment. Acorn retained a pending recovery "
+            f"record and will query the mint again. Last result: {detail}"
+        )
+
+    async def _finalize_paid_melt(self, entry: dict, payload: dict) -> None:
+        quote = str(entry["quote"])
+        spend_ys = {str(each) for each in entry.get("spend_ys", [])}
+        retained: List[Proof] = []
+        for proof in self.proofs:
+            proof_y = str(proof.Y or "")
+            if not proof_y:
+                proof_y = hash_to_curve(
+                    str(proof.secret).encode("utf-8")
+                ).serialize().hex()
+            if proof_y not in spend_ys:
+                retained.append(proof)
+
+        self.proofs = retained
+        self.balance = sum(each.amount for each in retained)
+        try:
+            await self.write_proofs()
+        except Exception as exc:
+            raise PaymentFinalizationError(
+                f"Mint confirmed Lightning payment for quote {quote}, but "
+                "the remaining proofs could not be persisted. Do not retry; "
+                "restart Acorn to resume finalization."
+            ) from exc
+
+        history_marker = f"cashu-melt:{quote}"
+        try:
+            history = await self.get_tx_history()
+        except Exception as exc:
+            raise PaymentFinalizationError(
+                f"Mint confirmed Lightning payment for quote {quote}, but "
+                "transaction-history reconciliation could not be completed. "
+                "Do not retry; restart Acorn to resume finalization."
+            ) from exc
+
+        if not any(each.get("description_hash") == history_marker for each in history):
+            try:
+                await self.add_tx_history(
+                    tx_type="D",
+                    amount=int(entry["amount"]),
+                    comment=str(entry.get("comment") or ""),
+                    tendered_amount=entry.get("tendered_amount"),
+                    tendered_currency=str(entry.get("tendered_currency") or "SAT"),
+                    fees=int(entry.get("fee_reserve") or 0),
+                    invoice=entry.get("invoice"),
+                    payment_preimage=payload.get("payment_preimage"),
+                    payment_hash=entry.get("payment_hash"),
+                    description_hash=history_marker,
+                )
+            except Exception as exc:
+                raise PaymentFinalizationError(
+                    f"Mint confirmed Lightning payment for quote {quote}, but "
+                    "transaction history could not be persisted. Do not retry; "
+                    "restart Acorn to resume finalization."
+                ) from exc
+
+        await self._remove_pending_melt(quote)
+
+    async def reconcile_pending_melts(self) -> dict:
+        """
+        Resume pending Lightning melts after a timeout or process restart.
+
+        PAID entries are finalized, UNPAID entries are released, and
+        PENDING/UNKNOWN entries remain journaled and block another payment.
+        """
+        pending = await self._load_pending_melts()
+        result = {"paid": 0, "unpaid": 0, "unresolved": 0, "quotes": []}
+        timeout = httpx.Timeout(30.0, connect=5.0)
+
+        for entry in list(pending):
+            quote = str(entry.get("quote") or "")
+            mint = str(entry.get("mint") or "")
+            if not quote or not mint:
+                result["unresolved"] += 1
+                result["quotes"].append(
+                    {"quote": quote or None, "state": "UNKNOWN", "error": "invalid journal entry"}
+                )
+                continue
+            try:
+                payload = await self._query_melt_quote(mint, quote, timeout)
+                state = self._melt_state(payload)
+            except Exception as exc:
+                state = "UNKNOWN"
+                payload = {}
+                error = str(exc)
+            else:
+                error = None
+
+            result["quotes"].append(
+                {"quote": quote, "state": state, "error": error}
+            )
+            if state == "PAID":
+                await self._finalize_paid_melt(entry, payload)
+                result["paid"] += 1
+            elif state == "UNPAID":
+                await self._remove_pending_melt(quote)
+                result["unpaid"] += 1
+            else:
+                result["unresolved"] += 1
+
+        return result
+
+    async def _require_resolved_pending_melts(self) -> dict:
+        result = await self.reconcile_pending_melts()
+        if result["unresolved"]:
+            unresolved_quotes = [
+                str(each.get("quote"))
+                for each in result["quotes"]
+                if each.get("state") not in {"PAID", "UNPAID"}
+            ]
+            raise PaymentOutcomeUnknownError(
+                "A previous Lightning payment is still unresolved "
+                f"(quotes: {', '.join(unresolved_quotes)}). Do not spend or "
+                "submit another payment until the mint reports a terminal state."
+            )
+        return result
+
+
     async def pay_multi(  self, 
                     amount:int, 
                     lnaddress: str, 
@@ -5146,35 +5420,6 @@ class Acorn:
                     tendered_amount: float = None,
                     tendered_currency: str = "SAT"
                     ): 
-        def _should_restore_post_swap_wallet(exc: BaseException) -> bool:
-            text = str(exc).lower()
-            return (
-                "no_route" in text
-                or "lightning payment failed" in text
-                or '"code": 20004' in text
-                or "'code': 20004" in text
-            )
-
-        async def _restore_post_swap_wallet_state(
-            chosen_keyset: str,
-            proofs_from_keyset: List[Proof],
-            swapped_proofs: List[Proof],
-            keyset_proofs: dict,
-        ) -> None:
-            keyset_proofs[chosen_keyset] = list(proofs_from_keyset) + list(swapped_proofs)
-            restored_proofs: List[Proof] = []
-            for key in keyset_proofs:
-                for each_proof in keyset_proofs[key]:
-                    restored_proofs.append(each_proof)
-            self.proofs = restored_proofs
-            self.logger.warning(
-                "op=pay_multi status=restore_post_swap keyset=%s restored_proofs=%s",
-                chosen_keyset,
-                len(swapped_proofs),
-            )
-            await self.write_proofs()
-                    
-        
         # print("pay from multiple mints")
         available_amount = 0
         chosen_keyset = None
@@ -5184,10 +5429,12 @@ class Acorn:
         headers = { "Content-Type": "application/json"}
         msg_out = "Paid"
         final_fees = 0
+        melt_attempted = False
 
         try:
             timeout = httpx.Timeout(30.0, connect=5.0)
             await self.acquire_lock()
+            await self._require_resolved_pending_melts()
             callback, safebox, nonce = lightning_address_pay(amount, lnaddress,comment=comment)         
             pr = callback['pr'] 
             self.logger.debug("op=pay_multi status=lookup lnaddress=%s safebox=%s", lnaddress, safebox)
@@ -5467,64 +5714,75 @@ class Acorn:
 
                     data_to_send = {"quote": post_melt_response.quote,
                                 "inputs": melt_proofs }
-                    
-                
-                    
-                    self.logger.debug(f"lightning payment we are here!: {data_to_send}")
-                    try:
-                        async with httpx.AsyncClient(timeout=timeout) as client:
-                            response = await client.post(url=melt_url, json=data_to_send, headers=headers)
-                            response.raise_for_status()
-                    except httpx.HTTPError as e:
-                        if _should_restore_post_swap_wallet(e):
-                            await _restore_post_swap_wallet_state(
-                                chosen_keyset=chosen_keyset,
-                                proofs_from_keyset=proofs_from_keyset,
-                                swapped_proofs=proofs_remaining,
-                                keyset_proofs=keyset_proofs,
-                            )
-                        raise RuntimeError(f"payment melt request failed: {e}") from e
-                    
-                    self.logger.debug(f"response json: {response.json()}")
-                    payment_json = response.json()
-                    #TODO Need to do some error checking
-                
-                    self.logger.debug(f"need to do some error checking")
-                    # {'detail': 'Lightning payment unsuccessful. no_route', 'code': 20000}
-                    # add keep proofs back into selected keyset proofs
-                    if payment_json.get("paid",False):        
-                        self.logger.info(f"Lightning payment ok")
-                    else:
-                        self.logger.info(f"lighting payment did no go through")
-                        await _restore_post_swap_wallet_state(
-                            chosen_keyset=chosen_keyset,
-                            proofs_from_keyset=proofs_from_keyset,
-                            swapped_proofs=proofs_remaining,
-                            keyset_proofs=keyset_proofs,
-                        )
-                        raise RuntimeError(f"Lightning payment to {lnaddress} of amount {amount} sats did not go through! Please try again.")
-                        # The following code is not necessary
-                        # Add back in spend proofs
-                        # for each in spend_proofs:   
-                        #    proofs_from_keyset.append(each)
-                    
+                    self.logger.debug("op=pay_multi status=checkpoint_before_melt quote=%s", post_melt_response.quote)
 
-                    post_swap_keyset_proofs = proofs_from_keyset + keep_proofs
-                    # print("self proofs", self.proofs)
-                    # need to reassign back into
-                    keyset_proofs[chosen_keyset] = post_swap_keyset_proofs
-                    # OK - now need to put proofs back into a flat lish
-                    post_payment_proofs = []
+                    # Persist all post-swap proofs before submitting the melt.
+                    # If the process exits after submission, the journal and
+                    # these proof Ys are sufficient to resume safely.
+                    keyset_proofs[chosen_keyset] = (
+                        proofs_from_keyset + spend_proofs + keep_proofs
+                    )
+                    checkpoint_proofs: List[Proof] = []
                     for key in keyset_proofs:
-                        each_proofs = keyset_proofs[key]
-                        for each_proof in each_proofs:
-                            post_payment_proofs.append(each_proof)
-                    
-                    
-                    # asyncio.run(self._async_delete_proof_events())
-                    # self.delete_proof_events()
-                    
-                    self.proofs = post_payment_proofs
+                        checkpoint_proofs.extend(keyset_proofs[key])
+                    self.proofs = checkpoint_proofs
+                    self.balance = sum(each.amount for each in checkpoint_proofs)
+                    await self.write_proofs()
+
+                    pending_entry = {
+                        "quote": post_melt_response.quote,
+                        "mint": self.known_mints[chosen_keyset],
+                        "keyset": chosen_keyset,
+                        "spend_ys": [
+                            str(each.Y or hash_to_curve(
+                                str(each.secret).encode("utf-8")
+                            ).serialize().hex())
+                            for each in spend_proofs
+                        ],
+                        "amount": int(amount),
+                        "fee_reserve": int(amount_needed - amount),
+                        "lnaddress": lnaddress,
+                        "comment": comment,
+                        "tendered_amount": tendered_amount,
+                        "tendered_currency": tendered_currency,
+                        "invoice": pr,
+                        "created_at": int(datetime.now().timestamp()),
+                    }
+                    await self._upsert_pending_melt(pending_entry)
+
+                    melt_attempted = True
+                    outcome = await self._resolve_melt_submission(
+                        melt_url=melt_url,
+                        mint=self.known_mints[chosen_keyset],
+                        quote=post_melt_response.quote,
+                        request_payload=data_to_send,
+                        headers=headers,
+                        timeout=timeout,
+                    )
+                    if outcome["state"] == "UNPAID":
+                        await self._remove_pending_melt(post_melt_response.quote)
+                        raise PaymentFailedError(
+                            f"Lightning payment to {lnaddress} of {amount} sats "
+                            "was not paid. The mint reports UNPAID; the "
+                            "post-swap proofs remain in the wallet."
+                        )
+
+                    await self._finalize_paid_melt(
+                        pending_entry,
+                        outcome["payload"],
+                    )
+                    final_fees = amount_needed - amount
+                    msg_out = (
+                        f"Payment of {amount} sats with fee {final_fees} sats "
+                        f"to {lnaddress} successful!"
+                    )
+                    self.logger.info(
+                        "op=pay_multi status=complete amount=%s quote=%s source=%s",
+                        amount,
+                        post_melt_response.quote,
+                        outcome["source"],
+                    )
+                    return msg_out, final_fees
                 
                 
                 
@@ -5541,6 +5799,8 @@ class Acorn:
                     tendered_currency,
                 )
                 await self.add_tx_history(tx_type='D', amount=amount, comment=comment, tendered_amount=tendered_amount, tendered_currency=tendered_currency, fees=final_fees)
+        except (PaymentOutcomeUnknownError, PaymentFinalizationError, PaymentFailedError):
+            raise
         except (ValueError, RuntimeError, httpx.HTTPError) as e:
             final_fees = 0
             if (
@@ -5549,8 +5809,13 @@ class Acorn:
                 or "stale proofs" in str(e).lower()
             ):
                 msg_out = "Payment could not proceed because the wallet contains stale proofs."
+            elif melt_attempted:
+                msg_out = (
+                    "Lightning payment outcome may be unresolved. Do not retry "
+                    "until 'acorn reconcile-payments' reports PAID or UNPAID."
+                )
             else:
-                msg_out = f"There is an error sending the payment. Did it go through?"
+                msg_out = f"Payment was not submitted to the mint: {e}"
             self.logger.error("%s original_error=%s", msg_out, e)
             raise RuntimeError(msg_out) from e
         finally:
@@ -5661,37 +5926,11 @@ class Acorn:
                 f"{action} failed with HTTP {response.status_code}: {body_text or '<empty body>'}"
             )
 
-        def _should_restore_post_swap_wallet(exc: BaseException) -> bool:
-            text = str(exc).lower()
-            return (
-                "no_route" in text
-                or "lightning payment failed" in text
-                or '"code": 20004' in text
-                or "'code': 20004" in text
-            )
-
-        async def _restore_post_swap_wallet_state(
-            chosen_keyset: str,
-            proofs_from_keyset: List[Proof],
-            swapped_proofs: List[Proof],
-            keyset_proofs: dict,
-        ) -> None:
-            keyset_proofs[chosen_keyset] = list(proofs_from_keyset) + list(swapped_proofs)
-            restored_proofs: List[Proof] = []
-            for key in keyset_proofs:
-                for each_proof in keyset_proofs[key]:
-                    restored_proofs.append(each_proof)
-            self.proofs = restored_proofs
-            self.logger.warning(
-                "op=pay_multi_invoice status=restore_post_swap keyset=%s restored_proofs=%s",
-                chosen_keyset,
-                len(swapped_proofs),
-            )
-            await self.write_proofs()
-
         # decode amount from invoice
+        melt_attempted = False
         try:
             await self.acquire_lock()
+            await self._require_resolved_pending_melts()
             timeout = httpx.Timeout(30.0, connect=5.0)
             decoded_invoice = bolt11.decode(lninvoice)
             if decoded_invoice.amount_msat is None:
@@ -5838,79 +6077,81 @@ class Acorn:
 
             data_to_send = {"quote": post_melt_response.quote,
                         "inputs": melt_proofs }
-            
-            self.logger.debug(data_to_send)
-            self.logger.debug("we are here!!!")
-            try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    response = await client.post(url=melt_url, json=data_to_send, headers=headers)
-                    if response.is_error:
-                        raise _mint_error_with_body("melt request", response)
-            except RuntimeError as exc:
-                if _should_restore_post_swap_wallet(exc):
-                    await _restore_post_swap_wallet_state(
-                        chosen_keyset=chosen_keyset,
-                        proofs_from_keyset=proofs_from_keyset,
-                        swapped_proofs=proofs_remaining,
-                        keyset_proofs=keyset_proofs,
-                    )
-                raise
-            self.logger.debug(response.json())  
-            payment_json = response.json() 
-            payment_preimage = payment_json.get('payment_preimage', None)            
-            if payment_json.get("paid",False):        
-                    self.logger.info(f"Lightning payment ok: {payment_hash} {payment_preimage}")
-            else:
-                self.logger.info(f"lighting payment did no go through")
-                await _restore_post_swap_wallet_state(
-                    chosen_keyset=chosen_keyset,
-                    proofs_from_keyset=proofs_from_keyset,
-                    swapped_proofs=proofs_remaining,
-                    keyset_proofs=keyset_proofs,
-                )
-                raise RuntimeError(f"Lightning payment not go through! Please try again.")
-            # add keep proofs back into selected keyset proofs
-            post_swap_keyset_proofs = proofs_from_keyset + keep_proofs
-            # print("self proofs", self.proofs)
-            # need to reassign back into 
-            keyset_proofs[chosen_keyset]= post_swap_keyset_proofs
-            # OK - now need to put proofs back into a flat lish
-            post_payment_proofs = []
+
+            keyset_proofs[chosen_keyset] = (
+                proofs_from_keyset + spend_proofs + keep_proofs
+            )
+            checkpoint_proofs: List[Proof] = []
             for key in keyset_proofs:
-                each_proofs = keyset_proofs[key]
-                for each_proof in each_proofs:
-                    post_payment_proofs.append(each_proof)
-            
-            # Replace with new function
-            self.proofs = post_payment_proofs
-            # asyncio.run(self._async_delete_proof_events())
-            # self.add_proofs_obj(post_payment_proofs)
-            # self._load_proofs()
-            
-            
-            final_fees = amount_needed-ln_amount
-            msg_out = f"Paid {ln_amount} sats with fees {final_fees} sats successful!"
-            self.logger.info(msg_out)
+                checkpoint_proofs.extend(keyset_proofs[key])
+            self.proofs = checkpoint_proofs
+            self.balance = sum(each.amount for each in checkpoint_proofs)
             await self.write_proofs()
+
+            pending_entry = {
+                "quote": post_melt_response.quote,
+                "mint": self.known_mints[chosen_keyset],
+                "keyset": chosen_keyset,
+                "spend_ys": [
+                    str(each.Y or hash_to_curve(
+                        str(each.secret).encode("utf-8")
+                    ).serialize().hex())
+                    for each in spend_proofs
+                ],
+                "amount": int(ln_amount),
+                "fee_reserve": int(amount_needed - ln_amount),
+                "comment": comment,
+                "tendered_amount": tendered_amount,
+                "tendered_currency": tendered_currency,
+                "invoice": lninvoice,
+                "payment_hash": payment_hash,
+                "invoice_description_hash": description_hash,
+                "created_at": int(datetime.now().timestamp()),
+            }
+            await self._upsert_pending_melt(pending_entry)
+
+            melt_attempted = True
+            outcome = await self._resolve_melt_submission(
+                melt_url=melt_url,
+                mint=self.known_mints[chosen_keyset],
+                quote=post_melt_response.quote,
+                request_payload=data_to_send,
+                headers=headers,
+                timeout=timeout,
+            )
+            if outcome["state"] == "UNPAID":
+                await self._remove_pending_melt(post_melt_response.quote)
+                raise PaymentFailedError(
+                    f"Lightning invoice payment of {ln_amount} sats was not "
+                    "paid. The mint reports UNPAID; the post-swap proofs "
+                    "remain in the wallet."
+                )
+
+            await self._finalize_paid_melt(pending_entry, outcome["payload"])
+            payment_preimage = outcome["payload"].get("payment_preimage")
+            final_fees = amount_needed - ln_amount
+            msg_out = f"Paid {ln_amount} sats with fees {final_fees} sats successful!"
+            self.logger.info(
+                "op=pay_multi_invoice status=complete quote=%s source=%s",
+                post_melt_response.quote,
+                outcome["source"],
+            )
+            return msg_out, final_fees, payment_hash, payment_preimage, description_hash
+        except (PaymentOutcomeUnknownError, PaymentFinalizationError, PaymentFailedError):
+            raise
         except (ValueError, RuntimeError, httpx.HTTPError) as e:
-            # await self.release_lock()
             self.logger.error("Error in pay_multi_invoice: %s", e)
-            # raise RuntimeError(f"Error There is problem with the invoice payment {e}")
-            final_fees = 0
-            msg_out = f"There is a problem paying the invoice. {e}"
+            if melt_attempted:
+                msg_out = (
+                    "Lightning invoice outcome may be unresolved. Do not retry "
+                    "until 'acorn reconcile-payments' reports PAID or UNPAID."
+                )
+            else:
+                msg_out = f"Invoice payment was not submitted to the mint: {e}"
             raise RuntimeError(msg_out) from e
         finally:
             await self.release_lock()
             self.logger.debug("op=pay_multi_invoice status=complete")
-        
-        await self.add_tx_history( tx_type='D',
-                                        amount=ln_amount,
-                                        comment=comment,
-                                        tendered_amount=tendered_amount,
-                                        tendered_currency=tendered_currency,
-                                        fees=final_fees)
-        
-        return msg_out, final_fees, payment_hash,payment_preimage, description_hash
 
     async def delete_kind_events(self, record_kind:int):
         """
@@ -6160,6 +6401,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            await self._require_resolved_pending_melts()
             keyset_proofs,keyset_amounts = self._proofs_by_keyset()
             if not keyset_proofs:
                 self.logger.info("op=swap_multi_consolidate status=skip reason=no_proofs")
@@ -6331,6 +6573,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            await self._require_resolved_pending_melts()
             keyset_proofs,_keyset_amounts = self._proofs_by_keyset()
             if not keyset_proofs:
                 self.logger.info("op=swap_multi_each status=skip reason=no_proofs")
@@ -7184,6 +7427,7 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._require_resolved_pending_melts()
             # print("issue token")
             available_amount = 0
             chosen_keyset = None
