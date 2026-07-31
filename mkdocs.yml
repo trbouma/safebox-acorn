@@ -1,0 +1,51 @@
+site_name: Acorn
+site_description: A protocol-first component for user-controlled identity, funds and records.
+site_url: https://trbouma.github.io/safebox-acorn/
+repo_url: https://github.com/trbouma/safebox-acorn
+repo_name: trbouma/safebox-acorn
+
+docs_dir: website
+site_dir: site
+
+theme:
+  name: material
+  language: en
+  logo: assets/images/acorn-logo.png
+  favicon: assets/images/acorn-logo.png
+  features:
+    - navigation.top
+    - search.suggest
+    - search.highlight
+    - content.code.copy
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Use dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Use light mode
+
+nav:
+  - Home: index.md
+  - How Acorn Works: how-acorn-works.md
+  - Nostr-Native Approach: nostr-native-approach.md
+
+markdown_extensions:
+  - attr_list
+  - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+
+extra_css:
+  - stylesheets/extra.css
+
+copyright: Acorn is open-source software released under the MIT License.

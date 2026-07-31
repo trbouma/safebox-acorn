@@ -1,8 +1,16 @@
 # Acorn Record Model
 
-Acorn implements a user-controlled record model for funds and private records.
-The core idea is that user-controlled wallets can hold, receive, issue,
-present, and replicate encrypted records over Nostr relay infrastructure.
+Acorn implements a user-controlled record model for funds and private records,
+anchored by user-controlled identity. The core idea is that user-controlled
+wallets can hold, receive, issue, present, and replicate encrypted records over
+Nostr relay infrastructure.
+
+Here, identity means the cryptographic identity of the Acorn component or
+wallet, not the person using it. A public/private keypair provides continuity
+across compatible environments and authority over the funds and records
+controlled through that identity. Human identity claims, credentials, and
+legal rights may be represented by records, but they are not implied by
+possession of the keypair alone.
 
 This model has two major record classes:
 
@@ -23,13 +31,14 @@ present, transfer, spend, revoke, or recover it.
 This is why Acorn's primary description is:
 
 ```text
-Acorn is a protocol-first component for user-controlled funds and records.
+Acorn is a protocol-first component for user-controlled identity, funds and records.
 ```
 
 In this model, "user-controlled" is not just a privacy preference. It is a
-record property. A record is more useful and resilient when the user can
-preserve control of it across applications, relays, mints, devices, and
-deployment operators.
+record property. Identity supplies the continuity and authority through which
+the user controls funds and records. A record is more useful and resilient
+when the user can preserve that control across applications, relays, mints,
+devices, and deployment operators.
 
 Control can mean different things for different record classes:
 

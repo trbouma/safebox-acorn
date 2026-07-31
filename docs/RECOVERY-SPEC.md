@@ -15,6 +15,12 @@ nsec
 The seed phrase and `nsec` are sensitive recovery secrets. Anyone with either
 one can control the wallet if they can access the wallet's relay-backed data.
 
+Restoring the keypair restores the protocol identity of the Acorn component or
+wallet lineage. It does not restore or prove the civil, legal, or social
+identity of a person. The keypair supplies continuity and signing authority
+over associated funds and records; human identity assertions remain separate
+claims.
+
 ## Recovery material
 
 ### `home_relay`
@@ -139,4 +145,3 @@ not as plaintext local config.
 - Whether `--show-recovery --json` should be supported.
 - Whether recovery display should require typing a stronger confirmation phrase
   instead of a yes/no prompt.
-

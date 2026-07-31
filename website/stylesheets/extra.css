@@ -1,0 +1,132 @@
+:root {
+  --md-primary-fg-color: #294f3a;
+  --md-primary-fg-color--light: #3f6b50;
+  --md-primary-fg-color--dark: #183426;
+  --md-accent-fg-color: #a85f20;
+  --acorn-warm: #d38a3f;
+  --acorn-cream: #f6f1e7;
+  --acorn-ink: #183126;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #355f47;
+  --md-accent-fg-color: #e5a45d;
+  --acorn-cream: #202b25;
+  --acorn-ink: #eef5ef;
+}
+
+.md-header__option .md-header__button:not([hidden]) {
+  display: inline-flex;
+  width: auto;
+  align-items: center;
+  gap: 0.35rem;
+  padding-inline: 0.45rem;
+}
+
+.md-header__option .md-header__button:not([hidden])::after {
+  content: attr(title);
+  font-size: 0.62rem;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.acorn-hero {
+  text-align: center;
+  overflow: hidden;
+  margin: 1rem 0 2.5rem;
+  padding: clamp(2rem, 5vw, 3.5rem);
+  border: 1px solid color-mix(in srgb, var(--md-primary-fg-color) 22%, transparent);
+  border-radius: 1.25rem;
+  background-image:
+    url("../assets/images/oak-silhouette.svg"),
+    linear-gradient(135deg, var(--acorn-cream), color-mix(in srgb, var(--md-primary-fg-color) 9%, var(--acorn-cream)));
+  background-position: right 1.25rem center, center;
+  background-repeat: no-repeat;
+  background-size: clamp(17rem, 43vw, 29rem) auto, cover;
+}
+
+.acorn-hero h1 {
+  margin: 0 0 1.5rem;
+  color: var(--acorn-ink);
+  font-size: clamp(2.4rem, 5vw, 3.75rem);
+  line-height: 1;
+  letter-spacing: -0.03em;
+}
+
+.acorn-hero-mark {
+  display: block;
+  width: clamp(7.5rem, 20vw, 10rem);
+  margin: 0 auto 1.5rem;
+  border-radius: 1rem;
+  box-shadow: 0 0.65rem 2rem rgba(20, 47, 34, 0.14);
+}
+
+.acorn-tagline {
+  max-width: 42rem;
+  margin: 0 auto 0.75rem;
+  color: var(--acorn-ink);
+  font-size: clamp(1.15rem, 2.5vw, 1.45rem);
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.acorn-intro {
+  max-width: 40rem;
+  margin: 0 auto 1.5rem;
+  font-size: 1rem;
+  line-height: 1.6;
+}
+
+.acorn-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2.5rem;
+}
+
+.acorn-grid--two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.acorn-card {
+  padding: 1.25rem 1.35rem;
+  border: 1px solid color-mix(in srgb, var(--md-default-fg-color) 14%, transparent);
+  border-radius: 0.9rem;
+  background: color-mix(in srgb, var(--md-default-bg-color) 94%, var(--md-primary-fg-color));
+  box-shadow: 0 0.35rem 1.1rem rgba(20, 47, 34, 0.06);
+}
+
+.acorn-card h3 {
+  margin-top: 0;
+  color: var(--md-primary-fg-color);
+}
+
+.md-typeset blockquote {
+  border-left-color: var(--acorn-warm);
+}
+
+@media screen and (max-width: 52rem) {
+  .md-header__option .md-header__button:not([hidden]) {
+    width: 2.4rem;
+    padding-inline: 0.6rem;
+  }
+
+  .md-header__option .md-header__button:not([hidden])::after {
+    content: none;
+  }
+
+  .acorn-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .acorn-hero {
+    padding: 2rem 1.5rem;
+    background-position: right -3rem center, center;
+    background-size: 18rem auto, cover;
+  }
+
+  .acorn-hero-mark {
+    width: 7rem;
+  }
+}

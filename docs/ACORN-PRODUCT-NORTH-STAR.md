@@ -2,7 +2,7 @@
 
 ## Summary
 
-Acorn is a protocol-first component for user-controlled funds and records.
+Acorn is a protocol-first component for user-controlled identity, funds and records.
 
 It is not merely a wallet library, a command-line tool, or the code extracted
 from Safebox. Acorn is intended to be a user-controlled protocol component that
@@ -22,7 +22,7 @@ Put another way:
 
 ```text
 Acorn gives applications a protocol-first way to build user-controlled havens
-for funds, records, identity, and recovery.
+for identity, funds, records, and recovery.
 ```
 
 The core value proposition can be summarized as:
@@ -38,15 +38,16 @@ recoverable without surrendering secrets to each other or to a central provider.
 
 People increasingly depend on platforms, services, devices, and applications
 to hold the things that matter to them. That convenience often comes with a
-hidden cost: identity, records, value, and recovery become inseparable from a
-particular provider or product.
+hidden cost: protocol identity, records, value, and recovery become
+inseparable from a particular provider or product.
 
 The user need is not to reject useful services or become an infrastructure
 operator. It is to remain able to change them. A platform may change its terms
 or disappear. A service may become unavailable or unaffordable. A device may be
 lost, damaged, or replaced. An application may be abandoned, redesigned, or
-discontinued. In each case, the user should be able to carry their identity,
-private records, funds, and recovery path to another compatible environment.
+discontinued. In each case, the user should be able to carry the Acorn
+protocol identity, private records, funds, and recovery path to another
+compatible environment.
 
 Acorn exists to make that continuity practical. It gives applications a
 user-controlled protocol component instead of making the application the sole
@@ -69,18 +70,63 @@ to use dependable services while preserving a credible path to recovery,
 migration, and replacement when those services no longer meet the user's
 needs.
 
+## What identity means in Acorn
+
+In Acorn, identity does not mean the person. It does not attempt to represent
+a person's civil, legal, social, or organizational identity. It means the
+protocol identity of an Acorn component or wallet lineage.
+
+That identity is specifically a cryptographic public/private keypair:
+
+```text
+private key (`nsec`) -> signing, decryption, and authorization
+public key (`npub`)  -> addressing, verification, and encryption to Acorn
+seed phrase          -> recovery material from which the keypair can be restored
+```
+
+The seed phrase is recovery material, not a separate identity. A running Acorn
+instance can be replaced while the same keypair continues the same protocol
+identity.
+
+The keypair provides two properties:
+
+- **continuity** — the same Acorn identity can locate, verify, decrypt, and
+  continue its protocol state across compatible apps, devices, operators, and
+  infrastructure;
+- **authority** — control of the private key authorizes signing, decryption,
+  record updates, and wallet actions over the controlled objects associated
+  with that identity.
+
+This is component-level protocol authority. It does not replace the authority
+of a mint to determine Cashu spend state, an issuer to make or revoke a claim,
+or a legal framework to determine rights. Acorn controls how its keypair acts
+on an object; the object's issuing and validation rules still apply.
+
+Those controlled objects are principally funds and records. The keypair does
+not, by itself, prove a person's legal identity, establish real-world title,
+or make every claim signed by the key true. Human names, NIP-05 identifiers,
+credentials, roles, and legal assertions may be associated with an Acorn
+identity through records or external trust frameworks, but they are separate
+claims.
+
+A person may control more than one Acorn identity. Several Acorn runtimes may
+also operate the same identity when deliberately configured with the same key,
+subject to the concurrency and trust boundaries documented elsewhere. The
+important continuity is the keypair and its protocol state, not a particular
+process, device, application, or provider.
+
 ## Language and roots
 
 Acorn's language has become calmer over time. Earlier descriptions leaned more
 heavily on terms like radical independence, data havens, and infrastructure
 independence. Those ideas helped shape the architecture, but they can also
 sound ideological or unnecessarily alarming to people who simply need
-dependable tools for funds and records.
+dependable tools for identity, funds and records.
 
 The current language is intentionally plainer:
 
 ```text
-user-controlled funds and records
+user-controlled identity, funds and records
 ```
 
 This does not dilute the principles. It makes them easier to evaluate. Acorn is
@@ -119,7 +165,7 @@ security, recovery, and availability are provider responsibilities
 In the Acorn model:
 
 ```text
-user-controlled cryptographic material is the continuity layer
+user-controlled identity is the continuity and authority layer
 funds and records are controllable protocol objects
 applications are replaceable interfaces
 relays and mints are replaceable infrastructure
@@ -134,7 +180,7 @@ through chosen infrastructure.
 That inversion explains why Acorn should remain a component rather than a
 single product surface. Applications can provide excellent user experience,
 workflow, compliance, support, and polish, but they should not become the only
-place where the user's funds, records, identity, or recovery path can exist.
+place where the user's identity, funds, records, or recovery path can exist.
 
 This does not require every user to run Acorn personally. A trusted operator is
 whoever provides the execution environment or running code for an Acorn
@@ -151,16 +197,16 @@ replicate relay-backed state, change operators, recover through another
 compatible surface, or move toward stronger custody such as local hardware or
 an HSM-like device.
 
-## Havens for funds and records
+## Havens for identity, funds and records
 
 Acorn is inspired by the broader idea of a haven: a place or system built to
 keep important things available and protected when ordinary devices, accounts,
 buildings, providers, or people are unavailable.
 
-Acorn's concrete focus is narrower and more practical: user-controlled funds
-and records. It gives applications a way to create havens for private records,
-wallet state, identity, and recovery context that can survive application,
-provider, relay, mint, and device failure.
+Acorn's concrete focus is narrower and more practical: user-controlled
+identity, funds and records. It gives applications a way to create havens for
+identity, private records, wallet state, and recovery context that can survive
+application, provider, relay, mint, and device failure.
 
 The design is protocol-first and hardware-enabled over time. Acorn should work
 as open software before it requires any special appliance. But the same protocol
@@ -303,15 +349,18 @@ surrounding relay, mint, app, or deployment operator changes.
 
 ### It carries its own identity
 
-Acorn identity is rooted in user key material:
+Acorn carries a component identity rooted in a cryptographic keypair:
 
 ```text
-nsec
-npub
-seed phrase
+nsec -> private key
+npub -> public key
 ```
 
-Applications can use this identity, but they do not need to create it or own it.
+The seed phrase can restore the keypair but is not an additional identity.
+Applications can use the Acorn identity without creating it, owning it, or
+mistaking it for the person operating Acorn. This lets the component retain
+continuity and authority when the surrounding application or execution
+environment changes.
 
 ### It stores data on replaceable infrastructure
 

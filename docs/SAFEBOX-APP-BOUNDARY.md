@@ -40,10 +40,11 @@ execution and service surface around Acorn:
 - appliance, jail, or hosted deployment defaults;
 - compatibility with the standalone Acorn CLI and package.
 
-This is a valid model, especially for users who want user-controlled funds and
-records without becoming infrastructure operators. The app should make the
-trust boundary clear. An operator-run Acorn component can improve availability
-and usability, but it should not remove the user's practical exit path.
+This is a valid model, especially for users who want user-controlled identity,
+funds and records without becoming infrastructure operators. The app should
+make the trust boundary clear. An operator-run Acorn component can improve
+availability and usability, but it should not remove the user's practical exit
+path.
 
 Safebox should therefore preserve:
 

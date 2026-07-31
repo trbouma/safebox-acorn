@@ -11,4 +11,5 @@ __pycache__/
 .acorn-test/
 dist/
 build/
+site/
 .DS_Store

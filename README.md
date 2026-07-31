@@ -1,13 +1,14 @@
 # Safebox Acorn
 
-Acorn is a protocol-first component for user-controlled funds and records.
+Acorn is a protocol-first component for user-controlled identity, funds and records.
 
 Safebox Acorn is the standalone Acorn component extracted from Safebox. It
 provides:
 
 - the `Acorn` Python runtime class
 - the `acorn` command-line interface
-- supporting Nostr, Cashu, Lightning, record, and crypto helpers used by Acorn
+- supporting identity, Nostr, Cashu, Lightning, record, and crypto helpers used
+  by Acorn
 
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
@@ -31,6 +32,32 @@ without requiring the Safebox web application.
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
 - [Roadmap to Releasability](./docs/ROADMAP-TO-RELEASABILITY.md)
 - [FreeBSD Jail Installation](./docs/FREEBSD-JAIL-INSTALL.md)
+
+## Documentation website
+
+The public website is deliberately separate from the detailed reference
+material:
+
+- `docs/` contains specifications, design notes, runbooks, and project records;
+- `website/` contains only material deliberately selected for publication;
+- MkDocs publishes `website/` and does not automatically include `docs/`;
+- `site/` is generated output and is not committed.
+
+Install the separate documentation toolchain and preview the site locally:
+
+```sh
+poetry install --with docs
+poetry run mkdocs serve
+```
+
+Validate the production build before committing:
+
+```sh
+poetry run mkdocs build --strict
+```
+
+The GitHub Pages workflow publishes committed website changes from `main`.
+Repository Pages settings must use **GitHub Actions** as the source.
 
 ## Install from this repository
 

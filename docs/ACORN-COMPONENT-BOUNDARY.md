@@ -2,10 +2,10 @@
 
 ## Summary
 
-Acorn is a protocol-first component for user-controlled funds and records,
-extracted from Safebox as a standalone component. It should remain small,
-installable, and product-neutral. Safebox and other applications may depend on
-Acorn, but Acorn should not depend on Safebox application concepts.
+Acorn is a protocol-first component for user-controlled identity, funds and
+records, extracted from Safebox as a standalone component. It should remain
+small, installable, and product-neutral. Safebox and other applications may
+depend on Acorn, but Acorn should not depend on Safebox application concepts.
 
 This specification defines what belongs in Acorn, what does not, and how future
 features should be evaluated before they are added.
@@ -13,8 +13,8 @@ features should be evaluated before they are added.
 ## Goals
 
 - Keep Acorn installable as an independent Python package.
-- Provide a stable Python API and CLI for wallet, record, relay, and payment
-  operations.
+- Provide a stable Python API and CLI for identity, wallet, record, relay, and
+  payment operations.
 - Avoid leaking Safebox web-app concerns into the component.
 - Make Acorn reusable by future applications, including Safebox-next.
 - Keep experimental side projects out of the core component until they become
@@ -57,7 +57,7 @@ app   -> user experience and workflows
 This separation is central to the component boundary:
 
 - applications can be replaced without losing user state;
-- relays can be replaced without changing user identity;
+- relays can be replaced without changing the Acorn protocol identity;
 - sensitive keys can eventually move into stronger custody environments;
 - configuration can move from plaintext local files into encrypted reserved
   records where appropriate;
@@ -66,9 +66,20 @@ This separation is central to the component boundary:
 This follows the architectural inversion described in
 [Acorn Product North Star](./ACORN-PRODUCT-NORTH-STAR.md): applications should
 be replaceable interfaces over user-controlled protocol state, not the only
-system of record for the user's funds, records, identity, or recovery path.
+system of record for the user's identity, funds, records, or recovery path.
 
 ### Key and wallet identity
+
+Within this specification, identity means the protocol identity of the Acorn
+component or wallet lineage, not the civil, legal, or social identity of a
+person. It is defined by a Nostr public/private keypair. The public key provides
+the stable protocol address; control of the private key provides signing,
+decryption, and authorization over associated funds and records.
+
+The keypair can continue across replacement processes, devices, applications,
+and operators. A seed phrase is recovery material for that identity, while
+NIP-05 names, profiles, credentials, and real-world identity assertions are
+separate records or claims.
 
 Acorn owns:
 
