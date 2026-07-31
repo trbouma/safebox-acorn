@@ -30,6 +30,7 @@ without requiring the Safebox web application.
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
 - [Roadmap to Releasability](./docs/ROADMAP-TO-RELEASABILITY.md)
+- [FreeBSD Jail Installation](./docs/FREEBSD-JAIL-INSTALL.md)
 
 ## Install from this repository
 

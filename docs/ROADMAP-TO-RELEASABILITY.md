@@ -386,7 +386,8 @@ Recommended release matrix:
 
 Before a pilot:
 
-- repeat the FreeBSD jail installation from a clean jail;
+- repeat the
+  [FreeBSD jail installation](./FREEBSD-JAIL-INSTALL.md) from a clean jail;
 - confirm the ordinary package installs without `liboqs`;
 - document optional OQS installation separately;
 - test native dependencies such as coincurve, cryptography, secp256k1, and
