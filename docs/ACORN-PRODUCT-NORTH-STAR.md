@@ -34,10 +34,45 @@ reciprocal resilience, protocol-first.
 Acorn should make it simple for people and communities to help each other stay
 recoverable without surrendering secrets to each other or to a central provider.
 
+## Product rationale
+
+People increasingly depend on platforms, services, devices, and applications
+to hold the things that matter to them. That convenience often comes with a
+hidden cost: identity, records, value, and recovery become inseparable from a
+particular provider or product.
+
+The user need is not to reject useful services or become an infrastructure
+operator. It is to remain able to change them. A platform may change its terms
+or disappear. A service may become unavailable or unaffordable. A device may be
+lost, damaged, or replaced. An application may be abandoned, redesigned, or
+discontinued. In each case, the user should be able to carry their identity,
+private records, funds, and recovery path to another compatible environment.
+
+Acorn exists to make that continuity practical. It gives applications a
+user-controlled protocol component instead of making the application the sole
+owner of the user's system of record. The application can provide the
+experience, workflow, support, and service surface; Acorn preserves the
+portable protocol state underneath.
+
+This creates a more useful relationship between users and providers:
+
+- users can choose services without being permanently trapped by them;
+- trusted operators can provide execution, availability, and support without
+  owning the user's keys or plaintext records;
+- communities can help maintain continuity across replaceable relays,
+  devices, and operators;
+- applications can compete on experience while remaining interoperable at the
+  protocol layer.
+
+The goal is practical independence, not isolation. Acorn should make it easier
+to use dependable services while preserving a credible path to recovery,
+migration, and replacement when those services no longer meet the user's
+needs.
+
 ## Language and roots
 
 Acorn's language has become calmer over time. Earlier descriptions leaned more
-heavily on terms like self-sovereignty, data havens, and infrastructure
+heavily on terms like radical independence, data havens, and infrastructure
 independence. Those ideas helped shape the architecture, but they can also
 sound ideological or unnecessarily alarming to people who simply need
 dependable tools for funds and records.
