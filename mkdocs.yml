@@ -35,8 +35,17 @@ theme:
 
 nav:
   - Home: index.md
-  - How Acorn Works: how-acorn-works.md
-  - Nostr-Native Approach: nostr-native-approach.md
+  - Understand Acorn:
+      - How Acorn Works: how-acorn-works.md
+      - User-Controlled Funds and Records: user-controlled-funds-and-records.md
+      - User-Controlled Architecture: user-controlled-architecture.md
+      - Nostr-Native Approach: nostr-native-approach.md
+  - Continuity:
+      - Recovery and Continuity: recovery-and-continuity.md
+      - Relay Availability and Reciprocal Resilience: relay-availability-and-reciprocal-resilience.md
+  - Use Acorn:
+      - Deployment and Trust: deployment-and-trust.md
+      - Project Status: project-status.md
 
 markdown_extensions:
   - attr_list

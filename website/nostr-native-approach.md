@@ -148,6 +148,8 @@ keeps mint authority distinct from wallet control, separates component identity
 from human identity, and makes recovery part of the protocol model rather than
 an afterthought.
 
+[Continue to recovery and continuity](recovery-and-continuity.md){ .md-button .md-button--primary }
+[Explore the user-controlled architecture](user-controlled-architecture.md){ .md-button }
 [Return to How Acorn Works](how-acorn-works.md){ .md-button }
 [View the source repository](https://github.com/trbouma/safebox-acorn){ .md-button }
 

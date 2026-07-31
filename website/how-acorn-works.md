@@ -212,7 +212,8 @@ idempotency, failure injection, clean async lifecycle handling, package
 validation, FreeBSD deployment, and release automation. Acorn should currently
 be treated as developer-stage software and used only with small test balances.
 
-[Explore the Nostr-native approach](nostr-native-approach.md){ .md-button .md-button--primary }
+[Explore user-controlled funds and records](user-controlled-funds-and-records.md){ .md-button .md-button--primary }
+[Explore the user-controlled architecture](user-controlled-architecture.md){ .md-button }
 [Return to the Acorn home page](index.md){ .md-button }
 [View the source repository](https://github.com/trbouma/safebox-acorn){ .md-button }
 

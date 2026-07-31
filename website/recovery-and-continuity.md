@@ -1,0 +1,128 @@
+---
+title: Recovery and Continuity
+description: What an Acorn wallet needs for recovery and how continuity survives changes in applications, devices, operators, and infrastructure.
+---
+
+# Recovery and continuity
+
+Recovery is not merely regaining access to an application account. For Acorn,
+recovery means restoring the cryptographic identity of the wallet and locating
+enough relay-backed state to continue operating its funds and records.
+
+The practical recovery model is:
+
+```text
+key material + location of encrypted state = component continuity
+```
+
+## What must be recovered
+
+An Acorn recovery bundle contains:
+
+| Item | Purpose | Sensitivity |
+| --- | --- | --- |
+| Seed phrase | Derives the wallet keypair and component identity. | Secret |
+| `nsec` | Direct encoding of the Nostr private key. | Secret |
+| Home relay | Identifies the primary location of relay-backed wallet state. | Not normally secret |
+
+The seed phrase and `nsec` are alternative paths to the same private-key
+authority. Either may be sufficient to control the wallet when its state is
+available. They must never be pasted into chats, issue trackers, logs, or
+untrusted websites.
+
+## What recovery restores
+
+Restoring the keypair restores the Acorn component identity. That identity can
+then locate, verify, decrypt, and continue compatible wallet state.
+
+Recovery may restore:
+
+- encrypted wallet metadata;
+- private records visible on the selected relay;
+- Cashu proof state stored by the wallet;
+- transaction history and operational cursors; and
+- configuration preferences stored as recoverable records.
+
+Recovery does not prove who the human operator is. It also does not make stale
+ecash proofs spendable: the issuing mint remains authoritative about whether a
+proof is valid or spent.
+
+## Recovery across environments
+
+The same Acorn wallet can be restored into another compatible environment:
+
+```text
+lost device       -> replacement device
+retired app       -> compatible application
+failed provider   -> another trusted operator
+unavailable host  -> another FreeBSD jail or appliance
+failed relay      -> verified replica or alternate home relay
+```
+
+The surrounding software can change while the wallet lineage continues. This
+is why the continuity boundary is the keypair and recoverable protocol state,
+not a particular process or screen.
+
+## Availability is part of recovery
+
+Perfect key backup is not enough if the only copy of the encrypted state is
+unavailable. A home relay tells Acorn where the wallet currently lives, but it
+should be a pointer rather than an irreplaceable destination.
+
+Acorn therefore treats replication and migration as recovery concerns:
+
+- signed encrypted events can be copied to another suitable relay;
+- a target should be read back and verified before it is trusted;
+- another relay can become the new home after verification; and
+- particularly sensitive deployments can use private or firewalled relays.
+
+Relay replication protects event availability. It does not reconcile divergent
+proof histories or determine whether ecash is spendable. Proof-state recovery
+must include mint verification.
+
+## Trusted operators and recovery
+
+A provider may run Acorn for a user and make recovery straightforward. That is
+a valid model when the trust boundary is clear.
+
+If the operator can access the private key, the user is delegating operational
+authority to that operator. If signing occurs locally or inside constrained
+hardware, the operator may provide the service surface without holding the
+full authority boundary.
+
+In either case, a user-controlled deployment should have a credible answer to:
+
+> Can this wallet continue if the current application or operator disappears?
+
+## Safe recovery practice
+
+- Keep recovery material offline or in a trusted secrets manager.
+- Maintain more than one protected copy in locations that do not share the
+  same physical failure risk.
+- Record the home relay alongside the key material.
+- Test recovery with small balances before relying on it.
+- Verify replicated state before changing the home relay.
+- Treat any exposed seed phrase or `nsec` as a potential wallet compromise.
+- Do not assume that a relay backup replaces mint proof verification.
+
+Acorn's CLI can display recovery material only after an explicit warning and
+confirmation. This is intentionally a sensitive operation, not routine status
+output.
+
+## Current boundary
+
+Acorn has demonstrated recovery interoperability between its CLI and the
+Safebox web application. The project remains developer-stage software. Recovery
+behavior, configuration safety, transfer interruption handling, and package
+validation remain release gates, so only small test balances should be used.
+
+[Explore relay availability and reciprocal resilience](relay-availability-and-reciprocal-resilience.md){ .md-button .md-button--primary }
+[Return to the Nostr-native approach](nostr-native-approach.md){ .md-button }
+
+## Reference basis
+
+- [Recovery Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RECOVERY-SPEC.md)
+- [Relay Migration Runbook](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-MIGRATION-RUNBOOK.md)
+- [Proof-State and Relay Consistency](https://github.com/trbouma/safebox-acorn/blob/main/docs/PROOF-STATE-RELAY-CONSISTENCY.md)
+- [CLI Contract](https://github.com/trbouma/safebox-acorn/blob/main/docs/CLI-CONTRACT.md)
+
