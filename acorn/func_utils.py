@@ -127,7 +127,6 @@ def name_to_hex(name):
     return hex_string
 
 def recover_nsec_from_seed(seed_phrase: str, legacy: bool = False):
-    mnemo = Mnemonic("english")
     seed = Bip39SeedGenerator(seed_phrase).Generate()
     if legacy:
         bip32_ctx = Bip32Slip10Ed25519.FromSeed(seed)
@@ -142,6 +141,47 @@ def recover_nsec_from_seed(seed_phrase: str, legacy: bool = False):
     bech32_address = bech32_encode("nsec", data_5bit)
 
     return bech32_address
+
+
+def generate_seed_phrase_and_nsec(strength: int = 128) -> tuple[str, str]:
+    """Generate a BIP39 phrase and the Acorn nsec deterministically derived from it."""
+
+    seed_phrase = Mnemonic("english").generate(strength=strength)
+    return seed_phrase, recover_nsec_from_seed(seed_phrase)
+
+
+def seed_phrase_and_nsec_from_entropy(entropy_hex: str) -> tuple[str, str]:
+    """Derive a BIP39 phrase and Acorn nsec from 256 bits of external entropy.
+
+    ``entropy_hex`` is interpreted directly as 32 bytes of entropy. It is not
+    hashed, stretched, or otherwise transformed before BIP39 encoding.
+    """
+
+    normalized = str(entropy_hex).strip()
+    if len(normalized) != 64:
+        raise ValueError("entropy must contain exactly 64 hexadecimal characters (32 bytes)")
+    try:
+        entropy = bytes.fromhex(normalized)
+    except ValueError as exc:
+        raise ValueError("entropy must contain only hexadecimal characters") from exc
+
+    seed_phrase = Mnemonic("english").to_mnemonic(entropy)
+    return seed_phrase, recover_nsec_from_seed(seed_phrase)
+
+
+def seed_phrase_matches_nsec(seed_phrase: str | None, nsec: str) -> bool:
+    """Return whether a stored recovery phrase reproduces the active private key."""
+
+    if not seed_phrase:
+        return False
+    try:
+        expected_nsec = Keys(priv_k=nsec).private_key_bech32()
+        return any(
+            recover_nsec_from_seed(seed_phrase, legacy=legacy) == expected_nsec
+            for legacy in (False, True)
+        )
+    except (TypeError, ValueError, IndexError, binascii.Error):
+        return False
 
 
 

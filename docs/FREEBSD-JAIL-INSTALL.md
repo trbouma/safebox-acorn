@@ -306,6 +306,8 @@ The command:
 - offers to display existing recovery material;
 - prompts for an `nsec`, home relay, and home mint;
 - generates a new key when the `nsec` is left blank;
+- optionally accepts externally generated 256-bit entropy through a hidden
+  prompt and creates a recoverable 24-word BIP39 phrase;
 - normalizes a relay without a scheme to `wss://`;
 - normalizes a mint without a scheme to `https://`.
 
@@ -319,6 +321,21 @@ acorn init \
 
 Do not put a real `nsec` directly in shell history. Enter it at the prompt or
 use a root-readable provisioning mechanism appropriate to the deployment.
+
+To initialize from entropy produced by an external CSPRNG or hardware device:
+
+```sh
+acorn init --entropy \
+  --homerelay wss://relay.example.com \
+  --mint https://mint.example.com
+```
+
+Enter the 64-character hexadecimal value twice at the hidden prompt. Do not put
+it directly in a shell command, environment variable, jail configuration, or
+image-building log. Acorn converts it into a recoverable 24-word BIP39 phrase;
+back up that phrase and the home relay before funding the wallet. See
+[External Entropy Initialization](EXTERNAL-ENTROPY-INITIALIZATION.md) for the
+complete derivation and security contract.
 
 The default configuration is:
 
@@ -676,4 +693,3 @@ third-party relay test before trusting a new relay with meaningful funds.
 - [Roadmap to Releasability](./ROADMAP-TO-RELEASABILITY.md)
 - [Recovery Specification](./RECOVERY-SPEC.md)
 - [Relay Suitability Ledger](./RELAY-SUITABILITY-LEDGER.md)
-

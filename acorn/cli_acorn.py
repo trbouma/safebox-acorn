@@ -8,9 +8,17 @@ def _import_acorn_runtime():
     from acorn.acorn import Acorn
     from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
     from acorn.lightning import lightning_address_pay
-    from acorn.func_utils import recover_nsec_from_seed
+    from acorn.func_utils import recover_nsec_from_seed, seed_phrase_and_nsec_from_entropy
 
-    return Acorn, nostrProfile, SafeboxItem, SafeboxRecord, lightning_address_pay, recover_nsec_from_seed
+    return (
+        Acorn,
+        nostrProfile,
+        SafeboxItem,
+        SafeboxRecord,
+        lightning_address_pay,
+        recover_nsec_from_seed,
+        seed_phrase_and_nsec_from_entropy,
+    )
 
 
 (
@@ -20,6 +28,7 @@ def _import_acorn_runtime():
     SafeboxRecord,
     lightning_address_pay,
     recover_nsec_from_seed,
+    seed_phrase_and_nsec_from_entropy,
 ) = _import_acorn_runtime()
 from datetime import datetime, timedelta
 import json
@@ -100,10 +109,11 @@ def _config_for_display(config: dict) -> dict:
 
 
 def _format_recovery_material(recovery: dict) -> str:
+    seed_phrase = recovery.get("seed_phrase") or "unavailable (back up the nsec)"
     return "\n".join(
         [
             f"home_relay: {recovery.get('home_relay')}",
-            f"seed_phrase: {recovery.get('seed_phrase')}",
+            f"seed_phrase: {seed_phrase}",
             f"nsec: {recovery.get('nsec')}",
         ]
     )
@@ -434,14 +444,31 @@ def info(ctx, json_output):
 @click.command(help="initialize a new acorn wallet")
 
 @click.option("--nsec", "-n", default=None, help=NSEC_HELP)
+@click.option(
+    "--entropy",
+    "use_entropy",
+    is_flag=True,
+    help="Initialize from externally generated 256-bit entropy entered at a hidden prompt.",
+)
 @click.option("--homerelay","-h", default=None, help=HOME_RELAY_HELP)
 @click.option("--mint", "-m", default=None, help="home mint")
 @click.option("--keepkey","-k", is_flag=True, show_default=True, default=False, help="Keep existing key(nsec).")
-@click.option("--longseed","-l", is_flag=True, show_default=True, default=False, help="Generate long seed of 24 words")
 @click.option("--force", "-f", is_flag=True, show_default=True, default=False, help="Bypass safety confirmations and use defaults for omitted values.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+@click.option(
+    "--include-recovery",
+    is_flag=True,
+    help="Include the seed phrase and nsec in JSON output. Requires --json.",
+)
 
-def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
+def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, include_recovery):
+    if include_recovery and not json_output:
+        raise click.ClickException("--include-recovery requires --json")
+    if use_entropy and nsec:
+        raise click.ClickException("--entropy and --nsec are mutually exclusive")
+    if use_entropy and keepkey:
+        raise click.ClickException("--entropy and --keepkey are mutually exclusive")
+
     existing_nsec = config_obj.get("nsec")
     existing_home_relay = config_obj.get("home_relay")
     config_created = not CONFIG_FILE_EXISTED
@@ -498,21 +525,45 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
 
         if not force and click.confirm("Display existing recovery/bootstrap material before continuing?", default=False):
             click.echo("Sensitive recovery material:")
-            click.echo(f"home_relay: {existing_home_relay}")
+            existing_seed_phrase = None
             if existing_acorn:
                 try:
                     asyncio.run(existing_acorn.load_data())
-                    click.echo(f"seed_phrase: {existing_acorn.seed_phrase}")
+                    existing_seed_phrase = existing_acorn.seed_phrase
                 except Exception:
-                    click.echo("seed_phrase: unavailable")
-            click.echo(f"nsec: {existing_nsec}")
+                    pass
+            click.echo(
+                _format_recovery_material(
+                    {
+                        "home_relay": existing_home_relay,
+                        "seed_phrase": existing_seed_phrase,
+                        "nsec": existing_nsec,
+                    }
+                )
+            )
 
         if not force and not click.confirm("Initialize a new wallet and replace the local Acorn config?", default=False):
             raise click.ClickException("Initialization cancelled.")
 
     prompted_nsec = nsec
+    supplied_seed_phrase = None
+    key_source = "imported_nsec" if nsec else "acorn_generated"
+    if use_entropy:
+        entropy_hex = click.prompt(
+            "256-bit entropy (64 hexadecimal characters)",
+            hide_input=True,
+            confirmation_prompt="Repeat 256-bit entropy",
+            err=True,
+        )
+        try:
+            supplied_seed_phrase, prompted_nsec = seed_phrase_and_nsec_from_entropy(entropy_hex)
+        except ValueError as exc:
+            raise click.ClickException(f"Invalid entropy: {exc}") from exc
+        key_source = "external_entropy"
     if keepkey and not prompted_nsec:
         prompted_nsec = existing_nsec
+        if prompted_nsec:
+            key_source = "existing_nsec"
     generated_nsec = False
     if not prompted_nsec and not (force or json_output):
         prompted_nsec = click.prompt(
@@ -523,6 +574,7 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
     if prompted_nsec and _looks_like_relay(prompted_nsec) and not homerelay:
         homerelay = prompted_nsec
         prompted_nsec = ""
+        key_source = "acorn_generated"
         if not json_output:
             click.echo("Relay URL detected; using it as the home relay and generating a new nsec.")
     if prompted_nsec:
@@ -530,7 +582,10 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
             Keys(priv_k=prompted_nsec)
         except Exception as exc:
             raise click.ClickException(f"Invalid nsec: {exc}") from exc
-        keepkey = True
+        if supplied_seed_phrase is None and key_source == "acorn_generated":
+            key_source = "imported_nsec"
+        keepkey = supplied_seed_phrase is None
+        generated_nsec = supplied_seed_phrase is not None
     else:
         prompted_nsec = Keys().private_key_bech32()
         keepkey = False
@@ -565,7 +620,10 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
     acorn_obj = Acorn(nsec=prompted_nsec, relays=[home_relay], mints=init_mints, home_relay=home_relay, logging_level=LOGGING_LEVEL)
 
     try:
-        initialized_nsec = asyncio.run(acorn_obj.create_instance(keepkey=keepkey, longseed=longseed))
+        create_kwargs = {"keepkey": keepkey}
+        if supplied_seed_phrase is not None:
+            create_kwargs["seed_phrase"] = supplied_seed_phrase
+        initialized_nsec = asyncio.run(acorn_obj.create_instance(**create_kwargs))
         asyncio.run(acorn_obj.load_data())
     except RuntimeError as exc:
         recovery = {
@@ -574,26 +632,27 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
             "nsec": acorn_obj.privkey_bech32,
         }
         if json_output:
-            _emit_json(
-                {
-                    "ok": False,
-                    "reason": "relay_wallet_readback_failed",
-                    "message": (
-                        "Acorn could not verify the wallet record on the selected home relay. "
-                        "The relay may reject this event kind, delay indexing, require authentication, "
-                        "or be incompatible with Acorn wallet storage."
-                    ),
-                    "relay": home_relay,
-                    "home_mint": home_mint,
-                    "force": force,
-                    "confirmations_completed": bool(force or not existing_wallet_config),
-                    "local_config_replaced": False,
-                    "config_path": file_path,
-                    "config_created": config_created,
-                    "error": str(exc),
-                    "recovery": recovery,
-                }
-            )
+            result = {
+                "ok": False,
+                "reason": "relay_wallet_readback_failed",
+                "message": (
+                    "Acorn could not verify the wallet record on the selected home relay. "
+                    "The relay may reject this event kind, delay indexing, require authentication, "
+                    "or be incompatible with Acorn wallet storage."
+                ),
+                "relay": home_relay,
+                "home_mint": home_mint,
+                "force": force,
+                "confirmations_completed": bool(force or not existing_wallet_config),
+                "local_config_replaced": False,
+                "config_path": file_path,
+                "config_created": config_created,
+                "error": str(exc),
+                "recovery_included": include_recovery,
+            }
+            if include_recovery:
+                result["recovery"] = recovery
+            _emit_json(result)
             return
 
         click.echo()
@@ -608,9 +667,16 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
         click.echo()
         click.echo("Your local config was not replaced.")
         click.echo()
-        click.echo("Recovery material for this attempted wallet:")
-        click.echo(_format_recovery_material(recovery))
-        click.echo()
+        if not force and click.confirm(
+            "Display recovery material for this attempted wallet?",
+            default=False,
+        ):
+            click.echo("Sensitive recovery material:")
+            click.echo(_format_recovery_material(recovery))
+            click.echo()
+        else:
+            click.echo("Recovery material was not displayed or saved locally.")
+            click.echo()
         raise click.ClickException(
             "Initialization was not completed. Try another relay, or retry this relay if you expect delayed indexing."
         ) from exc
@@ -622,32 +688,34 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
     write_config()
 
     if json_output:
-        _emit_json(
-            {
-                "ok": True,
-                "replaced_existing": bool(existing_wallet_config),
-                "force": force,
-                "confirmations_completed": bool(force or not existing_wallet_config),
-                "generated_nsec": generated_nsec,
-                "config_path": file_path,
-                "config_created": config_created,
-                "npub": acorn_obj.pubkey_bech32,
-                "pubkey": acorn_obj.pubkey_hex,
+        result = {
+            "ok": True,
+            "replaced_existing": bool(existing_wallet_config),
+            "force": force,
+            "confirmations_completed": bool(force or not existing_wallet_config),
+            "generated_nsec": generated_nsec,
+            "key_source": key_source,
+            "config_path": file_path,
+            "config_created": config_created,
+            "npub": acorn_obj.pubkey_bech32,
+            "pubkey": acorn_obj.pubkey_hex,
+            "home_relay": home_relay,
+            "home_mint": home_mint,
+            "recovery_included": include_recovery,
+        }
+        if include_recovery:
+            result["recovery"] = {
                 "home_relay": home_relay,
-                "home_mint": home_mint,
-                "recovery": {
-                    "home_relay": home_relay,
-                    "seed_phrase": acorn_obj.seed_phrase,
-                    "nsec": acorn_obj.privkey_bech32,
-                },
+                "seed_phrase": acorn_obj.seed_phrase,
+                "nsec": acorn_obj.privkey_bech32,
             }
-        )
+        _emit_json(result)
         return
 
     click.echo("Acorn wallet initialized.")
     click.echo(f"config: {file_path}")
     click.echo(f"npub: {acorn_obj.pubkey_bech32}")
-    if force or click.confirm("Display new recovery/bootstrap material now?", default=True):
+    if not force and click.confirm("Display new recovery/bootstrap material now?", default=True):
         click.echo("Sensitive recovery material:")
         click.echo(
             _format_recovery_material(
@@ -658,6 +726,8 @@ def init(nsec, keepkey, longseed, homerelay, mint, force, json_output):
                 }
             )
         )
+    elif force:
+        click.echo("Recovery material was not displayed. Use 'acorn set --show-recovery' when ready.")
     
 
 
@@ -1542,7 +1612,7 @@ def balance(json_output, show_mints):
         asyncio.run(acorn_obj.load_data())
     except RuntimeError as exc:
         msg = str(exc)
-        if "No wallet data on" in msg:
+        if "No wallet data" in msg:
             raise click.ClickException(
                 f"{msg} Run 'acorn recover \"<seed phrase>\" --homerelay <relay>' with the relay that holds your wallet events."
             )
@@ -1886,17 +1956,19 @@ def recover(seedphrase, homerelay, legacy):
             asyncio.run(wallet_obj.load_data())
         except RuntimeError as exc:
             msg = str(exc)
-            if "No wallet data on" in msg:
+            if "No wallet data" in msg:
                 raise click.ClickException(
                     f"{msg} Try again with --homerelay set to the relay where this wallet was created."
                 )
             raise click.ClickException(f"Unable to verify recovered wallet data: {msg}")
 
-        click.echo(f"Recover seed phrase {nsec}")
         NSEC = nsec
         config_obj['home_relay'] = home_relay
         config_obj['nsec'] = nsec
         write_config()
+        click.echo("Acorn wallet recovered.")
+        click.echo(f"npub: {wallet_obj.pubkey_bech32}")
+        click.echo(f"home_relay: {home_relay}")
 
 @click.command("replicate", help="replicate this wallet's signed events to a target relay")
 @click.option('--target', '-t', required=True, help='target relay to copy wallet events to')

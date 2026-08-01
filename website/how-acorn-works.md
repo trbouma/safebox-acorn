@@ -33,7 +33,7 @@ of the Acorn component or wallet lineage.
 ```text
 private key (nsec) -> signing, decryption, and authorization
 public key (npub)  -> addressing, verification, and encryption to Acorn
-seed phrase        -> recovery material for restoring the keypair
+seed phrase        -> recovery material when Acorn generated or derived the wallet key
 ```
 
 The public/private keypair provides two important properties:
@@ -162,10 +162,12 @@ Practical recovery requires two things:
 key material + location of relay-backed state
 ```
 
-The private key or its seed phrase restores the Acorn protocol identity. The
-home relay tells the recovered component where to locate its encrypted wallet
-events. From there, Acorn can reconstruct the wallet state available on that
-relay.
+The private key—or the original seed phrase when Acorn generated or derived the
+wallet key—restores the Acorn protocol identity. This includes the 24-word
+phrase created from external entropy. An imported `nsec` has no Acorn-generated
+seed phrase and must be backed up directly. The home relay tells
+the recovered component where to locate its encrypted wallet events. From
+there, Acorn can reconstruct the wallet state available on that relay.
 
 Recovery material must be protected carefully. Anyone with the private key or
 seed phrase may be able to control the associated wallet and records.

@@ -84,6 +84,13 @@ def relay_suitable(scenario: dict, capability: str, **details) -> None:
     )
 
 
+def start_relay_suitability(scenario: dict) -> None:
+    """Start timing a relay scenario before its first live capability check."""
+
+    result = _relay_result(scenario["relay"])
+    result["scenario"] = scenario["name"]
+
+
 def relay_unsuitable(relay: str, capability: str, reason: str, **details) -> None:
     relay = normalize_relay(relay)
     UNSUITABLE_RELAYS[relay] = f"{capability}: {reason}"

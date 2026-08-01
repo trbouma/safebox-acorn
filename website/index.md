@@ -77,7 +77,7 @@ Acorn component or wallet lineage:
 ```text
 private key (nsec) -> signing, decryption, and authorization
 public key (npub)  -> addressing, verification, and encryption to Acorn
-seed phrase        -> recovery material for restoring the keypair
+seed phrase        -> recovery material when Acorn generated or derived the wallet key
 ```
 
 The keypair does not claim to be the person. Human-readable names,

@@ -88,7 +88,7 @@ continuity and cryptographic authority over its controlled funds and records.
 ```text
 private key -> signing, decryption, and authorization
 public key  -> addressing, verification, and encryption to Acorn
-seed phrase -> recovery material for restoring the keypair
+seed phrase -> recovery material when Acorn generated or derived the wallet key
 ```
 
 The keypair allows another compatible Acorn environment to continue the same

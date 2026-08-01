@@ -20,7 +20,6 @@ from hotel_names import hotel_names
 from binascii import unhexlify
 import hashlib
 import signal, sys, string, cbor2, base64,os
-from bip_utils import Bip39SeedGenerator, Bip32Slip10Ed25519, Bip32Slip10Secp256k1
 import contextlib
 
 
@@ -54,7 +53,15 @@ from acorn.models import TokenV4, TokenV4Token
 from acorn.models import WalletConfig, WalletRecord,WalletReservedRecords
 from acorn.models import TxHistory, SafeboxRecord, ParseRecord, EncryptionParms, EncryptionResult, OriginalRecordTransfer
 
-from acorn.func_utils import generate_name_from_hex, name_to_hex, generate_access_key_from_hex,split_proofs_instance
+from acorn.func_utils import (
+    generate_access_key_from_hex,
+    generate_name_from_hex,
+    generate_seed_phrase_and_nsec,
+    name_to_hex,
+    recover_nsec_from_seed,
+    seed_phrase_matches_nsec,
+    split_proofs_instance,
+)
 
 from python_blossom import BlossomClient, Blob as BlossomBlob
 from tempfile import NamedTemporaryFile
@@ -151,7 +158,7 @@ class Acorn:
     pubkey_hex: str
     privkey_hex: str
     privkey_bech32: str 
-    seed_phrase: str = ""  
+    seed_phrase: str | None = None
     access_key: str =""
     pqc_self_secret: str = None
     home_relay: str
@@ -270,6 +277,7 @@ class Acorn:
             self.home_relay = home_relay
             self.replicate = replicate
             self.wallet_config = None
+            self.seed_phrase = None
             self.handle = generate_name_from_hex(self.pubkey_hex)
             access_key_digest.update(self.privkey_hex.encode())
             access_key_hash = access_key_digest.hexdigest()
@@ -698,7 +706,15 @@ class Acorn:
                     # print(f"pubkey: {Keys(priv_k=each[1]).public_key_hex()}")
                     pass
                 if each[0] == "seedphrase":
-                    self.seed_phrase = each[1]
+                    candidate_seed_phrase = each[1]
+                    if seed_phrase_matches_nsec(candidate_seed_phrase, self.privkey_bech32):
+                        self.seed_phrase = candidate_seed_phrase
+                    else:
+                        self.seed_phrase = None
+                        self.logger.warning(
+                            "op=load_data status=invalid_recovery_phrase "
+                            "reason=phrase_does_not_match_active_key"
+                        )
                 if each[0] == "local_currency":
                     self.local_currency = each[1]
                 if each[0] == "user_record":
@@ -753,41 +769,19 @@ class Acorn:
             amount -= power
         return sorted(powers)
     
-    def create_profile(self, nostr_profile_create: bool=False, keepkey:bool=False, longseed:bool=False):
+    def create_profile(self, nostr_profile_create: bool=False, keepkey:bool=False):
         init_index = {}
         wallet_info = {}
         n_profile = {}
-        mnemo = Mnemonic("english")
-
+        seed_phrase = self.seed_phrase
         if keepkey==False:
-            if longseed:
-                #TODO need to decide if to keep 24 seed phrase option.
-                seed_phrase = mnemo.generate(strength=128)
-                seed = Bip39SeedGenerator(seed_phrase).Generate()
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeed(seed)
-                seed_private_key_hex = bip32_ctx.PrivateKey().Raw().ToBytes().hex()
-                self.logger.debug(f"seed private key: {seed_private_key_hex}")                
-
-                self.k= Keys(priv_k=seed_private_key_hex)
-                self.pubkey_bech32  =   self.k.public_key_bech32()
-                self.pubkey_hex     =   self.k.public_key_hex()
-                self.privkey_hex    =   self.k.private_key_hex()
-                seed_phrase = mnemo.to_mnemonic(bytes.fromhex(self.privkey_hex))
-
-            else:
-                # This to generate a 32 byte private key from a 12 word seed phrase
-                # Need to store because it cannot be derives from the resulting private key
-                
-                seed_phrase = mnemo.generate(strength=128)
-                seed = Bip39SeedGenerator(seed_phrase).Generate()
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeed(seed)
-                seed_private_key_hex = bip32_ctx.PrivateKey().Raw().ToBytes().hex()
-                self.logger.debug(f"seed private key: {seed_private_key_hex}")
-                
-                self.k= Keys(priv_k=seed_private_key_hex)
-                self.pubkey_bech32  =   self.k.public_key_bech32()
-                self.pubkey_hex     =   self.k.public_key_hex()
-                self.privkey_hex    =   self.k.private_key_hex()
+            seed_phrase, generated_nsec = generate_seed_phrase_and_nsec()
+            self.k = Keys(priv_k=generated_nsec)
+            self.pubkey_bech32 = self.k.public_key_bech32()
+            self.privkey_bech32 = self.k.private_key_bech32()
+            self.pubkey_hex = self.k.public_key_hex()
+            self.privkey_hex = self.k.private_key_hex()
+            self.seed_phrase = seed_phrase
             
 
         
@@ -922,41 +916,24 @@ class Acorn:
             "relays": result_relays,
         }
 
-    async def create_instance(self, keepkey:bool=False, longseed:bool=False, name="wallet"):
+    async def create_instance(
+        self,
+        keepkey: bool = False,
+        name: str = "wallet",
+        seed_phrase: str | None = None,
+    ):
         out_msg = "This is another instance"
-        mnemo = Mnemonic("english")
         access_key_digest = hashlib.sha256()
         if keepkey==False:
-            if longseed:
-                #TODO need to decide if to keep 24 seed phrase option.
-                seed_phrase = mnemo.generate(strength=128)
-                seed = Bip39SeedGenerator(seed_phrase).Generate()
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeed(seed)
-                seed_private_key_hex = bip32_ctx.PrivateKey().Raw().ToBytes().hex()
-                self.logger.debug(f"seed private key: {seed_private_key_hex}")                
-
-                self.k= Keys(priv_k=seed_private_key_hex)
-                self.pubkey_bech32  =   self.k.public_key_bech32()
-                self.privkey_bech32 =   self.k.private_key_bech32()
-                self.pubkey_hex     =   self.k.public_key_hex()
-                self.privkey_hex    =   self.k.private_key_hex()
-                seed_phrase = mnemo.to_mnemonic(bytes.fromhex(self.privkey_hex))
-
+            if seed_phrase is None:
+                seed_phrase, generated_nsec = generate_seed_phrase_and_nsec()
             else:
-                # This to generate a 32 byte private key from a 12 word seed phrase
-                # Need to store because it cannot be derives from the resulting private key
-                
-                seed_phrase = mnemo.generate(strength=128)
-                seed = Bip39SeedGenerator(seed_phrase).Generate()
-                bip32_ctx = Bip32Slip10Secp256k1.FromSeed(seed)
-                seed_private_key_hex = bip32_ctx.PrivateKey().Raw().ToBytes().hex()
-                self.logger.debug(f"seed private key: {seed_private_key_hex}")
-                
-                self.k= Keys(priv_k=seed_private_key_hex)
-                self.pubkey_bech32  =   self.k.public_key_bech32()
-                self.privkey_bech32 =   self.k.private_key_bech32()
-                self.pubkey_hex     =   self.k.public_key_hex()
-                self.privkey_hex    =   self.k.private_key_hex()
+                generated_nsec = recover_nsec_from_seed(seed_phrase)
+            self.k = Keys(priv_k=generated_nsec)
+            self.pubkey_bech32 = self.k.public_key_bech32()
+            self.privkey_bech32 = self.k.private_key_bech32()
+            self.pubkey_hex = self.k.public_key_hex()
+            self.privkey_hex = self.k.private_key_hex()
             
             nut_key = Keys()
             self.seed_phrase = seed_phrase
@@ -973,7 +950,7 @@ class Acorn:
             access_key_digest.update(self.privkey_hex.encode())
             access_key_hash = access_key_digest.hexdigest()
             self.access_key = generate_access_key_from_hex(access_key_hash)
-            self.logger.debug(f"acorn tags: {self.acorn_tags} npub: {self.pubkey_bech32}")
+            self.logger.debug("op=create_instance status=wallet_metadata_created npub=%s", self.pubkey_bech32)
             await self.set_wallet_info(label=name,label_info=json.dumps(self.acorn_tags))
             # await self.set_wallet_config()
         else:
@@ -985,13 +962,11 @@ class Acorn:
                 if  wallet_config:
                     return self.privkey_bech32
                 else:
-                    seed_phrase = mnemo.to_mnemonic(bytes.fromhex(self.privkey_hex))
                     nut_key = Keys()
                     self.acorn_tags = [ [ "balance", "0", "sat" ],
                                 [ "privkey", nut_key.private_key_hex() ], 
                                 [ "mint", self.mints[0]],
                                 [ "name", name ],
-                                ["seedphrase",seed_phrase],
                                 ["owner",self.pubkey_bech32],
                                 ["local_currency", self.local_currency]
                             ]
@@ -999,7 +974,11 @@ class Acorn:
                     access_key_digest.update(self.privkey_hex.encode())
                     access_key_hash = access_key_digest.hexdigest()
                     self.access_key = generate_access_key_from_hex(access_key_hash)
-                    self.logger.debug(f"acorn tags: {self.acorn_tags} npub: {self.pubkey_bech32}")
+                    self.seed_phrase = None
+                    self.logger.debug(
+                        "op=create_instance status=imported_key_metadata_created npub=%s",
+                        self.pubkey_bech32,
+                    )
                     await self.set_wallet_info(label=name,label_info=json.dumps(self.acorn_tags))
                     
 
@@ -1012,34 +991,23 @@ class Acorn:
 
     def get_profile(self, name="wallet"):
         mints = []
-        mnemo = Mnemonic("english")
+        lock_pubkey = None
         try:
             for each in self.acorn_tags:
                 if each[0] == "balance":
-                    balance_amount = int(each[1])
-                    balance_unit = each[2]
+                    self.balance = int(each[1])
+                    self.unit = each[2]
                 elif each[0] == "privkey":
-                    lock_privkey = each[1]
                     lock_pubkey = Keys(each[1]).public_key_hex()
                 elif each[0] == "mint":
                     mints.append(each[1])
                 elif each[0] == "name":
                     name = each[1]
 
-            known_mints_cat=""
-
-            for index, (key, value) in enumerate(self.known_mints.items()):
-                known_mints_cat +=f"\n{index+1}. {value} {key}"
-
             out_string = f"""   \nnpub: {self.pubkey_bech32}
-                                \nnsec: {self.privkey_bech32} 
-                                \nnsechex: {self.privkey_hex} 
                                 \npubhex: {self.pubkey_hex}  
                                 \nhandle: {self.handle}   
-                                \naccess key: {self.access_key}  
                                 \nowner: {self.owner}                     
-                                \nlock privkey: {lock_privkey}
-                                \nseed phrase: {self.seed_phrase}
                                 \nlock pubkey: {lock_pubkey}
                                 \nlocal currency: {self.local_currency}
                                 \nhome mints: {mints}
@@ -1054,14 +1022,6 @@ class Acorn:
         except (ValueError, TypeError, KeyError) as exc:
             self.logger.warning("op=get_profile status=missing_profile error=%s", exc)
             raise RuntimeError("No profile on relay")
-            out_string = f"No profile - seed phrase: {mnemo.to_mnemonic(bytes.fromhex(self.privkey_hex))}"
-        return out_string
-
-
-
-
-
-
         return out_string
     
     def get_instance(self):

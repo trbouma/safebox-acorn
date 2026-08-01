@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
 from pathlib import Path
 from unittest.mock import AsyncMock
@@ -8,6 +9,7 @@ from unittest.mock import AsyncMock
 import pytest
 import yaml
 from click.testing import CliRunner
+from monstr.encrypt import Keys
 
 
 def _load_cli(monkeypatch, tmp_path):
@@ -172,6 +174,238 @@ def test_format_recovery_material(monkeypatch, tmp_path):
         "seed_phrase: alpha beta gamma",
         "nsec: nsec1example",
     ]
+
+
+def test_format_recovery_material_marks_imported_seed_unavailable(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_recovery_material(
+        {
+            "home_relay": "wss://relay.example.com",
+            "seed_phrase": None,
+            "nsec": "nsec1example",
+        }
+    )
+
+    assert "seed_phrase: unavailable (back up the nsec)" in rendered
+
+
+def test_init_help_does_not_offer_broken_longseed_option(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.init, ["--help"])
+
+    assert result.exit_code == 0
+    assert "--longseed" not in result.output
+    assert "--entropy" in result.output
+
+
+def test_init_rejects_entropy_with_nsec(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--entropy", "--nsec", Keys().private_key_bech32(), "--force"],
+    )
+
+    assert result.exit_code != 0
+    assert "--entropy and --nsec are mutually exclusive" in result.output
+
+
+def test_init_rejects_entropy_with_keepkey(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.init, ["--entropy", "--keepkey", "--force"])
+
+    assert result.exit_code != 0
+    assert "--entropy and --keepkey are mutually exclusive" in result.output
+
+
+def test_init_external_entropy_is_hidden_recoverable_and_redacted(
+    monkeypatch, tmp_path
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+    entropy_hex = "02" * 32
+    seed_phrase, secret_nsec = cli.seed_phrase_and_nsec_from_entropy(entropy_hex)
+    observed = {}
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            observed["constructor_nsec"] = kwargs["nsec"]
+            self.seed_phrase = None
+            self.privkey_bech32 = kwargs["nsec"]
+            keys = Keys(priv_k=kwargs["nsec"])
+            self.pubkey_bech32 = keys.public_key_bech32()
+            self.pubkey_hex = keys.public_key_hex()
+
+        async def create_instance(self, keepkey=False, seed_phrase=None):
+            observed["keepkey"] = keepkey
+            observed["seed_phrase"] = seed_phrase
+            self.seed_phrase = seed_phrase
+            return self.privkey_bech32
+
+        async def load_data(self):
+            return None
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+    monkeypatch.setattr(cli, "write_config", lambda: None)
+    cli.config_obj.clear()
+    cli.CONFIG_FILE_EXISTED = False
+    cli.NSEC = None
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--entropy", "--force", "--json"],
+        input=f"{entropy_hex}\n{entropy_hex}\n",
+    )
+
+    assert result.exit_code == 0
+    assert entropy_hex not in result.output
+    assert seed_phrase not in result.output
+    assert secret_nsec not in result.output
+    payload = json.loads(result.stdout)
+    assert payload["ok"] is True
+    assert payload["key_source"] == "external_entropy"
+    assert payload["recovery_included"] is False
+    assert observed == {
+        "constructor_nsec": secret_nsec,
+        "keepkey": False,
+        "seed_phrase": seed_phrase,
+    }
+
+
+def _prepare_successful_init(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret_nsec = "nsec1generatedsecret"
+    secret_phrase = "alpha beta gamma secret recovery phrase"
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.seed_phrase = secret_phrase
+            self.privkey_bech32 = secret_nsec
+            self.pubkey_bech32 = "npub1generatedpublic"
+            self.pubkey_hex = "11" * 32
+
+        async def create_instance(self, keepkey=False):
+            return secret_nsec
+
+        async def load_data(self):
+            return None
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+    monkeypatch.setattr(cli, "write_config", lambda: None)
+    cli.config_obj.clear()
+    cli.CONFIG_FILE_EXISTED = False
+    cli.NSEC = None
+    return cli, secret_nsec, secret_phrase
+
+
+def test_init_json_redacts_recovery_by_default(monkeypatch, tmp_path):
+    cli, secret_nsec, secret_phrase = _prepare_successful_init(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.init, ["--force", "--json"])
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["ok"] is True
+    assert payload["recovery_included"] is False
+    assert "recovery" not in payload
+    assert secret_nsec not in result.output
+    assert secret_phrase not in result.output
+
+
+def test_init_json_includes_recovery_only_when_explicit(monkeypatch, tmp_path):
+    cli, secret_nsec, secret_phrase = _prepare_successful_init(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--force", "--json", "--include-recovery"],
+    )
+
+    assert result.exit_code == 0
+    payload = json.loads(result.output)
+    assert payload["recovery_included"] is True
+    assert payload["recovery"]["nsec"] == secret_nsec
+    assert payload["recovery"]["seed_phrase"] == secret_phrase
+
+
+def test_init_force_does_not_print_recovery(monkeypatch, tmp_path):
+    cli, secret_nsec, secret_phrase = _prepare_successful_init(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(cli.init, ["--force"])
+
+    assert result.exit_code == 0
+    assert secret_nsec not in result.output
+    assert secret_phrase not in result.output
+    assert "Recovery material was not displayed" in result.output
+
+
+def test_recover_reports_only_public_identity(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret_nsec = "nsec1recoveredsecret"
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.pubkey_bech32 = "npub1recoveredpublic"
+
+        async def load_data(self):
+            return None
+
+    monkeypatch.setattr(cli, "recover_nsec_from_seed", lambda **kwargs: secret_nsec)
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+    monkeypatch.setattr(cli, "write_config", lambda: None)
+    cli.config_obj.clear()
+
+    result = CliRunner().invoke(
+        cli.recover,
+        ["alpha beta gamma", "--homerelay", "relay.example.com"],
+        input="y\n",
+    )
+
+    assert result.exit_code == 0
+    assert secret_nsec not in result.output
+    assert "npub1recoveredpublic" in result.output
+    assert "Acorn wallet recovered." in result.output
+
+
+def test_recover_missing_wallet_suggests_correct_home_relay_without_writing_config(
+    monkeypatch, tmp_path
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+    original_config = {
+        "nsec": "nsec1existingsecret",
+        "home_relay": "wss://existing.example.com",
+    }
+    writes = []
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            pass
+
+        async def load_data(self):
+            raise RuntimeError("No wallet data found on wss://missing.example.com")
+
+    monkeypatch.setattr(
+        cli,
+        "recover_nsec_from_seed",
+        lambda **kwargs: "nsec1candidate",
+    )
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+    monkeypatch.setattr(cli, "write_config", lambda: writes.append(dict(cli.config_obj)))
+    cli.config_obj.clear()
+    cli.config_obj.update(original_config)
+
+    result = CliRunner().invoke(
+        cli.recover,
+        ["alpha beta gamma", "--homerelay", "missing.example.com"],
+        input="y\n",
+    )
+
+    assert result.exit_code != 0
+    assert "No wallet data found on wss://missing.example.com" in result.output
+    assert "Try again with --homerelay" in result.output
+    assert cli.config_obj == original_config
+    assert writes == []
 
 
 def test_resolve_config_path_from_explicit_value(monkeypatch, tmp_path):

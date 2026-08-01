@@ -200,8 +200,26 @@ Human flow:
 - require confirmation before replacing the local config;
 - prompt for `nsec`, home relay, and home mint;
 - generate a new `nsec` if none is supplied;
+- accept externally generated 256-bit entropy through `--entropy` and a hidden,
+  confirmed prompt;
 - use default home relay and home mint if blank/default choices are accepted;
 - offer to display the newly created recovery/bootstrap material.
+
+External entropy initialization is explicit:
+
+```sh
+acorn init --entropy
+```
+
+The prompt accepts exactly 64 hexadecimal characters (32 bytes). Acorn encodes
+those bytes as a 24-word English BIP39 phrase and derives the wallet `nsec`
+through the same SLIP-10 secp256k1 path used by `acorn recover`. It does not hash
+the supplied value again. `--entropy` is mutually exclusive with `--nsec` and
+`--keepkey`.
+
+The entropy is intentionally entered through a hidden prompt rather than as a
+command-line value. `--force` and `--json` do not remove that prompt. Normal
+human and JSON output must not echo the entropy, phrase, or `nsec`.
 
 Automation flow:
 
@@ -228,8 +246,10 @@ acorn init --force --json
 
 With `--force`, omitted values are resolved without prompts: a new `nsec` is
 generated, the default home relay is used, and the default home mint is used.
-Successful JSON output includes the recovery material required to reconnect to
-the wallet. Callers must treat that output as sensitive.
+When `--entropy` is present, its hidden secret-input prompt remains mandatory.
+Successful JSON output is redacted by default and reports `key_source` as
+`acorn_generated`, `external_entropy`, `imported_nsec`, or `existing_nsec`.
+Recovery material is included only when `--include-recovery` is also supplied.
 
 If initialization writes wallet material but cannot read it back from the
 selected home relay, the command must fail clearly and must not replace the
@@ -245,8 +265,12 @@ restrictions. JSON output should return:
 }
 ```
 
-Because a new key may already have been generated for the attempted wallet, the
-failure output may include recovery material. Treat that output as sensitive.
+Because a new key may already have been generated for the attempted wallet,
+recovery material may be requested explicitly after a human failure or through
+`--json --include-recovery`. Ordinary failure output remains redacted.
+
+See [External Entropy Initialization](EXTERNAL-ENTROPY-INITIALIZATION.md) for
+the derivation contract, test vector, and operational guidance.
 
 ## Raw output
 
@@ -320,6 +344,26 @@ acorn set --show-recovery
 ```
 
 ## Sensitive output
+
+Ordinary profile, recovery, forced initialization, and JSON initialization
+output must not expose an `nsec`, raw private key, seed phrase, access key, or
+internal lock private key.
+
+The confirmed human-facing recovery path is:
+
+```sh
+acorn set --show-recovery
+```
+
+Machine-readable initialization may include recovery secrets only through the
+explicit combination:
+
+```sh
+acorn init --json --include-recovery
+```
+
+Callers using `--include-recovery` must prevent stdout from entering shell,
+application, CI, or observability logs.
 
 Commands that display recovery secrets must require explicit confirmation.
 
