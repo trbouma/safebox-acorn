@@ -12,10 +12,6 @@ SET_HELP = f"""This is the help for the acorn set command.
 The set function sets local configuration options. All configuration information is stored UNENCRYPTED in your home directory of ~/.acorn/config.yml.
 """
 
-NSEC_HELP= """
-This option to set to an existing nsec. Be sure you know what you are doing when using this option, and never set it to your personal nsec.
-"""
-
 RELAYS_HELP= """
 Relays that are used to read posts and profiles. 
 """

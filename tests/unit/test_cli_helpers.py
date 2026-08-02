@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 import yaml
+import click
 from click.testing import CliRunner
 from monstr.encrypt import Keys
 
@@ -200,16 +201,16 @@ def test_init_help_does_not_offer_broken_longseed_option(monkeypatch, tmp_path):
     assert "--entropy" in result.output
 
 
-def test_init_rejects_entropy_with_nsec(monkeypatch, tmp_path):
+def test_init_rejects_entropy_with_import_nsec(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 
     result = CliRunner().invoke(
         cli.init,
-        ["--entropy", "--nsec", Keys().private_key_bech32(), "--force"],
+        ["--entropy", "--import-nsec", "--force"],
     )
 
     assert result.exit_code != 0
-    assert "--entropy and --nsec are mutually exclusive" in result.output
+    assert "--entropy cannot be combined with --import-nsec or --nsec-file" in result.output
 
 
 def test_init_rejects_entropy_with_keepkey(monkeypatch, tmp_path):
@@ -340,6 +341,21 @@ def test_init_force_does_not_print_recovery(monkeypatch, tmp_path):
     assert "Recovery material was not displayed" in result.output
 
 
+def test_init_import_nsec_uses_one_hidden_entry(monkeypatch, tmp_path):
+    cli, _, _ = _prepare_successful_init(monkeypatch, tmp_path)
+    imported_nsec = Keys().private_key_bech32()
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--import-nsec", "--force", "--json"],
+        input=f"{imported_nsec}\n",
+    )
+
+    assert result.exit_code == 0
+    assert imported_nsec not in result.output
+    assert "Repeat nsec private key" not in result.output
+
+
 def test_recover_reports_only_public_identity(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
     secret_nsec = "nsec1recoveredsecret"
@@ -358,8 +374,8 @@ def test_recover_reports_only_public_identity(monkeypatch, tmp_path):
 
     result = CliRunner().invoke(
         cli.recover,
-        ["alpha beta gamma", "--homerelay", "relay.example.com"],
-        input="y\n",
+        ["--homerelay", "relay.example.com"],
+        input="alpha beta gamma\ny\n",
     )
 
     assert result.exit_code == 0
@@ -397,8 +413,8 @@ def test_recover_missing_wallet_suggests_correct_home_relay_without_writing_conf
 
     result = CliRunner().invoke(
         cli.recover,
-        ["alpha beta gamma", "--homerelay", "missing.example.com"],
-        input="y\n",
+        ["--homerelay", "missing.example.com"],
+        input="alpha beta gamma\ny\n",
     )
 
     assert result.exit_code != 0
@@ -406,6 +422,61 @@ def test_recover_missing_wallet_suggests_correct_home_relay_without_writing_conf
     assert "Try again with --homerelay" in result.output
     assert cli.config_obj == original_config
     assert writes == []
+
+
+def test_recovery_secrets_are_not_accepted_as_command_arguments(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    init_help = CliRunner().invoke(cli.init, ["--help"])
+    set_help = CliRunner().invoke(cli.set, ["--help"])
+    recover_help = CliRunner().invoke(cli.recover, ["--help"])
+    receive_help = CliRunner().invoke(cli.receive_ecash, ["--help"])
+
+    assert "--nsec TEXT" not in init_help.output
+    assert "--nsec TEXT" not in set_help.output
+    assert "SEEDPHRASE" not in recover_help.output
+    assert "--receive-nsec TEXT" not in receive_help.output
+    assert "--import-nsec" in init_help.output
+    assert "--seed-file PATH" in recover_help.output
+    assert "--receive-key" in receive_help.output
+
+
+def test_secret_file_rejects_group_or_world_permissions(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret_file = tmp_path / "recovery.txt"
+    secret_file.write_text("alpha beta gamma", encoding="utf-8")
+    secret_file.chmod(0o644)
+
+    with pytest.raises(click.ClickException, match="chmod 600"):
+        cli._read_secret_file(str(secret_file), "seed phrase")
+
+
+def test_secret_file_accepts_owner_only_permissions(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret_file = tmp_path / "recovery.txt"
+    secret_file.write_text("  alpha beta gamma\n", encoding="utf-8")
+    secret_file.chmod(0o600)
+
+    assert cli._read_secret_file(str(secret_file), "seed phrase") == "alpha beta gamma"
+
+
+def test_recover_hidden_prompt_does_not_echo_seed_phrase(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret_phrase = "alpha beta gamma"
+
+    monkeypatch.setattr(
+        cli,
+        "recover_nsec_from_seed",
+        lambda **kwargs: (_ for _ in ()).throw(ValueError("test stop")),
+    )
+    result = CliRunner().invoke(
+        cli.recover,
+        input=f"{secret_phrase}\n",
+    )
+
+    assert result.exit_code != 0
+    assert secret_phrase not in result.output
+    assert "Invalid recovery phrase" in result.output
 
 
 def test_resolve_config_path_from_explicit_value(monkeypatch, tmp_path):
@@ -493,21 +564,29 @@ def test_configured_test_mints_uses_fallback_when_no_override(monkeypatch):
     ]
 
 
-def test_get_receive_nsec_prefers_explicit_override(monkeypatch):
-    from tests.helpers import get_receive_nsec
+def test_source_wallet_ignores_legacy_secret_environment_overrides(monkeypatch, tmp_path):
+    from tests.helpers import require_source_config
 
-    monkeypatch.setenv("ACORN_RECEIVE_NSEC", "nsec1override")
+    source_path = tmp_path / "source.yml"
+    source_path.write_text(
+        yaml.safe_dump(
+            {
+                "nsec": "nsec1fromprotectedconfig",
+                "home_relay": "wss://relay.from-config.example",
+            }
+        ),
+        encoding="utf-8",
+    )
+    source_path.chmod(0o600)
+    monkeypatch.setenv("ACORN_SOURCE_CONFIG", str(source_path))
+    monkeypatch.setenv("ACORN_SOURCE_NSEC", "nsec1legacyenvironment")
+    monkeypatch.setenv("ACORN_SOURCE_RELAY", "wss://legacy-environment.example")
 
-    assert get_receive_nsec({"nsec": "nsec1source"}) == "nsec1override"
+    source = require_source_config()
 
-
-def test_get_receive_nsec_defaults_to_source_wallet(monkeypatch, capsys):
-    from tests.helpers import get_receive_nsec
-
-    monkeypatch.delenv("ACORN_RECEIVE_NSEC", raising=False)
-
-    assert get_receive_nsec({"nsec": "nsec1source"}) == "nsec1source"
-    assert "receive nsec inherited from source wallet" in capsys.readouterr().out
+    assert source["nsec"] == "nsec1fromprotectedconfig"
+    assert source["home_relay"] == "wss://relay.from-config.example"
+    assert source["_path"] == str(source_path)
 
 
 def test_proof_to_dict_omits_empty_witness_for_mint_api():

@@ -1234,7 +1234,12 @@ class Acorn:
                 FILTER = [record_filter]
 
         # print(f"kind: {record_kind} relays to use: {relays_to_use}")
-        self.logger.debug(f"kind: {record_kind} relays to use: {relays_to_use} filter: {FILTER}")
+        self.logger.debug(
+            "op=get_user_records status=query kind=%s relays=%s filters=%s",
+            record_kind,
+            len(relays_to_use),
+            len(FILTER),
+        )
         async with ClientPool(relays_to_use) as c:  
             events = await c.query(FILTER)           
 
@@ -1806,7 +1811,7 @@ class Acorn:
                         content=None,
                         pub_key=self.pubkey_hex,
                         tags=tags)
-            self.logger.debug("op=delete_dms status=tags tags=%s", tags)
+            self.logger.debug("op=delete_dms status=prepared tags=%s", len(tags))
             n_msg.sign(self.privkey_hex)
             c.publish(n_msg)
             self.logger.debug("op=delete_dms status=published")
@@ -1863,7 +1868,11 @@ class Acorn:
         except (ValueError, TypeError) as exc:
             self.logger.warning("Invalid transmittal recipient=%s error=%s", nrecipient, exc)
             raise ValueError("invalid transmittal recipient") from exc
-        self.logger.debug(f"send to: {nrecipient} {npub_hex}, {message} using {dm_relays}")
+        self.logger.debug(
+            "op=secure_transmittal status=prepared relays=%s message_bytes=%s",
+            len(dm_relays),
+            len(message.encode("utf-8")),
+        )
 
         await self._async_secure_transmittal(npub_hex=npub_hex, message=message, dm_relays=dm_relays, kind=kind) 
         return "message sent" 
@@ -2472,7 +2481,12 @@ class Acorn:
             # print("label, event id:", label, n_msg.id)
             c.publish(n_msg)
             await asyncio.sleep(0.2)
-            self.logger.debug(f"wrote event {wallet_config_data} to {write_relays}")
+            self.logger.debug(
+                "op=set_wallet_config status=published event_id=%s relays=%s fields=%s",
+                n_msg.id,
+                len(write_relays),
+                len(self.acorn_tags),
+            )
 
     async def get_wallet_config(self):  
         wallet_config_info = None
@@ -2623,7 +2637,12 @@ class Acorn:
             n_msg.sign(self.privkey_hex)
             c.publish(n_msg)
             await asyncio.sleep(0.2)
-            self.logger.debug("wrote event %s to %s", label, write_relays)
+            self.logger.debug(
+                "op=set_wallet_info status=published event_id=%s kind=%s relays=%s",
+                n_msg.id,
+                record_kind,
+                len(write_relays),
+            )
 
         verification = {
             relay: {"readable": False, "canonical": False}
@@ -2709,7 +2728,7 @@ class Acorn:
         # a_tag = ["a", label_hash]
         # print("a_tag:",a_tag)
        
-        self.logger.debug(f"getting record for: {label}")
+        self.logger.debug("op=get_wallet_info status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
         FILTER = [{
@@ -2729,10 +2748,8 @@ class Acorn:
         )
         if not event:
             self.logger.debug(
-                "op=get_wallet_info status=missing label=%s kind=%s hash=%s",
-                label,
+                "op=get_wallet_info status=missing kind=%s",
                 record_kind,
-                label_hash,
             )
             return None
         
@@ -2741,10 +2758,8 @@ class Acorn:
             decrypt_content = my_enc.decrypt(event.content, self.pubkey_hex)
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
             self.logger.warning(
-                "op=get_wallet_info status=decrypt_failed label=%s kind=%s hash=%s error=%s",
-                label,
+                "op=get_wallet_info status=decrypt_failed kind=%s error=%s",
                 record_kind,
-                label_hash,
                 exc,
             )
             return None
@@ -2839,7 +2854,7 @@ class Acorn:
             ["a", f"{int(record_kind)}:{self.pubkey_hex}:{label_hash}"],
             ["k", str(int(record_kind))],
         ]
-        self.logger.debug("op=delete_record status=tags tags=%s", tags)
+        self.logger.debug("op=delete_record status=prepared kind=%s tags=%s", record_kind, len(tags))
         async with ClientPool(delete_relays) as c:
         
             n_msg = Event(kind=Event.KIND_DELETE,
@@ -2911,13 +2926,12 @@ class Acorn:
         relays: List[str] | str | None = None,
     ):
     # does a one off query to relay prints the events and exits
-        self.logger.debug(f"filter {filter}")
+        self.logger.debug("op=get_wallet_info status=query_prepared filters=%s", len(filter))
         # my_enc = NIP44Encrypt(self.k)
         # target_tag = filter[0]['d']
         target_tag = label_hash
         events = []
         
-        self.logger.debug(f"target tag: {target_tag}")
         relay_pool = self._record_relay_pool(relays)
         async with ClientPool(relay_pool) as c:
         
@@ -2929,7 +2943,7 @@ class Acorn:
             # print(f"_async event xoxoxo: type: {type(events[0])} data: {events[0].data()}")
 
         if not events:
-            self.logger.debug("No wallet info events found for tag=%s", target_tag)
+            self.logger.debug("op=get_wallet_info status=no_events")
             return None
 
         canonical = self._canonical_record_events(events)
@@ -3148,7 +3162,7 @@ class Acorn:
         # a_tag = ["a", label_hash]
         # print("a_tag:",a_tag)
        
-        self.logger.debug(f"getting record for: {record_name}")
+        self.logger.debug("op=get_record_safebox status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
         FILTER = [{
@@ -3168,29 +3182,26 @@ class Acorn:
         )
         if not event:
             self.logger.warning(
-                "op=get_record_safebox status=missing record=%s kind=%s hash=%s",
-                record_name,
+                "op=get_record_safebox status=missing kind=%s",
                 record_kind,
-                label_hash,
             )
             raise ValueError(f"No event found for {record_kind} {record_name}")
 
         try:
             decrypt_content = my_enc.decrypt(event.content, self.pubkey_hex)
         except (ValueError, TypeError) as exc:
-            self.logger.warning("op=get_record_safebox status=decrypt_failed record=%s kind=%s error=%s", record_name, record_kind, exc)
+            self.logger.warning("op=get_record_safebox status=decrypt_failed kind=%s error=%s", record_kind, exc)
             raise ValueError(f"Could not decrypt info for: {record_name}. Does a record exist?") from exc
         
         try:
             safebox_record: SafeboxRecord = SafeboxRecord(**json.loads(decrypt_content))
             self.logger.debug(
-                "op=get_record_safebox status=ok record=%s kind=%s blobref=%s",
-                record_name,
+                "op=get_record_safebox status=ok kind=%s has_blob=%s",
                 record_kind,
-                safebox_record.blobref,
+                bool(safebox_record.blobref),
             )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            self.logger.warning("op=get_record_safebox status=parse_failed record=%s kind=%s error=%s", record_name, record_kind, exc)
+            self.logger.warning("op=get_record_safebox status=parse_failed kind=%s error=%s", record_kind, exc)
             raise ValueError(f"Could create safebox record: {record_name}. Does a record exist?") from exc
 
         return safebox_record
@@ -3300,7 +3311,7 @@ class Acorn:
         if record_origin:
             record_name = ':'.join([record_origin,record_name])
 
-        self.logger.debug("op=get_record_blobdata record=%s kind=%s", record_name, record_kind)
+        self.logger.debug("op=get_record_blobdata status=start kind=%s", record_kind)
 
         if record_by_hash:
             label_hash = record_by_hash
@@ -3313,7 +3324,7 @@ class Acorn:
         # a_tag = ["a", label_hash]
         # print("a_tag:",a_tag)
        
-        self.logger.debug(f"getting record for: {record_name}")
+        self.logger.debug("op=get_record_blobdata status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
         FILTER = [{
@@ -3332,10 +3343,8 @@ class Acorn:
         )
         if not event:
             self.logger.warning(
-                "op=get_record_blobdata status=missing record=%s kind=%s hash=%s",
-                record_name,
+                "op=get_record_blobdata status=missing kind=%s",
                 record_kind,
-                label_hash,
             )
             return None, None
         
@@ -3343,7 +3352,7 @@ class Acorn:
         try:
             decrypt_content = my_enc.decrypt(event.content, self.pubkey_hex)
         except (ValueError, TypeError) as exc:
-            self.logger.warning("op=get_record_blobdata status=decrypt_failed record=%s kind=%s error=%s", record_name, record_kind, exc)
+            self.logger.warning("op=get_record_blobdata status=decrypt_failed kind=%s error=%s", record_kind, exc)
             return None, None
 
         try:
@@ -3376,11 +3385,11 @@ class Acorn:
                             iv=bytes.fromhex(safebox_record.encryptparms.iv),
                         )
                     except (ValueError, TypeError) as e:
-                        self.logger.warning("op=get_record_blobdata status=blob_decrypt_failed record=%s kind=%s error=%s", record_name, record_kind, e)
+                        self.logger.warning("op=get_record_blobdata status=blob_decrypt_failed kind=%s error=%s", record_kind, e)
                 else:
                     blob_data = blob_retrieve.get_bytes()
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            self.logger.warning("op=get_record_blobdata status=parse_failed record=%s kind=%s error=%s", record_name, record_kind, exc)
+            self.logger.warning("op=get_record_blobdata status=parse_failed kind=%s error=%s", record_kind, exc)
             return None, None
 
         if blob_data:
@@ -3394,8 +3403,7 @@ class Acorn:
             #    tmp.write(blob_data)
             #    tmp_path = tmp.name
             self.logger.debug(
-                "op=get_record_blobdata status=ok record=%s kind=%s mime=%s",
-                record_name,
+                "op=get_record_blobdata status=ok kind=%s mime=%s",
                 record_kind,
                 guessed_blob_type,
             )
@@ -4020,7 +4028,7 @@ class Acorn:
         blossom_home_server: str | None = None,
     ) -> Dict[str, Any]:
         """Transfer source blob to wallet blob store and attach metadata to record."""
-        self.logger.debug("op=transfer_blob status=start record=%s kind=%s", record_name, record_kind)
+        self.logger.debug("op=transfer_blob status=start kind=%s", record_kind)
         blossom_server = self._default_blossom_home_server()
         default_xfer_server = self._default_blossom_xfer_server()
         source_xfer = blossom_xfer_server or default_xfer_server
@@ -4040,14 +4048,13 @@ class Acorn:
             blobxfer_obj: OriginalRecordTransfer = OriginalRecordTransfer.model_validate_json(blobxfer)
         except (ValueError, TypeError) as exc:
             self.logger.warning(
-                "op=transfer_blob status=invalid_blobxfer record=%s kind=%s error=%s",
-                record_name,
+                "op=transfer_blob status=invalid_blobxfer kind=%s error=%s",
                 record_kind,
                 exc,
             )
             return {"status": "INVALID_BLOBXFER", "reason": str(exc)}
 
-        self.logger.debug("op=transfer_blob status=validated record=%s kind=%s", record_name, record_kind)
+        self.logger.debug("op=transfer_blob status=validated kind=%s", record_kind)
         try:
             client_xfer = BlossomClient(nsec=blobxfer_obj.blobnsec, default_servers=source_servers)
             blob_retrieve: BlossomBlob | None = None
@@ -4065,16 +4072,14 @@ class Acorn:
                     last_fetch_error = str(exc)
                     if exc.__class__.__name__ == "BlobNotFound":
                         self.logger.info(
-                            "op=transfer_blob status=source_missing record=%s kind=%s sha256=%s server=%s",
-                            record_name,
+                            "op=transfer_blob status=source_missing kind=%s sha256=%s server=%s",
                             record_kind,
                             blobxfer_obj.blobsha256,
                             source_server,
                         )
                     else:
                         self.logger.warning(
-                            "op=transfer_blob status=fetch_failed record=%s kind=%s server=%s error=%s",
-                            record_name,
+                            "op=transfer_blob status=fetch_failed kind=%s server=%s error=%s",
                             record_kind,
                             source_server,
                             exc,
@@ -4082,8 +4087,7 @@ class Acorn:
 
             if not blob_retrieve:
                 self.logger.warning(
-                    "op=transfer_blob status=not_available record=%s kind=%s sha256=%s tried=%s error=%s",
-                    record_name,
+                    "op=transfer_blob status=not_available kind=%s sha256=%s tried=%s error=%s",
                     record_kind,
                     blobxfer_obj.blobsha256,
                     source_servers,
@@ -4096,11 +4100,10 @@ class Acorn:
                     server=source_server_used,
                     sha256=blobxfer_obj.blobsha256,
                 )
-                self.logger.debug("op=transfer_blob status=source_deleted record=%s result=%s", record_name, delete_result)
+                self.logger.debug("op=transfer_blob status=source_deleted success=%s", bool(delete_result))
             except Exception as exc:
                 self.logger.warning(
-                    "op=transfer_blob status=source_delete_failed record=%s kind=%s error=%s",
-                    record_name,
+                    "op=transfer_blob status=source_delete_failed kind=%s error=%s",
                     record_kind,
                     exc,
                 )
@@ -4115,24 +4118,23 @@ class Acorn:
                     iv=bytes.fromhex(blobxfer_obj.encryptparms.iv),
                 )
             except (ValueError, TypeError) as exc:
-                self.logger.warning("op=transfer_blob status=decrypt_failed record=%s error=%s", record_name, exc)
+                self.logger.warning("op=transfer_blob status=decrypt_failed error=%s", exc)
                 return {"status": "DECRYPT_FAILED", "reason": str(exc)}
 
             resultsha256 = hashlib.sha256(blob_data).hexdigest()
             if resultsha256 != blobxfer_obj.origsha256:
                 self.logger.warning(
-                    "op=transfer_blob status=hash_mismatch record=%s expected=%s got=%s",
-                    record_name,
+                    "op=transfer_blob status=hash_mismatch expected=%s got=%s",
                     blobxfer_obj.origsha256,
                     resultsha256,
                 )
                 return {"status": "HASH_MISMATCH", "reason": "transferred_hash_mismatch"}
 
             guessed_blob_type = filetype.guess_mime(blob_data) or "application/octet-stream"
-            self.logger.debug("op=transfer_blob status=decrypted record=%s mime=%s", record_name, guessed_blob_type)
+            self.logger.debug("op=transfer_blob status=decrypted mime=%s", guessed_blob_type)
 
             safebox_record = await self.get_record_safebox(record_name=record_name, record_kind=record_kind)
-            self.logger.debug("op=transfer_blob status=loaded_record record=%s", record_name)
+            self.logger.debug("op=transfer_blob status=loaded_record")
 
             blob_key = os.urandom(32)
             encrypt_result: EncryptionResult = encrypt_bytes(blob_data, blob_key)
@@ -4152,7 +4154,7 @@ class Acorn:
             sha256 = upload_result['sha256']
             blob_ref = upload_result.get('url', f"{blossom_server}/{sha256}")
 
-            self.logger.debug("op=transfer_blob status=uploaded record=%s sha256=%s", record_name, sha256)
+            self.logger.debug("op=transfer_blob status=uploaded sha256=%s", sha256)
             updated_safebox_record = SafeboxRecord(
                 tag=safebox_record.tag,
                 type=safebox_record.type,
@@ -4172,8 +4174,7 @@ class Acorn:
 
         except (ValueError, TypeError, RuntimeError, KeyError) as exc:
             self.logger.warning(
-                "op=transfer_blob status=processing_failed record=%s kind=%s error=%s",
-                record_name,
+                "op=transfer_blob status=processing_failed kind=%s error=%s",
                 record_kind,
                 exc,
             )
@@ -4194,7 +4195,7 @@ class Acorn:
         if record_origin:
             record_name = ':'.join([record_origin,record_name])
 
-        self.logger.debug("op=put_record status=start record=%s kind=%s", record_name, record_kind)
+        self.logger.debug("op=put_record status=start kind=%s", record_kind)
         base_label = record_name.split(":", 1)[-1] if record_origin else record_name
         if (
             record_name in INTERNAL_RECORD_LABELS
@@ -4427,14 +4428,17 @@ class Acorn:
                 
                 i+=1
             
-            self.logger.debug(f"Adding proofs from mint: {proof_objs}")
+            self.logger.debug(
+                "op=mint_proofs status=received proofs=%s amount=%s",
+                len(proof_objs),
+                sum(each.amount for each in proof_objs),
+            )
 
             #TODO change this to write_proofs
             await self.add_proofs_obj(proof_objs)
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as e:
             self.logger.error(
-                "op=mint_proofs quote=%s amount=%s mint=%s error=%s",
-                quote,
+                "op=mint_proofs status=failed amount=%s mint=%s error=%s",
                 amount,
                 mint,
                 e,
@@ -4453,7 +4457,7 @@ class Acorn:
         return True
 
     async def check_quote(self, quote:str, amount:int, mint:str = None):
-        self.logger.debug("op=check_quote quote=%s amount=%s mint=%s", quote, amount, mint)
+        self.logger.debug("op=check_quote status=start amount=%s mint=%s", amount, mint)
         
         
 
@@ -4465,7 +4469,7 @@ class Acorn:
         else:
              url = f"{self.home_mint}/v1/mint/quote/bolt11/{quote}" 
 
-        self.logger.debug(f"mint quote: {url}")
+        self.logger.debug("op=check_quote status=request mint=%s", mint or self.home_mint)
 
         headers = { "Content-Type": "application/json"}
         timeout = httpx.Timeout(10.0, connect=5.0)
@@ -4477,8 +4481,7 @@ class Acorn:
                 mint_quote = mintQuote(**response.json())
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
             self.logger.warning(
-                "op=check_quote status=failed quote=%s amount=%s mint=%s error=%s",
-                quote,
+                "op=check_quote status=failed amount=%s mint=%s error=%s",
                 amount,
                 mint,
                 exc,
@@ -4486,14 +4489,13 @@ class Acorn:
             return False, None
 
         if mint_quote.paid == True:
-            self.logger.debug("op=check_quote status=paid quote=%s", quote)
+            self.logger.debug("op=check_quote status=paid amount=%s", amount)
             try:
                 success_mint = await self._mint_proofs(mint_quote.quote, amount, mint)
             except (RuntimeError, httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
                 # Treat minting failures as transient so polling can continue and/or timeout cleanly.
                 self.logger.warning(
-                    "op=check_quote status=mint_failed quote=%s amount=%s mint=%s error=%s",
-                    quote,
+                    "op=check_quote status=mint_failed amount=%s mint=%s error=%s",
                     amount,
                     mint,
                     exc,
@@ -4638,10 +4640,10 @@ class Acorn:
             mint = mint.replace("https://","")
 
         while time() < end_time:
-            self.logger.debug("op=poll_for_payment quote=%s amount=%s mint=%s", quote, amount, mint)
+            self.logger.debug("op=poll_for_payment status=checking amount=%s mint=%s", amount, mint)
             success, lninvoice = await self.check_quote(quote=quote, amount=amount, mint=mint)
             if success:
-                self.logger.info("op=poll_for_payment status=paid quote=%s amount=%s", quote, amount)
+                self.logger.info("op=poll_for_payment status=paid amount=%s", amount)
                 break
             elapsed = time() - start_time
             # Faster polling in the early window for better UX, then taper.
@@ -4652,9 +4654,9 @@ class Acorn:
             else:
                 await asyncio.sleep(3)
 
-        self.logger.debug("op=poll_for_payment status=done quote=%s", quote)
+        self.logger.debug("op=poll_for_payment status=done amount=%s", amount)
         if not success:
-            self.logger.warning("op=poll_for_payment status=timeout quote=%s amount=%s", quote, amount)
+            self.logger.warning("op=poll_for_payment status=timeout amount=%s", amount)
             raise TimeoutError("Polling has timed out.")
         return success, lninvoice
         
@@ -4696,7 +4698,6 @@ class Acorn:
 
             if len(record) > self.max_proof_event_size:
                 self.logger.warning("Record length %s is greater than max, splitting proofs", len(record))
-                self.logger.warning(f"Record length {len(record)} is greater than max, splitting proofs")
                 split_proofs = split_proofs_instance(original=nip60_proofs, num_splits=math.ceil(len(record)/self.max_proof_event_size))
                 
                 for each in split_proofs:
@@ -4715,7 +4716,12 @@ class Acorn:
                                 content=payload_encrypt,
                                 pub_key=self.pubkey_hex)
                     n_msg.sign(self.privkey_hex)
-                    self.logger.debug(f"proof event content {n_msg.kind} {record}")
+                    self.logger.debug(
+                        "op=add_proofs_obj status=published event_id=%s kind=%s payload_bytes=%s",
+                        n_msg.id,
+                        n_msg.kind,
+                        len(record),
+                    )
                     c.publish(n_msg)
                     await asyncio.sleep(0.2)
         except (ValueError, TypeError, json.JSONDecodeError) as e:
@@ -4731,7 +4737,7 @@ class Acorn:
         #TODO Need to add some error checking
 
 
-        self.logger.debug(f"writing proofs ")
+        self.logger.debug("op=write_proofs status=start proofs=%s", len(self.proofs))
         try:
             expected_proofs = list(self.proofs)
             expected_balance = sum(each.amount for each in expected_proofs)
@@ -4844,7 +4850,12 @@ class Acorn:
                         content=payload_encrypt,
                         pub_key=self.pubkey_hex)
             n_msg.sign(self.privkey_hex)
-            self.logger.debug(f"proof event content {n_msg.kind} {text}")
+            self.logger.debug(
+                "op=add_proofs status=published event_id=%s kind=%s payload_bytes=%s",
+                n_msg.id,
+                n_msg.kind,
+                len(text),
+            )
             c.publish(n_msg)
             await asyncio.sleep(0.2)
 
@@ -5840,7 +5851,7 @@ class Acorn:
             await self._require_resolved_pending_melts()
             callback, safebox, nonce = lightning_address_pay(amount, lnaddress,comment=comment)         
             pr = callback['pr'] 
-            self.logger.debug("op=pay_multi status=lookup lnaddress=%s safebox=%s", lnaddress, safebox)
+            self.logger.debug("op=pay_multi status=lookup has_safebox=%s", bool(safebox))
 
             if safebox:
                 self.logger.info("op=pay_multi status=direct_safebox nonce=%s", nonce)
@@ -5984,7 +5995,11 @@ class Acorn:
                         raise ValueError(f"There are not sufficient mints to support multipath payments. Try smaller amounts?")
 
                     # Now we have the meltquotes
-                    self.logger.debug("op=pay_multi status=mpp_requests keysets=%s", keysets_to_use_for_multi)
+                    self.logger.debug(
+                        "op=pay_multi status=mpp_requests count=%s keysets=%s",
+                        len(keysets_to_use_for_multi),
+                        [each[0] for each in keysets_to_use_for_multi],
+                    )
                     self.logger.info("op=pay_multi status=mpp_summary amount=%s fees=%s melt_amount=%s", amount, total_fees, total_melt_amount)
                     
                     self._multi_melt(keysets_to_use_for_multi) 
@@ -6003,7 +6018,7 @@ class Acorn:
                     melt_quote_url = f"{self.known_mints[chosen_keyset]}/v1/melt/quote/bolt11"
                     melt_url = f"{self.known_mints[chosen_keyset]}/v1/melt/bolt11"
 
-                    self.logger.debug("op=pay_multi status=single_keyset amount=%s lnaddress=%s", amount, lnaddress)
+                    self.logger.debug("op=pay_multi status=single_keyset amount=%s", amount)
                     data_to_send = {    "request": pr,
                                         "unit": "sat"
 
@@ -6042,7 +6057,7 @@ class Acorn:
                         # callback = lightning_address_pay(amount, lnaddress,comment=comment)
                         # pr = callback['pr']        
                         # print(pr)
-                        self.logger.debug(f"{amount}, {lnaddress}")
+                        self.logger.debug("op=pay_multi status=retry_quote amount=%s", amount)
                         data_to_send = {    "request": pr,
                                         "unit": "sat"
 
@@ -6104,20 +6119,25 @@ class Acorn:
                         sum_proofs += each.amount
                         if sum_proofs <= amount_needed:
                             spend_proofs.append(each)
-                            self.logger.debug(f"pay with {each.amount}, {each.secret}")
+                            self.logger.debug("op=pay_multi status=select_proof amount=%s", each.amount)
                         else:
                             keep_proofs.append(each)
-                            self.logger.debug(f"keep {each.amount}, {each.secret}")
+                            self.logger.debug("op=pay_multi status=retain_proof amount=%s", each.amount)
                     
-                    self.logger.debug(f"spend proofs: {spend_proofs}")
-                    self.logger.debug(f"keep proofs: {keep_proofs}")
+                    self.logger.debug(
+                        "op=pay_multi status=proof_selection spend_count=%s spend_amount=%s keep_count=%s keep_amount=%s",
+                        len(spend_proofs),
+                        sum(each.amount for each in spend_proofs),
+                        len(keep_proofs),
+                        sum(each.amount for each in keep_proofs),
+                    )
                     melt_proofs = []
                     for each_proof in spend_proofs:
                             melt_proofs.append(each_proof.to_dict())
 
                     data_to_send = {"quote": post_melt_response.quote,
                                 "inputs": melt_proofs }
-                    self.logger.debug("op=pay_multi status=checkpoint_before_melt quote=%s", post_melt_response.quote)
+                    self.logger.debug("op=pay_multi status=checkpoint_before_melt amount=%s", amount)
 
                     # Persist all post-swap proofs before submitting the melt.
                     # If the process exits after submission, the journal and
@@ -6180,9 +6200,8 @@ class Acorn:
                         f"to {lnaddress} successful!"
                     )
                     self.logger.info(
-                        "op=pay_multi status=complete amount=%s quote=%s source=%s",
+                        "op=pay_multi status=complete amount=%s source=%s",
                         amount,
-                        post_melt_response.quote,
                         outcome["source"],
                     )
                     return msg_out, final_fees
@@ -6191,13 +6210,12 @@ class Acorn:
                 
                 final_fees = amount_needed - amount
                 msg_out = f"Payment of {amount} sats with fee {final_fees} sats to {lnaddress} successful!"
-                self.logger.info(msg_out)
+                self.logger.info("op=pay_multi status=complete amount=%s fees=%s", amount, final_fees)
                 await self.write_proofs()
                 self.logger.debug("op=pay_multi status=complete amount=%s", amount)
                 self.logger.debug(
-                    "op=pay_multi status=tx_history amount=%s comment=%s tendered_amount=%s tendered_currency=%s",
+                    "op=pay_multi status=tx_history amount=%s tendered_amount=%s tendered_currency=%s",
                     amount,
-                    comment,
                     tendered_amount,
                     tendered_currency,
                 )
@@ -6260,13 +6278,18 @@ class Acorn:
                 sum_proofs += each_proof.amount
                 if sum_proofs <= amount_needed:
                     spend_proofs.append(each_proof)
-                    self.logger.debug(f"pay with {each_proof.amount}, {each_proof.secret}")
+                    self.logger.debug("op=multi_melt status=select_proof amount=%s", each_proof.amount)
                 else:
                     keep_proofs.append(each_proof)
-                    self.logger.debug(f"keep {each_proof.amount}, {each_proof.secret}")
+                    self.logger.debug("op=multi_melt status=retain_proof amount=%s", each_proof.amount)
             
-            self.logger.debug(f"spend proofs: {spend_proofs}")
-            self.logger.debug(f"keep proofs: {keep_proofs}")
+            self.logger.debug(
+                "op=multi_melt status=proof_selection spend_count=%s spend_amount=%s keep_count=%s keep_amount=%s",
+                len(spend_proofs),
+                sum(each.amount for each in spend_proofs),
+                len(keep_proofs),
+                sum(each.amount for each in keep_proofs),
+            )
             melt_proofs = []
             for each_spend_proof in spend_proofs:
                     melt_proofs.append(each_spend_proof.to_dict())
@@ -6276,7 +6299,11 @@ class Acorn:
             
         
             
-            self.logger.debug(f"lightning payment mpp we are here!: {data_to_send}")
+            self.logger.debug(
+                "op=multi_melt status=request_prepared amount=%s proofs=%s",
+                amount_to_pay,
+                len(melt_proofs),
+            )
             mpp_mint_melt_request.append((melt_url,data_to_send))
             
         # print(mpp_mint_melt_request)
@@ -6370,12 +6397,11 @@ class Acorn:
             # Now do the pay routine
             melt_quote_url = f"{self.known_mints[chosen_keyset]}/v1/melt/quote/bolt11"
             melt_url = f"{self.known_mints[chosen_keyset]}/v1/melt/bolt11"
-            self.logger.debug(f"{melt_quote_url}, {melt_url}")
+            self.logger.debug("op=pay_multi_invoice status=endpoints_ready")
             headers = { "Content-Type": "application/json"}
             # callback = lightning_address_pay(amount, lnaddress,comment=comment)
             pr = lninvoice        
-            self.logger.debug(f"pr {pr}")
-            self.logger.debug(f"{ln_amount}, {lninvoice}")
+            self.logger.debug("op=pay_multi_invoice status=quote_request amount=%s", ln_amount)
             data_to_send = {    "request": pr,
                                 "unit": "sat"
 
@@ -6384,14 +6410,16 @@ class Acorn:
                 response = await client.post(url=melt_quote_url, json=data_to_send, headers=headers)
                 if response.is_error:
                     raise _mint_error_with_body("melt quote request", response)
-            self.logger.debug(f"post melt response: {response.json()}")
             # check reponse for error
             # print(f"mint response: {response.json()}")
             response_json = response.json()
             if response_json.get('code', None) == 11000:
                 raise RuntimeError("mint quote already paid!")
             post_melt_response = PostMeltQuoteResponse(**response.json())
-            self.logger.debug(f"mint response: {post_melt_response}")
+            self.logger.debug(
+                "op=pay_multi_invoice status=quote_received fee_reserve=%s",
+                post_melt_response.fee_reserve,
+            )
             proofs_to_use = []
             proof_amount = 0
             amount_needed = ln_amount + post_melt_response.fee_reserve
@@ -6414,13 +6442,12 @@ class Acorn:
                 # Set to new mints and redo the calls
                 melt_quote_url = f"{self.known_mints[chosen_keyset]}/v1/melt/quote/bolt11"
                 melt_url = f"{self.known_mints[chosen_keyset]}/v1/melt/bolt11"
-                self.logger.debug(f"{melt_quote_url},{melt_url}")
+                self.logger.debug("op=pay_multi_invoice status=alternate_endpoints_ready")
                 # We already have the invoice in this function
                 # callback = lightning_address_pay(ln_amount, lninvoice,comment=comment)
                 # pr = callback['pr']   
                 pr = lninvoice     
-                self.logger.debug(f"pr {pr}")
-                self.logger.debug(f"{ln_amount}, {lninvoice}")
+                self.logger.debug("op=pay_multi_invoice status=alternate_quote_request amount=%s", ln_amount)
                 data_to_send = {    "request": pr,
                                 "unit": "sat"
 
@@ -6429,9 +6456,11 @@ class Acorn:
                     response = await client.post(url=melt_quote_url, json=data_to_send, headers=headers)
                     if response.is_error:
                         raise _mint_error_with_body("melt quote request", response)
-                self.logger.debug(f"post melt response: {response.json()}")
                 post_melt_response = PostMeltQuoteResponse(**response.json())
-                self.logger.debug(f"mint response: {post_melt_response}")
+                self.logger.debug(
+                    "op=pay_multi_invoice status=alternate_quote_received fee_reserve=%s",
+                    post_melt_response.fee_reserve,
+                )
 
                 if not chosen_keyset:
                     msg_out ="insufficient balance in any one keyset, you need to swap!"
@@ -6440,7 +6469,7 @@ class Acorn:
             # Print now we should be all set to go
         
             self.logger.debug("---we have a sufficient mint---")
-            self.logger.debug(f"{melt_quote_url}, {melt_url}, {post_melt_response}")
+            self.logger.debug("op=pay_multi_invoice status=mint_ready fee_reserve=%s", post_melt_response.fee_reserve)
             proofs_to_use = []
             proof_amount = 0
             proofs_from_keyset = list(keyset_proofs[chosen_keyset])
@@ -6450,14 +6479,18 @@ class Acorn:
                 proof_amount += pay_proof.amount
                 self.logger.debug(f"pop {pay_proof.amount}")
                 
-            self.logger.debug(f"proofs to use:  {proofs_to_use}")
-            self.logger.debug(f"remaining: {proofs_from_keyset}")
+            self.logger.debug(
+                "op=pay_multi_invoice status=input_selection selected=%s selected_amount=%s remaining=%s",
+                len(proofs_to_use),
+                sum(each.amount for each in proofs_to_use),
+                len(proofs_from_keyset),
+            )
             # Continue implementing from line 818 swap_for_payment may need a parameter
             # Now need to do the melt
             proofs_remaining = await self.swap_for_payment_multi(chosen_keyset,proofs_to_use, amount_needed)
             
 
-            self.logger.debug(f"proofs remaining: {proofs_remaining}")
+            self.logger.debug("op=pay_multi_invoice status=swap_complete proofs=%s", len(proofs_remaining))
             self.logger.debug(f"amount needed: {amount_needed}")
             # Implement from line 824
             sum_proofs =0
@@ -6468,12 +6501,17 @@ class Acorn:
                 sum_proofs += each.amount
                 if sum_proofs <= amount_needed:
                     spend_proofs.append(each)
-                    self.logger.debug(f"pay with {each.amount}, {each.secret}")
+                    self.logger.debug("op=pay_multi_invoice status=select_proof amount=%s", each.amount)
                 else:
                     keep_proofs.append(each)
-                    self.logger.debug(f"keep {each.amount}, {each.secret}")
-            self.logger.debug(f"spend proofs: {spend_proofs}") 
-            self.logger.debug(f"keep proofs:  {keep_proofs}")
+                    self.logger.debug("op=pay_multi_invoice status=retain_proof amount=%s", each.amount)
+            self.logger.debug(
+                "op=pay_multi_invoice status=proof_selection spend_count=%s spend_amount=%s keep_count=%s keep_amount=%s",
+                len(spend_proofs),
+                sum(each.amount for each in spend_proofs),
+                len(keep_proofs),
+                sum(each.amount for each in keep_proofs),
+            )
             melt_proofs = []
             for each_proof in spend_proofs:
                     melt_proofs.append(each_proof.to_dict())
@@ -6535,9 +6573,8 @@ class Acorn:
             final_fees = amount_needed - ln_amount
             msg_out = f"Paid {ln_amount} sats with fees {final_fees} sats successful!"
             self.logger.info(
-                "op=pay_multi_invoice status=complete quote=%s source=%s",
-                post_melt_response.quote,
-                outcome["source"],
+                    "op=pay_multi_invoice status=complete source=%s",
+                    outcome["source"],
             )
             return msg_out, final_fees, payment_hash, payment_preimage, description_hash
         except (PaymentOutcomeUnknownError, PaymentFinalizationError, PaymentFailedError):
@@ -6623,7 +6660,7 @@ class Acorn:
             for each in self.proof_event_ids:
                 tags.append(["e",each])
             tags.append(["k","7375"])
-            self.logger.debug(f"tags for proof events to delete {tags}")
+            self.logger.debug("op=delete_proof_events status=prepared tags=%s", len(tags))
             # print(f"tags for proof events to delete {tags}")
             
             async with ClientPool([self.home_relay]) as c:
@@ -7577,7 +7614,10 @@ class Acorn:
                 r = blinded_values[i][1]
                 secret_msg = blinded_values[i][2]
                 Y: PublicKey = hash_to_curve(secret_msg.encode("utf-8"))
-                self.logger.debug(f"{pub_key_c} {promise_amount},{A}, {r}")
+                self.logger.debug(
+                    "op=swap_for_payment_multi status=unblind amount=%s",
+                    promise_amount,
+                )
                 C = step3_alice(pub_key_c,r,pub_key_a)
                 
                 proof = Proof(  amount=promise_amount,
@@ -7694,7 +7734,10 @@ class Acorn:
                 r = blinded_values[i][1]
                 secret_msg = blinded_values[i][2]
                 Y: PublicKey = hash_to_curve(secret_msg.encode("utf-8"))
-                self.logger.debug(f"{pub_key_c} {promise_amount},{A}, {r}")
+                self.logger.debug(
+                    "op=swap_for_payment_inputs status=unblind amount=%s",
+                    promise_amount,
+                )
                 C = step3_alice(pub_key_c,r,pub_key_a)
                 
                 proof = Proof(  amount=promise_amount,
@@ -7726,7 +7769,7 @@ class Acorn:
         tendered_amount: float | None = None,
         tendered_currency: str = "SAT",
     ):
-        self.logger.debug("op=accept_token status=start comment=%s", comment)
+        self.logger.debug("op=accept_token status=start token_bytes=%s", len(cashu_token))
         # asyncio.run(self.nip17_accept(cashu_token))
         # msg_out, token_accepted_amount = await self._async_token_accept(cashu_token)
         # self.set_wallet_info(label="trusted_mints", label_info=json.dumps(self.trusted_mints))
@@ -7889,12 +7932,17 @@ class Acorn:
                 sum_proofs += each.amount
                 if sum_proofs <= amount:
                     spend_proofs.append(each)
-                    self.logger.debug(f"pay with {each.amount}, {each.secret}")
+                    self.logger.debug("op=issue_token status=select_proof amount=%s", each.amount)
                 else:
                     keep_proofs.append(each)
-                    self.logger.debug(f"keep {each.amount}, {each.secret}")
-            self.logger.debug(f"spend proofs: {spend_proofs}") 
-            self.logger.debug(f"keep proofs: {keep_proofs}")
+                    self.logger.debug("op=issue_token status=retain_proof amount=%s", each.amount)
+            self.logger.debug(
+                "op=issue_token status=proof_selection spend_count=%s spend_amount=%s keep_count=%s keep_amount=%s",
+                len(spend_proofs),
+                sum(each.amount for each in spend_proofs),
+                len(keep_proofs),
+                sum(each.amount for each in keep_proofs),
+            )
 
             for each in keep_proofs:
                 proofs_from_keyset.append(each)
@@ -8022,9 +8070,12 @@ class Acorn:
             events = await c.query(filter)
         try:
             event = events[0]  
-            self.logger.debug(f"event: {event}")  
-            json_str =   f"{event.id}  {event.pub_key}  {event.content} {event.tags}"
-            self.logger.debug(f"json_str: {json_str}")
+            self.logger.debug(
+                "op=zap status=target_event event_id=%s kind=%s tags=%s",
+                event.id,
+                event.kind,
+                len(event.tags),
+            )
             # json_obj = json.loads(json_str)
             # json_obj = json.loads(json_str)
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
@@ -8038,7 +8089,7 @@ class Acorn:
             if not each or each[0] != "zap":
                 continue
             if len(each) < 2 or not each[1]:
-                self.logger.warning("op=zap status=skip_invalid_zap_tag tag=%s", each)
+                self.logger.warning("op=zap status=skip_invalid_zap_tag")
                 continue
             relay_hint = each[2] if len(each) > 2 else None
             weight_str = each[3] if len(each) > 3 else "1"
@@ -8104,14 +8155,12 @@ class Acorn:
             try:
                 self.logger.debug("getting profile")
                 event_profile = events_profile[0]  
-                self.logger.debug(event)  
                 profile_str =   event_profile.content
-                self.logger.debug(f"profile {profile_str}")
                 profile_obj = json.loads(profile_str)
                 lnaddress = profile_obj.get("lud16")
                 if not lnaddress:
                     raise ValueError("profile missing lud16")
-                self.logger.debug(f" Pay to:{lnaddress}, {lnaddress_to_lnurl(lnaddress)}")
+                self.logger.debug("op=zap status=profile_payment_address_found")
 
                 
             except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
@@ -8140,24 +8189,25 @@ class Acorn:
                                 pub_key=self.pubkey_hex                            
                                 )
             zap_request.sign(self.privkey_hex)
-            self.logger.debug(f"zap is valid: {zap_request.is_valid()}")
-            self.logger.debug(f" {zap_request}, {zap_request.tags}, {zap_request.id}")
-            self.logger.debug(f"serialize: {zap_request.serialize()}")
-            self.logger.debug(f"to_dict: {zap_request.to_dict()}")
             zap_dict= zap_request.to_dict()
-            self.logger.debug(f"zap_dict: {zap_dict}" )
+            self.logger.debug(
+                "op=zap status=request_ready event_id=%s valid=%s tags=%s amount=%s",
+                zap_request.id,
+                zap_request.is_valid(),
+                len(zap_request.tags),
+                zap_amount,
+            )
             
             zap_test = Event().load(zap_dict)
             self.logger.debug(f"zap_test.id: {zap_test.id}")
-            self.logger.debug(f"zap test  {zap_test}, {zap_test.is_valid()}")
+            self.logger.debug("op=zap status=request_roundtrip valid=%s", zap_test.is_valid())
             try:
                 pr, _, _ = await asyncio.to_thread(zap_address_pay, zap_amount, lnaddress, zap_dict)
             except Exception as exc:
                 skipped_invoice_requests += 1
                 last_invoice_error = str(exc)
                 self.logger.error(
-                    "op=zap status=skip_invoice_request lnaddress=%s amount=%s error=%s",
-                    lnaddress,
+                    "op=zap status=skip_invoice_request amount=%s error=%s",
                     zap_amount,
                     exc,
                 )
@@ -8166,13 +8216,12 @@ class Acorn:
                 skipped_invoice_requests += 1
                 last_invoice_error = "zap callback returned invalid invoice"
                 self.logger.error(
-                    "op=zap status=skip_invoice_request lnaddress=%s amount=%s error=%s",
-                    lnaddress,
+                    "op=zap status=skip_invoice_request amount=%s error=%s",
                     zap_amount,
                     last_invoice_error,
                 )
                 continue
-            self.logger.debug(f"pay this invoice from the safebox: {pr}")
+            self.logger.debug("op=zap status=invoice_received amount=%s", zap_amount)
             prs.append(pr)
 
         if not prs:
@@ -8197,14 +8246,12 @@ class Acorn:
             try:
                 self.logger.debug("getting profile")
                 event_profile = events_profile[0]  
-                self.logger.debug(event_profile)  
                 profile_str =   event_profile.content
-                self.logger.debug(f"profile {profile_str}")
                 profile_obj = json.loads(profile_str)
                 lnaddress = profile_obj.get("lud16")
                 if not lnaddress:
                     raise ValueError("profile missing lud16")
-                self.logger.debug(f" Pay to:{lnaddress}, {lnaddress_to_lnurl(lnaddress)}")
+                self.logger.debug("op=zap status=profile_payment_address_found")
 
                 # Now we can create zap request
                 self.logger.debug("create zap request for profile")
@@ -8224,16 +8271,18 @@ class Acorn:
                                     pub_key=self.pubkey_hex                            
                                     )
                 zap_request.sign(self.privkey_hex)
-                self.logger.debug(f"zap is valid: {zap_request.is_valid()}")
-                self.logger.debug(f" {zap_request}, {zap_request.tags}, {zap_request.id}")
-                self.logger.debug(f"serialize: {zap_request.serialize()}")
-                self.logger.debug(f"to_dict: {zap_request.to_dict()}")
                 zap_dict= zap_request.to_dict()
-                self.logger.debug(f"zap_dict: {zap_dict}" )
+                self.logger.debug(
+                    "op=zap status=request_ready event_id=%s valid=%s tags=%s amount=%s",
+                    zap_request.id,
+                    zap_request.is_valid(),
+                    len(zap_request.tags),
+                    amount,
+                )
                 
                 zap_test = Event().load(zap_dict)
                 self.logger.debug(f"zap_test.id: {zap_test.id}")
-                self.logger.debug(f"zap test  {zap_test}, {zap_test.is_valid()}")
+                self.logger.debug("op=zap status=request_roundtrip valid=%s", zap_test.is_valid())
 
                 #### End of Zap stuff
 
@@ -8249,8 +8298,7 @@ class Acorn:
                     skipped_invoice_requests += 1
                     last_invoice_error = str(exc)
                     self.logger.error(
-                        "op=zap status=skip_profile_invoice_request lnaddress=%s amount=%s error=%s",
-                        lnaddress,
+                        "op=zap status=skip_profile_invoice_request amount=%s error=%s",
                         amount,
                         exc,
                     )
@@ -8258,14 +8306,13 @@ class Acorn:
                     skipped_invoice_requests += 1
                     last_invoice_error = "zap callback returned invalid invoice"
                     self.logger.error(
-                        "op=zap status=skip_profile_invoice_request lnaddress=%s amount=%s error=%s",
-                        lnaddress,
+                        "op=zap status=skip_profile_invoice_request amount=%s error=%s",
                         amount,
                         last_invoice_error,
                     )
                     raise RuntimeError(last_invoice_error)
 
-                self.logger.debug(f"zap pr: {pr}")
+                self.logger.debug("op=zap status=invoice_received amount=%s", amount)
                 prs.append(pr)
                
                 
@@ -8396,7 +8443,10 @@ class Acorn:
                                     
                                 
                             elif each.startswith("creqA"):
-                                self.logger.debug("op=listen_notes status=request_found token=%s", each)
+                                self.logger.debug(
+                                    "op=listen_notes status=request_found token_bytes=%s",
+                                    len(each),
+                                )
                     
 
 
@@ -8754,7 +8804,7 @@ class Acorn:
             # delete_result = client_xfer.delete_blob(server=blossom_xfer_server,sha256=sha256)
             # print(f"Delete result: {delete_result}")
         else:
-            self.logger.debug("op=create_grant_from_offer status=no_blob offer=%s kind=%s", offer_name, offer_kind)
+            self.logger.debug("op=create_grant_from_offer status=no_blob kind=%s", offer_kind)
 
 
         issued_private_record: Event = await self.issue_private_record(content=safebox_record.payload,holder=h_pubhex,kind=grant_kind, origsha256=origsha256)
@@ -8787,7 +8837,7 @@ class Acorn:
         
         # Get the grant record to send
 
-        self.logger.debug("op=create_request_from_grant status=load_record grant=%s kind=%s", grant_name, grant_kind)
+        self.logger.debug("op=create_request_from_grant status=load_record kind=%s", grant_kind)
         safebox_record: SafeboxRecord = await self.get_record_safebox(record_name=grant_name,record_kind=grant_kind)
         
         self.logger.debug("op=create_request_from_grant status=payload_loaded")
@@ -8859,7 +8909,7 @@ class Acorn:
             # delete_result = client_xfer.delete_blob(server=blossom_xfer_server,sha256=sha256)
             # print(f"Delete result: {delete_result}")
         else:
-            self.logger.debug("op=create_request_from_grant status=no_blob grant=%s kind=%s", grant_name, grant_kind)
+            self.logger.debug("op=create_request_from_grant status=no_blob kind=%s", grant_kind)
 
 
         # print(f"issued grant: {issued_grant_record.data()}")
@@ -8904,7 +8954,7 @@ class Acorn:
             events = await c.query(FILTER)
             if events:
                 for each in events:
-                    self.logger.debug("op=get_trusted_entities status=follow_tags event=%s tags=%s", each.id, each.tags)
+                    self.logger.debug("op=get_trusted_entities status=follow_tags event=%s count=%s", each.id, len(each.tags))
                     for each_tag in each.tags:
                         if each_tag[0] == "p":
                             pubhex_list_out.append(each_tag[1])

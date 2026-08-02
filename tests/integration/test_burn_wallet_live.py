@@ -95,9 +95,8 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
     test_nsec = test_wallet_config["nsec"]
     test_relay = test_wallet_config["home_relay"]
     transfer_relay = get_test_transfer_relay(test_relay, relay=relay_scenario["relay"])
-    receive_nsec = os.getenv("ACORN_RECEIVE_NSEC") or test_nsec
-    if receive_nsec == test_nsec:
-        live_progress("burn test: receive nsec inherited from disposable wallet")
+    receive_nsec = test_nsec
+    live_progress("burn test: receive nsec inherited from disposable wallet")
     test_recipient = Keys(priv_k=receive_nsec).public_key_bech32()
     source_recipient = Keys(priv_k=source_nsec).public_key_bech32()
 

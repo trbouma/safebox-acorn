@@ -344,17 +344,18 @@ acorn receive-ecash --since 1780000000
 Use a transient receiving key without storing it:
 
 ```sh
-acorn receive-ecash --receive-nsec nsec1...
+acorn receive-ecash --receive-key
 ```
 
-When `--receive-nsec` is supplied and `--relay` is omitted, Acorn attempts to
+When `--receive-key` or `--receive-nsec-file` is supplied and `--relay` is
+omitted, Acorn attempts to
 discover receive relays from the transient key's kind `0` profile and verified
 NIP-05 relay hints.
 
 Receive a specific event directly:
 
 ```sh
-acorn receive-ecash --event-id <kind-1059-or-7378-event-id> --receive-nsec nsec1...
+acorn receive-ecash --event-id <kind-1059-or-7378-event-id> --receive-key
 ```
 
 Direct event-id receive is useful when a relay stores the event but does not

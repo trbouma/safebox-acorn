@@ -63,10 +63,12 @@ Example format:
 word1 word2 word3 ...
 ```
 
-The seed phrase can be used with:
+The seed phrase is entered once at a hidden prompt. BIP39 checksum validation
+detects an invalid phrase without requiring the user to enter all 12 or 24
+words twice:
 
 ```sh
-acorn recover "<seed phrase>" --homerelay <home relay>
+acorn recover --homerelay <home relay>
 ```
 
 ### External entropy
@@ -138,7 +140,8 @@ hex keys, access keys, balances, or record contents.
 To recover on a fresh machine:
 
 1. Install Acorn.
-2. Run `acorn recover` with the seed phrase and home relay.
+2. Run `acorn recover` with the home relay and enter the seed phrase at the
+   hidden prompt.
 3. Acorn derives the `nsec`.
 4. Acorn verifies that wallet data exists on the home relay.
 5. Acorn writes the local minimal config.
@@ -146,7 +149,7 @@ To recover on a fresh machine:
 Example:
 
 ```sh
-acorn recover "word1 word2 word3 ..." --homerelay relay.getsafebox.app
+acorn recover --homerelay relay.getsafebox.app
 ```
 
 Relay names are normalized so a bare relay hostname becomes:
@@ -171,6 +174,11 @@ not as plaintext local config.
 
 - Do not paste recovery output into chats, logs, issue trackers, screenshots, or
   terminal transcripts that may be retained.
+- Never put a seed phrase or `nsec` directly in a command argument or
+  environment variable. Shell history, process inspection, crash reporting,
+  and diagnostics can retain those values.
+- For automation, use `--seed-file` with an owner-only (`0600`) regular file,
+  or use `--seed-file - --yes` and provide the phrase on stdin.
 - Do not run `--show-recovery` in a shared screen session.
 - Prefer writing recovery material to an offline password manager or physical
   backup.

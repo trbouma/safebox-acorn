@@ -45,8 +45,8 @@ Configuration creation must be intentional. Supported creation paths are:
 
 ```sh
 acorn init
-acorn recover "<seed phrase>"
-acorn set --nsec nsec1... --home relay.example.com
+acorn recover --homerelay relay.example.com
+acorn set --import-nsec --home relay.example.com
 ```
 
 An ordinary command without an initialized config should explain how to run
@@ -198,8 +198,10 @@ Human flow:
 - if an existing config is present, show that an existing wallet was detected;
 - offer to display existing bootstrap/recovery material before continuing;
 - require confirmation before replacing the local config;
-- prompt for `nsec`, home relay, and home mint;
-- generate a new `nsec` if none is supplied;
+- generate a new `nsec` by default;
+- import an existing `nsec` only through `--import-nsec` and a hidden prompt,
+  or through `--nsec-file`;
+- prompt for home relay and home mint;
 - accept externally generated 256-bit entropy through `--entropy` and a hidden,
   confirmed prompt;
 - use default home relay and home mint if blank/default choices are accepted;
@@ -214,8 +216,8 @@ acorn init --entropy
 The prompt accepts exactly 64 hexadecimal characters (32 bytes). Acorn encodes
 those bytes as a 24-word English BIP39 phrase and derives the wallet `nsec`
 through the same SLIP-10 secp256k1 path used by `acorn recover`. It does not hash
-the supplied value again. `--entropy` is mutually exclusive with `--nsec` and
-`--keepkey`.
+the supplied value again. `--entropy` is mutually exclusive with
+`--import-nsec`, `--nsec-file`, and `--keepkey`.
 
 The entropy is intentionally entered through a hidden prompt rather than as a
 command-line value. `--force` and `--json` do not remove that prompt. Normal
@@ -315,9 +317,15 @@ Receiving ecash is an explicit mutating operation. It may accept a token through
 the mint, refresh proofs, write updated kind `7375` proof state, and write kind
 `7377` transaction history. It must not be hidden inside `acorn balance`.
 
-When `--receive-nsec` is supplied, the key is transient receiving material. It
-may be used to unwrap incoming transfer events, but it must not be stored in the
-wallet config.
+When `--receive-key` is supplied, Acorn obtains transient receiving material
+through a hidden prompt. `--receive-nsec-file` provides the protected
+file/stdin automation path. The key may be used to unwrap incoming transfer
+events, but it must not be stored in the wallet config.
+
+Seed phrases, external entropy, and private keys must never be accepted as
+command argument values or test environment variables. Named secret files must
+be regular files with mode `0600`; `-` means stdin. See
+[Secret Input Specification](SECRET-INPUT-SPEC.md).
 
 JSON output for these commands should include enough protocol detail for
 scripts to distinguish transport from transfer intent, including:

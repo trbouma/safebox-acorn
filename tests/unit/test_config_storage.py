@@ -10,6 +10,7 @@ import sys
 
 import pytest
 import yaml
+from monstr.encrypt import Keys
 
 from acorn import config as config_storage
 
@@ -252,6 +253,7 @@ def test_cli_set_can_intentionally_create_private_custom_config(monkeypatch, tmp
     config_path = tmp_path / "profiles" / "wallet.yml"
 
     from click.testing import CliRunner
+    secret_nsec = Keys().private_key_bech32()
 
     result = CliRunner().invoke(
         cli.cli,
@@ -259,18 +261,18 @@ def test_cli_set_can_intentionally_create_private_custom_config(monkeypatch, tmp
             "--config",
             str(config_path),
             "set",
-            "--nsec",
-            "nsec1secret",
+            "--import-nsec",
             "--home",
             "relay.example.com",
         ],
+        input=f"{secret_nsec}\n{secret_nsec}\n",
     )
 
     assert result.exit_code == 0
-    assert "nsec1secret" not in result.output
+    assert secret_nsec not in result.output
     assert "<redacted" in result.output
     assert config_storage.load_config(config_path) == {
-        "nsec": "nsec1secret",
+        "nsec": secret_nsec,
         "home_relay": "wss://relay.example.com",
     }
     assert _mode(config_path.parent) == 0o700

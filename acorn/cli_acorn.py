@@ -1,4 +1,5 @@
-import asyncio, sys, click, os, yaml, logging
+import asyncio, sys, click, os, yaml, logging, stat
+from pathlib import Path
 from typing import List
 from monstr.encrypt import Keys
 from monstr.client.client import Client, ClientPool
@@ -45,7 +46,6 @@ from acorn.prompts import (
     WELCOME_MSG,
     INFO_HELP,
     SET_HELP,
-    NSEC_HELP,
     RELAYS_HELP,
     HOME_RELAY_HELP,
     MINTS_HELP,
@@ -77,11 +77,6 @@ def _normalize_mint(mint: str) -> str:
     if mint.startswith(("https://", "http://")):
         return mint
     return f"https://{mint}"
-
-
-def _looks_like_relay(value: str) -> bool:
-    value = str(value).strip()
-    return value.startswith(("wss://", "ws://"))
 
 
 def _split_csv(value: str) -> list[str]:
@@ -117,6 +112,58 @@ def _format_recovery_material(recovery: dict) -> str:
             f"nsec: {recovery.get('nsec')}",
         ]
     )
+
+
+def _read_secret_file(secret_file: str, label: str) -> str:
+    """Read a secret from stdin or a permission-restricted regular file."""
+    if secret_file == "-":
+        value = sys.stdin.read().strip()
+    else:
+        path = Path(secret_file).expanduser()
+        try:
+            file_stat = path.stat()
+        except OSError as exc:
+            raise click.ClickException(f"Unable to read {label} file: {exc}") from exc
+        if not stat.S_ISREG(file_stat.st_mode):
+            raise click.ClickException(f"{label.capitalize()} file must be a regular file: {path}")
+        if stat.S_IMODE(file_stat.st_mode) & 0o077:
+            raise click.ClickException(
+                f"{label.capitalize()} file permissions are too open: {path}. "
+                "Use chmod 600 and try again."
+            )
+        try:
+            value = path.read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise click.ClickException(f"Unable to read {label} file: {exc}") from exc
+    if not value:
+        raise click.ClickException(f"{label.capitalize()} input is empty.")
+    return value
+
+
+def _prompt_secret(prompt: str, confirmation_prompt: str | None = None) -> str:
+    """Prompt for a secret without echoing it or placing it in process arguments."""
+    prompt_options = {"hide_input": True, "err": True}
+    if confirmation_prompt:
+        prompt_options["confirmation_prompt"] = confirmation_prompt
+    return click.prompt(prompt, **prompt_options).strip()
+
+
+def _private_key_from_secure_input(
+    prompt_requested: bool,
+    secret_file: str | None,
+    *,
+    confirm: bool = False,
+) -> str | None:
+    if prompt_requested and secret_file:
+        raise click.ClickException("Use either the hidden private-key prompt or --nsec-file, not both.")
+    if secret_file:
+        return _read_secret_file(secret_file, "private key")
+    if prompt_requested:
+        return _prompt_secret(
+            "nsec private key",
+            "Repeat nsec private key" if confirm else None,
+        )
+    return None
 
 def _extract_early_config_path(argv: list[str] | None = None) -> str | None:
     args = list(sys.argv[1:] if argv is None else argv)
@@ -443,7 +490,17 @@ def info(ctx, json_output):
 
 @click.command(help="initialize a new acorn wallet")
 
-@click.option("--nsec", "-n", default=None, help=NSEC_HELP)
+@click.option(
+    "--import-nsec",
+    is_flag=True,
+    help="Import an existing nsec through a hidden prompt.",
+)
+@click.option(
+    "--nsec-file",
+    default=None,
+    metavar="PATH",
+    help="Read an existing nsec from a chmod-600 file, or '-' for stdin.",
+)
 @click.option(
     "--entropy",
     "use_entropy",
@@ -461,13 +518,15 @@ def info(ctx, json_output):
     help="Include the seed phrase and nsec in JSON output. Requires --json.",
 )
 
-def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, include_recovery):
+def init(import_nsec, nsec_file, use_entropy, keepkey, homerelay, mint, force, json_output, include_recovery):
     if include_recovery and not json_output:
         raise click.ClickException("--include-recovery requires --json")
-    if use_entropy and nsec:
-        raise click.ClickException("--entropy and --nsec are mutually exclusive")
+    if use_entropy and (import_nsec or nsec_file):
+        raise click.ClickException("--entropy cannot be combined with --import-nsec or --nsec-file")
     if use_entropy and keepkey:
         raise click.ClickException("--entropy and --keepkey are mutually exclusive")
+    if keepkey and (import_nsec or nsec_file):
+        raise click.ClickException("--keepkey cannot be combined with --import-nsec or --nsec-file")
 
     existing_nsec = config_obj.get("nsec")
     existing_home_relay = config_obj.get("home_relay")
@@ -545,9 +604,9 @@ def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, includ
         if not force and not click.confirm("Initialize a new wallet and replace the local Acorn config?", default=False):
             raise click.ClickException("Initialization cancelled.")
 
-    prompted_nsec = nsec
+    prompted_nsec = _private_key_from_secure_input(import_nsec, nsec_file)
     supplied_seed_phrase = None
-    key_source = "imported_nsec" if nsec else "acorn_generated"
+    key_source = "imported_nsec" if prompted_nsec else "acorn_generated"
     if use_entropy:
         entropy_hex = click.prompt(
             "256-bit entropy (64 hexadecimal characters)",
@@ -565,18 +624,6 @@ def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, includ
         if prompted_nsec:
             key_source = "existing_nsec"
     generated_nsec = False
-    if not prompted_nsec and not (force or json_output):
-        prompted_nsec = click.prompt(
-            "nsec private key (leave blank to generate a new wallet key)",
-            default="",
-            show_default=False,
-        ).strip()
-    if prompted_nsec and _looks_like_relay(prompted_nsec) and not homerelay:
-        homerelay = prompted_nsec
-        prompted_nsec = ""
-        key_source = "acorn_generated"
-        if not json_output:
-            click.echo("Relay URL detected; using it as the home relay and generating a new nsec.")
     if prompted_nsec:
         try:
             Keys(priv_k=prompted_nsec)
@@ -732,7 +779,8 @@ def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, includ
 
 
 @click.command("set", help="set local config options")
-@click.option('--nsec', '-n', default=None, help=NSEC_HELP)
+@click.option('--import-nsec', is_flag=True, help='Replace the nsec through a hidden, confirmed prompt')
+@click.option('--nsec-file', default=None, metavar='PATH', help="Read replacement nsec from a chmod-600 file, or '-' for stdin")
 @click.option('--relays', '-r', default=None, help=RELAYS_HELP)
 @click.option('--home', '-h', default=None, help=HOME_RELAY_HELP)
 @click.option('--mints', '-m', default=None, help=MINTS_HELP)
@@ -743,7 +791,13 @@ def init(nsec, use_entropy, keepkey, homerelay, mint, force, json_output, includ
 @click.option('--show-recovery', is_flag=True, help='show recovery information: seed phrase and home relay')
 @click.option('--logging', '-l', default=None, help='set logging level')
 @click.option('--minimal', is_flag=True, help='rewrite config with only nsec and home_relay')
-def set(nsec, home, relays, mints, xrelays, public_relays, show_public_relays, show_mint, show_recovery, logging: int, minimal):
+def set(import_nsec, nsec_file, home, relays, mints, xrelays, public_relays, show_public_relays, show_mint, show_recovery, logging: int, minimal):
+    nsec = _private_key_from_secure_input(import_nsec, nsec_file, confirm=True)
+    if nsec is not None:
+        try:
+            Keys(priv_k=nsec)
+        except Exception as exc:
+            raise click.ClickException(f"Invalid nsec: {exc}") from exc
     
     if nsec == None and relays == None and mints == None and home == None and xrelays==None and public_relays == None and not show_public_relays and not show_mint and not show_recovery and logging == None and not minimal:
         click.echo(yaml.safe_dump(_config_for_display(config_obj), default_flow_style=False, sort_keys=False))
@@ -1638,11 +1692,18 @@ def balance(json_output, show_mints):
 @click.command("receive-ecash", help="Receive Acorn ecash transfers into this Acorn")
 @click.option("--since", default=None, type=int, help="Override incoming ecash transfer cursor.")
 @click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps or direct kind 7378 transfers.")
-@click.option("--receive-nsec", default=None, help="Transient receiving nsec used only to decrypt incoming transfers; it is not stored.")
+@click.option("--receive-key", is_flag=True, help="Prompt privately for a transient receiving nsec; it is not stored.")
+@click.option("--receive-nsec-file", default=None, metavar="PATH", help="Read a transient receiving nsec from a chmod-600 file, or '-' for stdin.")
 @click.option("--event-id", default=None, help="Receive a specific kind 1059 gift-wrap or direct kind 7378 event id; bypasses recipient tag and cursor query.")
 @click.option("--no-advance", is_flag=True, help="Do not advance the stored receive cursor.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
-def receive_ecash(since, relay, receive_nsec, event_id, no_advance, json_output):
+def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_advance, json_output):
+    receive_nsec = _private_key_from_secure_input(receive_key, receive_nsec_file)
+    if receive_nsec is not None:
+        try:
+            Keys(priv_k=receive_nsec)
+        except Exception as exc:
+            raise click.ClickException(f"Invalid receiving nsec: {exc}") from exc
     sweep_relays = [_normalize_relay(relay)] if relay else None
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -1921,13 +1982,19 @@ def run(relays):
     asyncio.run(acorn_obj.load_data())    
     acorn_obj.run(relay_array)
 
-@click.command("recover", help='Recover a wallet from seed phrase')
-@click.argument('seedphrase', default=None)
+@click.command("recover", help='Recover a wallet from a privately entered seed phrase')
+@click.option('--seed-file', default=None, metavar='PATH', help="Read the seed phrase from a chmod-600 file, or '-' for stdin")
 @click.option('--homerelay','-h', default=HOME_RELAY)
 @click.option('--legacy', is_flag=True, default=False, help='Use legacy key derivation (default: False)')
-def recover(seedphrase, homerelay, legacy):
-    if not seedphrase:
-        raise click.ClickException("Missing seed phrase. Usage: acorn recover \"word1 word2 ...\"")
+@click.option('--yes', '-y', is_flag=True, help="Skip the recovery confirmation; required with --seed-file '-'")
+def recover(seed_file, homerelay, legacy, yes):
+    if seed_file == "-" and not yes:
+        raise click.ClickException("--seed-file '-' requires --yes because stdin cannot also answer the confirmation prompt.")
+    seedphrase = (
+        _read_secret_file(seed_file, "seed phrase")
+        if seed_file
+        else _prompt_secret("BIP39 seed phrase")
+    )
 
     normalized_seedphrase = " ".join(seedphrase.strip().split())
     try:
@@ -1950,7 +2017,7 @@ def recover(seedphrase, homerelay, legacy):
         else:
             home_relay = f"wss://{homerelay}"
     
-    if click.confirm(f"Do you want to recover to this wallet using {home_relay}?"):
+    if yes or click.confirm(f"Do you want to recover to this wallet using {home_relay}?"):
         wallet_obj = Acorn(nsec=nsec, relays=RELAYS, home_relay=home_relay, logging_level=LOGGING_LEVEL)
         try:
             asyncio.run(wallet_obj.load_data())

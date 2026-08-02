@@ -236,17 +236,6 @@ def require_env_value(name: str, *fallback_names: str) -> str:
     pytest.skip(f"missing env var: one of {expected}")
 
 
-def get_receive_nsec(source_config: dict) -> str:
-    receive_nsec = os.getenv("ACORN_RECEIVE_NSEC")
-    if receive_nsec:
-        return receive_nsec
-    receive_nsec = source_config.get("nsec")
-    if not receive_nsec:
-        pytest.skip("missing receive nsec: set ACORN_RECEIVE_NSEC or provide source wallet nsec")
-    live_progress("receive nsec inherited from source wallet")
-    return receive_nsec
-
-
 def require_config(path: str | Path, label: str) -> dict:
     config_path = Path(path).expanduser()
     if not config_path.is_absolute():
@@ -284,25 +273,11 @@ def optional_config(path: str | Path) -> dict | None:
 
 
 def require_source_config() -> dict:
-    if os.getenv("ACORN_SOURCE_NSEC") and os.getenv("ACORN_SOURCE_RELAY"):
-        return {
-            "nsec": os.environ["ACORN_SOURCE_NSEC"],
-            "home_relay": os.environ["ACORN_SOURCE_RELAY"],
-            "_path": "(ACORN_SOURCE_NSEC/ACORN_SOURCE_RELAY)",
-        }
-
     source_path = os.getenv("ACORN_SOURCE_CONFIG", "~/.acorn/config.yml")
     return require_config(source_path, "source wallet")
 
 
 def optional_source_config() -> dict | None:
-    if os.getenv("ACORN_SOURCE_NSEC") and os.getenv("ACORN_SOURCE_RELAY"):
-        return {
-            "nsec": os.environ["ACORN_SOURCE_NSEC"],
-            "home_relay": os.environ["ACORN_SOURCE_RELAY"],
-            "_path": "(ACORN_SOURCE_NSEC/ACORN_SOURCE_RELAY)",
-        }
-
     source_path = os.getenv("ACORN_SOURCE_CONFIG", "~/.acorn/config.yml")
     return optional_config(source_path)
 

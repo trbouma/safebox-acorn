@@ -87,8 +87,8 @@ should reproduce both the phrase and the `nsec` exactly.
 
 `--entropy` is mutually exclusive with:
 
-- `--nsec`, because one path derives a new key while the other imports a final
-  private key; and
+- `--import-nsec` or `--nsec-file`, because one path derives a new key while
+  the other imports a final private key; and
 - `--keepkey`, because external entropy intentionally selects a new identity.
 
 The home relay and mint can still be supplied normally:
@@ -129,7 +129,7 @@ material.
 An external-entropy wallet can be recovered with the resulting 24-word phrase:
 
 ```sh
-acorn recover "<24-word phrase>" --homerelay relay.example.com
+acorn recover --homerelay relay.example.com
 ```
 
 Recovery derives the same `nsec`, verifies that the selected relay contains
@@ -211,7 +211,7 @@ deletion remains advisory under NIP-09 even when the test passes.
 | --- | --- | --- | --- |
 | `acorn init` with blank key | Acorn CSPRNG | 12-word BIP39 phrase | Phrase plus home relay |
 | `acorn init --entropy` | External 256-bit source | 24-word BIP39 phrase | Phrase plus home relay |
-| `acorn init --nsec …` or prompted nsec | External final private key | Unavailable | `nsec` plus home relay |
+| `acorn init --import-nsec` or `--nsec-file` | External final private key | Unavailable | `nsec` plus home relay |
 
 These paths create the same kind of Acorn component identity. They differ only
 in how the private key originates and which recovery representation is valid.

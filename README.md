@@ -312,7 +312,12 @@ acorn init --entropy
 Enter the 64-character hexadecimal value twice at the hidden prompt. Acorn
 encodes it as a 24-word BIP39 phrase and derives the wallet `nsec`; it does not
 hash the input again. Do not use the hash of a password or other guessable
-text. `--entropy` cannot be combined with `--nsec` or `--keepkey`.
+text. `--entropy` cannot be combined with `--import-nsec`, `--nsec-file`, or
+`--keepkey`.
+
+Recovery secrets are never accepted as command-line values or test environment
+variables. Use hidden prompts for interactive work, or an owner-only file/stdin
+for controlled automation. See [Secret Input Specification](docs/SECRET-INPUT-SPEC.md).
 
 See [External Entropy Initialization](docs/EXTERNAL-ENTROPY-INITIALIZATION.md)
 for the derivation contract, public compatibility vector, recovery behavior,

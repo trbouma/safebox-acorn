@@ -160,7 +160,14 @@ restore after proof rewrites. Before a pilot:
 - ensure proof replacement never reports success from a partial relay view;
 - preserve mint-to-keyset mappings across repair and migration;
 - test duplicate, stale, spent, pending, and unknown proofs;
-- record an operation identifier in logs without logging proof secrets.
+- record an operation identifier in logs without logging proof secrets;
+- enforce the [Secure Logging Specification](SECURE-LOGGING-SPEC.md) at every
+  log level, including DEBUG;
+- keep regression tests that reject proof, key, invoice, token, message, and
+  decrypted-record serialization in log calls; and
+- enforce the [Secret Input Specification](SECRET-INPUT-SPEC.md): recovery
+  secrets never travel in command arguments, test environment variables, or
+  permission-open files.
 
 The Lightning melt path now establishes a recovery baseline: it checkpoints
 post-swap proofs, stores an encrypted pending-melt journal, never repeats an
