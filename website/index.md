@@ -116,6 +116,20 @@ The model is closer to reciprocal safes than a shared folder: participants can
 host encrypted Acorn state for each other while each keyholder retains control
 over their own contents.
 
+## Security posture
+
+Acorn handles private keys, encrypted records, and spendable ecash, so security
+is treated as part of the component contract rather than an implied property.
+The project documents what is protected, what must still be trusted, which
+safeguards are implemented, and which risks remain.
+
+Acorn is currently unaudited developer-stage software. It should be used only
+with small test balances and non-critical records while fund-safety,
+concurrency, packaging, and pilot release gates are completed.
+
+[Read the security statement](security.md){ .md-button .md-button--primary }
+[Full technical security policy](https://github.com/trbouma/safebox-acorn/blob/main/SECURITY.md){ .md-button }
+
 ## Project status
 
 Acorn is under active development as a standalone component extracted from

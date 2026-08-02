@@ -107,12 +107,14 @@ reader-facing model; the repository documents provide implementation and
 operational detail.
 
 [View the release roadmap](https://github.com/trbouma/safebox-acorn/blob/main/docs/ROADMAP-TO-RELEASABILITY.md){ .md-button .md-button--primary }
+[Read the security statement](security.md){ .md-button }
 [View the source repository](https://github.com/trbouma/safebox-acorn){ .md-button }
 [Return to the Acorn home page](index.md){ .md-button }
 
 ## Reference basis
 
 - [Roadmap to Releasability](https://github.com/trbouma/safebox-acorn/blob/main/docs/ROADMAP-TO-RELEASABILITY.md)
+- [Security Policy and Residual Risks](https://github.com/trbouma/safebox-acorn/blob/main/SECURITY.md)
 - [Testing Guide](https://github.com/trbouma/safebox-acorn/blob/main/docs/TESTING.md)
 - [Relay Suitability Ledger](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-SUITABILITY-LEDGER.md)
 - [CLI and Safebox Interoperability](https://github.com/trbouma/safebox-acorn/blob/main/docs/ACORN-WEBAPP-INTEROPERABILITY.md)

@@ -46,6 +46,7 @@ nav:
   - Use Acorn:
       - Deployment and Trust: deployment-and-trust.md
       - Project Status: project-status.md
+  - Security: security.md
 
 markdown_extensions:
   - attr_list
