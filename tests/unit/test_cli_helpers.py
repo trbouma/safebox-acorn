@@ -808,6 +808,116 @@ def test_format_balance_by_mint(monkeypatch, tmp_path):
     assert "keyset keyset-b: 5 sats in 1 proofs" in rendered
 
 
+def test_lightning_capacity_uses_largest_mapped_keyset(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class Wallet:
+        known_mints = {
+            "keyset-a": "https://mint.one",
+            "keyset-b": "https://mint.two",
+        }
+
+        def _proofs_by_keyset(self):
+            return (
+                {
+                    "keyset-a": [object(), object()],
+                    "keyset-b": [object()],
+                    "unknown-keyset": [object()],
+                },
+                {
+                    "keyset-a": 131,
+                    "keyset-b": 1,
+                    "unknown-keyset": 500,
+                },
+            )
+
+    capacity = cli._lightning_capacity(Wallet())
+
+    assert capacity == {
+        "amount": 131,
+        "unit": "sat",
+        "mint": "https://mint.one",
+        "keyset": "keyset-a",
+        "proof_count": 2,
+        "constraint": "single_keyset",
+        "fee_reserve_included": False,
+    }
+
+    rendered = cli._format_lightning_capacity(capacity)
+    assert "up to 131 sats before mint fees" in rendered
+    assert "Mint: https://mint.one" in rendered
+    assert "Keyset: keyset-a" in rendered
+    assert "one keyset per Lightning payment" in rendered
+
+
+def test_lightning_capacity_reports_no_mapped_keyset(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class Wallet:
+        known_mints = {}
+
+        def _proofs_by_keyset(self):
+            return ({"unknown": [object()]}, {"unknown": 10})
+
+    capacity = cli._lightning_capacity(Wallet())
+
+    assert capacity["amount"] == 0
+    assert capacity["mint"] is None
+    assert "no mint-mapped spendable keyset" in cli._format_lightning_capacity(capacity)
+
+
+def test_balance_command_includes_lightning_capacity_in_text_and_json(
+    monkeypatch,
+    tmp_path,
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.proofs = [object(), object()]
+            self.known_mints = {
+                "keyset-large": "https://mint.one",
+                "keyset-small": "https://mint.two",
+            }
+
+        async def load_data(self):
+            return None
+
+        def get_balance(self):
+            return 132
+
+        def _proofs_by_keyset(self):
+            return (
+                {
+                    "keyset-large": [self.proofs[0]],
+                    "keyset-small": [self.proofs[1]],
+                },
+                {"keyset-large": 131, "keyset-small": 1},
+            )
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    text_result = CliRunner().invoke(cli.balance)
+    assert text_result.exit_code == 0
+    assert "132 sats in 2 proofs" in text_result.output
+    assert "up to 131 sats before mint fees" in text_result.output
+    assert "one keyset per Lightning payment" in text_result.output
+
+    json_result = CliRunner().invoke(cli.balance, ["--json"])
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    assert payload["balance"] == 132
+    assert payload["lightning_capacity"] == {
+        "amount": 131,
+        "unit": "sat",
+        "mint": "https://mint.one",
+        "keyset": "keyset-large",
+        "proof_count": 1,
+        "constraint": "single_keyset",
+        "fee_reserve_included": False,
+    }
+
+
 def test_format_proof_check_emphasizes_read_only_result(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 

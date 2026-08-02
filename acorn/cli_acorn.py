@@ -349,6 +349,57 @@ def _format_balance_by_mint(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _lightning_capacity(acorn_obj: Acorn) -> dict:
+    all_proofs, keyset_amounts = acorn_obj._proofs_by_keyset()
+    candidates = [
+        (str(keyset), int(amount), acorn_obj.known_mints.get(keyset))
+        for keyset, amount in keyset_amounts.items()
+        if int(amount) > 0 and acorn_obj.known_mints.get(keyset)
+    ]
+    if not candidates:
+        return {
+            "amount": 0,
+            "unit": "sat",
+            "mint": None,
+            "keyset": None,
+            "proof_count": 0,
+            "constraint": "single_keyset",
+            "fee_reserve_included": False,
+        }
+
+    keyset, amount, mint = sorted(
+        candidates,
+        key=lambda each: (-each[1], each[0]),
+    )[0]
+    return {
+        "amount": amount,
+        "unit": "sat",
+        "mint": mint,
+        "keyset": keyset,
+        "proof_count": len(all_proofs.get(keyset, [])),
+        "constraint": "single_keyset",
+        "fee_reserve_included": False,
+    }
+
+
+def _format_lightning_capacity(capacity: dict) -> str:
+    amount = int(capacity["amount"])
+    if amount <= 0:
+        return (
+            "Lightning payment capacity: 0 sats "
+            "(no mint-mapped spendable keyset)."
+        )
+
+    return "\n".join(
+        [
+            f"Lightning payment capacity: up to {amount} sats before mint fees.",
+            f"  Mint: {capacity['mint']}",
+            f"  Keyset: {capacity['keyset']}",
+            "  Limit: one keyset per Lightning payment.",
+        ]
+    )
+
+
 def _format_proof_check(report: dict) -> str:
     wallet = report["wallet"]
     confirmed = report["mint_confirmed_unspent"]
@@ -1674,18 +1725,21 @@ def balance(json_output, show_mints):
 
     balance_sats = acorn_obj.get_balance()
     proof_count = len(acorn_obj.proofs)
+    lightning_capacity = _lightning_capacity(acorn_obj)
     mint_balances = _balance_by_mint(acorn_obj) if show_mints else []
     if json_output:
         payload = {
             "balance": balance_sats,
             "unit": "sat",
             "proof_count": proof_count,
+            "lightning_capacity": lightning_capacity,
         }
         if show_mints:
             payload["mints"] = mint_balances
         _emit_json(payload)
     else:
         click.echo(f"{balance_sats} sats in {proof_count} proofs.")
+        click.echo(_format_lightning_capacity(lightning_capacity))
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))
 

@@ -4667,7 +4667,13 @@ class Acorn:
         
         return msg_out
 
-    async def add_proofs_obj(self,proofs_arg: List[Proof], replicate_relays: List[str]=None):
+    async def add_proofs_obj(
+        self,
+        proofs_arg: List[Proof],
+        replicate_relays: List[str] = None,
+        verify: bool = False,
+        verify_timeout: float = 8.0,
+    ):
         
         records_to_write = []
         # my_enc = NIP44Encrypt(self.k)
@@ -4686,6 +4692,7 @@ class Acorn:
         # Create the format for NIP 60 proofs
         #FIXME This is where the swap error handling needs to be fixed
         # proofs_arg[0].id - is null sometimes
+        published_events: List[Event] = []
         try:
             nip60_proofs = NIP60Proofs(mint=self.known_mints[proofs_arg[0].id])
             for each in proofs_arg:
@@ -4716,6 +4723,7 @@ class Acorn:
                                 content=payload_encrypt,
                                 pub_key=self.pubkey_hex)
                     n_msg.sign(self.privkey_hex)
+                    published_events.append(n_msg)
                     self.logger.debug(
                         "op=add_proofs_obj status=published event_id=%s kind=%s payload_bytes=%s",
                         n_msg.id,
@@ -4728,7 +4736,72 @@ class Acorn:
             self.logger.error("op=add_proofs_obj status=failed proofs=%s error=%s", len(proofs_arg), e)
             raise RuntimeError(f"Error writing proofs: {e}") from e
         
-        return
+        event_ids = [str(event.id) for event in published_events]
+        verification = {
+            relay: {"readable": False, "missing_event_ids": list(event_ids)}
+            for relay in write_relays
+        }
+        if verify:
+            deadline = monotonic() + max(0.5, float(verify_timeout))
+            verify_filter = [{
+                "limit": max(1, len(event_ids)),
+                "authors": [self.pubkey_hex],
+                "kinds": [7375],
+                "ids": event_ids,
+            }]
+            while monotonic() < deadline:
+                for relay in write_relays:
+                    if verification[relay]["readable"]:
+                        continue
+                    try:
+                        async with ClientPool([relay]) as c:
+                            observed = await c.query(verify_filter)
+                        observed_ids = {str(event.id) for event in observed}
+                        missing = [
+                            event_id for event_id in event_ids
+                            if event_id not in observed_ids
+                        ]
+                        verification[relay]["missing_event_ids"] = missing
+                        verification[relay]["readable"] = not missing
+                        verification[relay].pop("error", None)
+                    except Exception as exc:
+                        verification[relay]["error"] = str(exc)
+
+                if all(state["readable"] for state in verification.values()):
+                    break
+
+                # Re-publishing the same signed event is idempotent and helps
+                # when a relay connection closed before its first write was
+                # durably accepted.
+                for relay, state in verification.items():
+                    if state["readable"]:
+                        continue
+                    try:
+                        async with ClientPool([relay]) as c:
+                            for event in published_events:
+                                if str(event.id) in state["missing_event_ids"]:
+                                    c.publish(event)
+                    except Exception as exc:
+                        state["error"] = str(exc)
+                await asyncio.sleep(0.4)
+
+            failed = [
+                relay for relay, state in verification.items()
+                if not state["readable"]
+            ]
+            if failed:
+                raise RuntimeError(
+                    "Proof publish could not be verified on: "
+                    + ", ".join(failed)
+                )
+
+        return {
+            "status": "OK",
+            "event_ids": event_ids,
+            "relays": write_relays,
+            "verified": bool(verify),
+            "verification": verification,
+        }
 
 
 
@@ -5004,9 +5077,11 @@ class Acorn:
             # print("proofs:", len(self.proofs))
 
                 
-            # print("let's dedup proofs just in case")
-            #TODO this is to mitigate some dup errors reading from multiple relays
-            self.proofs = list(set(self.proofs))     
+            # Relay queries can return the same proof event more than once.
+            # Pydantic Proof objects are mutable and therefore unhashable, so
+            # deduplicate on the Cashu proof identity instead of using set().
+            self.proofs = self._deduplicate_proofs(self.proofs)
+            self.balance = sum(each.amount for each in self.proofs)
            
             
             return proofs
@@ -5015,6 +5090,14 @@ class Acorn:
 
     async def delete_proof_events(self):
         await self._async_delete_proof_events()
+
+    @staticmethod
+    def _deduplicate_proofs(proofs: List[Proof]) -> List[Proof]:
+        unique: dict[tuple[str, str], Proof] = {}
+        for proof in proofs:
+            proof_key = (str(proof.id), str(proof.secret))
+            unique.setdefault(proof_key, proof)
+        return list(unique.values())
 
     def _proofs_by_keyset(self):
         all_proofs = {}
@@ -7784,6 +7867,8 @@ class Acorn:
             
             token_amount =0
 
+            token_mints: set[str] = set()
+
             if cashu_token[:6] == "cashuA":
 
                 
@@ -7802,6 +7887,8 @@ class Acorn:
                         proof_obj_list.append(each_proof)
                         id = each_proof.id
                         self.known_mints[id]=each.mint
+                        if each.mint:
+                            token_mints.add(each.mint)
                         token_amount += each_proof.amount
                         # print(id, each.mint)
 
@@ -7817,12 +7904,26 @@ class Acorn:
                         proofs.append(each_proof.model_dump())
                         proof_obj_list.append(each_proof)
                         id = each_proof.id
+                        self.known_mints[id] = token_obj.mint
                         token_amount += each_proof.amount
-                    self.known_mints[id]=token_obj.mint
+                    if token_obj.mint:
+                        token_mints.add(token_obj.mint)
             else:
                 raise ValueError("Not a valid cashu token format")
+
+            if len(token_mints) != 1:
+                raise ValueError(
+                    "Cashu token must identify exactly one issuing mint"
+                )
+            token_mint = next(iter(token_mints))
               
             swap_proofs = await self.swap_proofs(proof_obj_list)
+            if not swap_proofs:
+                raise RuntimeError("Mint swap returned no refreshed proofs")
+            for proof in swap_proofs:
+                # A mint may rotate its active keyset. The received token can
+                # therefore use one keyset while /swap returns another.
+                self.known_mints[proof.id] = token_mint
             self.logger.debug(
                 "op=accept_token status=swapped token_amount=%s input_proofs=%s output_proofs=%s",
                 token_amount,
@@ -7832,21 +7933,22 @@ class Acorn:
             
             await self.acquire_lock()
             lock_acquired = True
-            await self.add_proofs_obj(swap_proofs)
+            await self.add_proofs_obj(swap_proofs, verify=True)
+
+            self.proofs = self._deduplicate_proofs([*self.proofs, *swap_proofs])
+            self.balance = sum(proof.amount for proof in self.proofs)
 
         
             
             self.logger.info("op=accept_token status=success token_amount=%s", token_amount)
         except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as e:
             self.logger.error("op=accept_token status=failed error=%s", e)
-            raise RuntimeError(f"Is token already spent? {e}") from e
+            raise RuntimeError(f"Unable to accept token safely: {e}") from e
             
         
         finally:
             if lock_acquired:
                 await self.release_lock()
-        self.balance+=token_amount
-        # print(f"accept token new balance is: {self.balance}")
         await self.add_tx_history(
             tx_type='C',
             amount=token_amount,
