@@ -1710,7 +1710,13 @@ def get_user_records(kind, since, relays, labels, raw, json_output):
 @click.command("balance", help="show balance")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
 @click.option("--mints", "show_mints", is_flag=True, help="Show balance grouped by mint and keyset.")
-def balance(json_output, show_mints):
+@click.option(
+    "--verify",
+    "verify_mint_state",
+    is_flag=True,
+    help="Read-only check of each proof at its mint.",
+)
+def balance(json_output, show_mints, verify_mint_state):
     
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -1727,18 +1733,45 @@ def balance(json_output, show_mints):
     proof_count = len(acorn_obj.proofs)
     lightning_capacity = _lightning_capacity(acorn_obj)
     mint_balances = _balance_by_mint(acorn_obj) if show_mints else []
+    verification = (
+        asyncio.run(acorn_obj.check_proofs())
+        if verify_mint_state
+        else None
+    )
     if json_output:
         payload = {
             "balance": balance_sats,
+            "balance_basis": "relay-visible",
+            "relay_visible_balance": balance_sats,
             "unit": "sat",
             "proof_count": proof_count,
             "lightning_capacity": lightning_capacity,
         }
+        if verification is not None:
+            payload["mint_verification"] = verification
+            payload["mint_confirmed_balance"] = verification[
+                "mint_confirmed_unspent"
+            ]["amount"]
         if show_mints:
             payload["mints"] = mint_balances
         _emit_json(payload)
     else:
-        click.echo(f"{balance_sats} sats in {proof_count} proofs.")
+        click.echo(
+            f"Relay-visible balance: {balance_sats} sats in {proof_count} proofs."
+        )
+        if verification is None:
+            click.echo("Mint state not checked. Use 'acorn balance --verify'.")
+        else:
+            confirmed = verification["mint_confirmed_unspent"]
+            click.echo(
+                "Mint-confirmed spendable balance: "
+                f"{confirmed['amount']} sats in {confirmed['proof_count']} proofs."
+            )
+            if verification["status"] != "clean":
+                click.echo(
+                    f"Proof verification status: {verification['status']}. "
+                    f"{verification['recommendation']}"
+                )
         click.echo(_format_lightning_capacity(lightning_capacity))
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))

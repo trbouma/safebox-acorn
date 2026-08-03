@@ -175,6 +175,16 @@ See [Record Encryption Specification](docs/RECORD-ENCRYPTION-SPEC.md).
 - Proof repair and proof swapping are separate mutating operations. The
   read-only proof check is intended to precede repair when wallet state is in
   doubt.
+- Relay-visible balance is not presented as mint-confirmed value. Use
+  `acorn balance --verify` when spendability matters.
+- Authored kind `5` deletion events are applied client-side when loading proof
+  events, even when a relay continues returning the referenced kind `7375`
+  history.
+- Automatic receive-side maintenance is disabled by default. Deposits and
+  token acceptance do not initiate whole-wallet swaps or consolidation.
+- Swap replacements are published and verified incrementally before another
+  independent input or keyset is consumed. Source-event deletion occurs only
+  after all replacements are durable.
 - Wallet updates use relay readback checks and a lock record to reduce
   conflicting writers.
 
@@ -322,6 +332,8 @@ formal audited severity score.
 | Outgoing-transfer crash window | An interruption between bearer-token issuance and gift-wrapped transfer publication can create uncertainty or unsafe retry behavior. A complete durable transfer outbox remains a release gate. | Use small test amounts; preserve transaction evidence; implement the roadmap's idempotent transfer outbox and acknowledged delivery state before pilot release. |
 | Concurrent wallet writers | Multiple processes, workers, devices, or stale relay views can race and overwrite proof state. Relay locks reduce but do not eliminate distributed concurrency risk. | Lock records, readback checks, proof audits, and repair tools; complete wallet-state isolation and failure-injection gates before stable release. |
 | Balance interpretation | Total wallet balance may be distributed across independent mints or keysets and may exceed what one Lightning melt can spend. Fee reserves further reduce the payable amount. | Report mint/keyset balances and the largest single-keyset pre-fee Lightning capacity; obtain a melt quote before claiming an exact payable amount; keep multi-part payments out of scope until implemented and tested. |
+| Stale relay proof history | A relay can retain or return kind `7375` events after an authored deletion request, causing a relay-visible sum to include already-spent proofs. | Apply authored kind `5` references during proof loading; label relay totals explicitly; use read-only mint verification before spending or repair; continue work on proof-state epochs or manifests for stronger ordering. |
+| Partial proof swap | A mint swap consumes bearer inputs before all later inputs or keysets have completed. A process or network failure can strand replacement proofs if they exist only in memory. | Publish and verify each successful replacement batch immediately; retain source events until all replacements are durable; inject later-step failures in tests; keep automatic maintenance disabled. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
 | Lightning ambiguity | Network or mint timeouts can leave payment outcome uncertain. | Persist pending melts and reconcile by quote ID; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
 | Gateway registration control | A replayed, weakly bound, or improperly recovered registration could redirect a Lightning address to an attacker's key, relay, or mint policy. | Treat the gateway as future work; require short-lived single-use challenges, exact NIP-98 URL/method/body/public-key binding, versioned updates, explicit revocation, and old-key-authorized rotation. |

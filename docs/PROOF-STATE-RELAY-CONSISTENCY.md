@@ -104,6 +104,42 @@ acorn issue_token
 acorn receive-ecash
 ```
 
+Receive-side proof maintenance is therefore disabled by default. Deposits and
+token acceptance persist their newly issued proofs but do not automatically
+swap or consolidate the rest of the wallet. Maintenance remains an explicit
+operator action.
+
+## August 2026 stale-balance incident
+
+A Safebox Web deposit exposed a concrete stale-relay case. Before the deposit,
+the web application displayed approximately 33,905 sats by summing every kind
+`7375` proof event returned by the home relay. A 21-sat deposit added three
+proofs and triggered the former automatic maintenance threshold.
+
+The mint then reported 87 of 95 relay-visible proofs as already spent. Those
+proofs totalled 33,874 sats, including one 32,768-sat proof. Maintenance
+completed with eight proofs and 52 spendable sats:
+
+```text
+33,874 sats already spent
++   52 sats retained
+=33,926 sats relay-visible after the deposit
+```
+
+The deposit did not destroy 33,874 sats; the relay had retained historical
+proof events whose deletion requests were not reflected in the query result.
+The incident demonstrated that an unqualified relay-derived balance is unsafe
+and that a deposit must never unexpectedly initiate whole-wallet maintenance.
+
+Acorn now:
+
+- loads authored kind `5` deletion events and excludes referenced kind `7375`
+  events from the current proof view;
+- labels ordinary balance output as relay-visible;
+- provides `acorn balance --verify` for a read-only mint-confirmed balance;
+- leaves receive-side maintenance disabled unless explicitly enabled; and
+- does not invoke maintenance from deposits or token acceptance.
+
 ## Received ecash proof state
 
 Incoming ecash transfers are delivery events, not durable proof state.
@@ -217,6 +253,13 @@ then uses quote lookup rather than repeating an ambiguous melt request. See
 
 After rewriting proof events, Acorn should verify that the expected proof state
 can be loaded back from the relay.
+
+Every successful swap consumes bearer inputs immediately at the mint. Acorn
+must therefore publish and verify each replacement batch before attempting the
+next independent input or keyset. Only after every replacement is durable may
+it publish a deletion request for the source proof events. If a later swap
+fails, already-created replacements remain recoverable from the relay and the
+old historical events remain available for diagnosis.
 
 ### Replication needs verification
 

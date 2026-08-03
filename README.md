@@ -426,6 +426,7 @@ Use JSON output when calling Acorn from another program:
 acorn get "Field Notes" --json
 acorn get_user_records --labels --json
 acorn balance --json
+acorn balance --verify
 acorn info --json
 ```
 

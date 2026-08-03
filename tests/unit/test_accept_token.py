@@ -65,6 +65,7 @@ async def test_accept_token_registers_rotated_keyset_and_updates_balance(monkeyp
     assert wallet.balance == 3
     wallet.add_proofs_obj.assert_awaited_once_with([refreshed], verify=True)
     wallet.add_tx_history.assert_awaited_once()
+    wallet._maybe_maintain_received_proofs.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -883,6 +883,13 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
         async def load_data(self):
             return None
 
+        async def check_proofs(self):
+            return {
+                "status": "repair-recommended",
+                "recommendation": "Review stale proofs.",
+                "mint_confirmed_unspent": {"amount": 52, "proof_count": 8},
+            }
+
         def get_balance(self):
             return 132
 
@@ -899,7 +906,8 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
 
     text_result = CliRunner().invoke(cli.balance)
     assert text_result.exit_code == 0
-    assert "132 sats in 2 proofs" in text_result.output
+    assert "Relay-visible balance: 132 sats in 2 proofs" in text_result.output
+    assert "Mint state not checked" in text_result.output
     assert "up to 131 sats before mint fees" in text_result.output
     assert "one keyset per Lightning payment" in text_result.output
 
@@ -907,6 +915,8 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert json_result.exit_code == 0
     payload = json.loads(json_result.output)
     assert payload["balance"] == 132
+    assert payload["balance_basis"] == "relay-visible"
+    assert payload["relay_visible_balance"] == 132
     assert payload["lightning_capacity"] == {
         "amount": 131,
         "unit": "sat",
@@ -916,6 +926,18 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
         "constraint": "single_keyset",
         "fee_reserve_included": False,
     }
+
+    verified_result = CliRunner().invoke(cli.balance, ["--verify"])
+    assert verified_result.exit_code == 0
+    assert "Mint-confirmed spendable balance: 52 sats in 8 proofs" in verified_result.output
+    assert "Proof verification status: repair-recommended" in verified_result.output
+
+    verified_json_result = CliRunner().invoke(cli.balance, ["--verify", "--json"])
+    assert verified_json_result.exit_code == 0
+    verified_payload = json.loads(verified_json_result.output)
+    assert verified_payload["relay_visible_balance"] == 132
+    assert verified_payload["mint_confirmed_balance"] == 52
+    assert verified_payload["mint_verification"]["status"] == "repair-recommended"
 
 
 def test_format_proof_check_emphasizes_read_only_result(monkeypatch, tmp_path):

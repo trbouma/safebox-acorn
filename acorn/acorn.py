@@ -75,7 +75,7 @@ ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
 BURN_DEFAULT_KINDS: List[int] = [0, 5, 37375, 37376, 7375, ECASH_TRANSFER_KIND, 30000, 30001, 30002]
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
     "RECEIVE_PROOF_MAINTENANCE_ENABLED",
-    "true",
+    "false",
 ).strip().lower() in ("1", "true", "yes", "on")
 RECEIVE_PROOF_MAINTENANCE_TOTAL_LIMIT: int = int(
     os.getenv("RECEIVE_PROOF_MAINTENANCE_TOTAL_LIMIT", str(PROOF_LIMIT))
@@ -272,6 +272,7 @@ class Acorn:
             self.proofs: List[Proof] = []
             self.balance: int = 0
             self.proof_events = proofEvents()
+            self.proof_event_ids = []
             self.trusted_mints = {}
             self.trusted_entities = []
             self.home_relay = home_relay
@@ -4449,11 +4450,6 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
-        await self._maybe_maintain_received_proofs(
-            reason="mint_proofs",
-            added_proof_count=len(proof_objs),
-        )
-        
         return True
 
     async def check_quote(self, quote:str, amount:int, mint:str = None):
@@ -4829,8 +4825,7 @@ class Acorn:
             all_proofs, _amount = self._proofs_by_keyset()
             
             for key, value in all_proofs.items():
-
-                await self.add_proofs_obj(value) 
+                await self.add_proofs_obj(value, verify=True)
 
             if old_proof_event_ids:
                 await self._async_delete_events_by_ids(old_proof_event_ids, record_kind=7375)
@@ -5036,10 +5031,36 @@ class Acorn:
         my_enc = NIP44Encrypt(self.k)
         proofs = ""
         self.proofs = []
+        self.proof_event_ids = []
         async with ClientPool([self.home_relay]) as c:
         # async with Client(relay) as c:
             events = await c.query(filter)
+            deletion_filter = [{
+                'limit': RECORD_LIMIT,
+                'authors': [self.pubkey_hex],
+                'kinds': [Event.KIND_DELETE],
+            }]
+            deletion_events = await c.query(deletion_filter)
+
+            deleted_event_ids = {
+                str(tag[1])
+                for deletion_event in deletion_events
+                for tag in (deletion_event.tags or [])
+                if len(tag) >= 2 and tag[0] == "e"
+            }
+            events = [
+                event for event in events
+                if str(event.id) not in deleted_event_ids
+            ]
             self.events = len(events)
+            if deleted_event_ids:
+                self.logger.debug(
+                    "op=load_proofs status=deletion_filter "
+                    "deletion_events=%s deleted_ids=%s current_events=%s",
+                    len(deletion_events),
+                    len(deleted_event_ids),
+                    len(events),
+                )
             
             for each_event in events:
                 # print(type(each_event.id), each_event.id)
@@ -5400,6 +5421,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
 
             keyset_proofs, _keyset_amounts = self._proofs_by_keyset()
@@ -5532,15 +5554,18 @@ class Acorn:
                         r = blinded_values[0][1]
                         Y = blinded_values[0][3]
                         C = step3_alice(pub_key_c, r, pub_key_a)
-                        rebuilt_proofs.append(
-                            Proof(
-                                amount=promise_amount,
-                                id=each_keyset,
-                                secret=blinded_values[0][2],
-                                C=C.serialize().hex(),
-                                Y=Y.serialize().hex(),
-                            )
+                        replacement = Proof(
+                            amount=promise_amount,
+                            id=each_keyset,
+                            secret=blinded_values[0][2],
+                            C=C.serialize().hex(),
+                            Y=Y.serialize().hex(),
                         )
+                        # The input was consumed by the successful swap. Keep
+                        # its replacement durable even if a later repair step
+                        # fails before the final compact rewrite.
+                        await self.add_proofs_obj([replacement], verify=True)
+                        rebuilt_proofs.append(replacement)
 
             repaired_balance = sum(each.amount for each in rebuilt_proofs)
             repaired_count = len(rebuilt_proofs)
@@ -5558,9 +5583,12 @@ class Acorn:
                     original_balance,
                 )
 
-            self.proofs = rebuilt_proofs
-            self.balance = repaired_balance
-            await self.write_proofs()
+            if source_event_ids:
+                await self._async_delete_events_by_ids(
+                    source_event_ids,
+                    record_kind=7375,
+                )
+            await self._load_proofs()
 
             if repaired_count == original_count and duplicate_dropped == 0 and total_spent_dropped == 0:
                 return (
@@ -6759,9 +6787,15 @@ class Acorn:
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
             raise RuntimeError("error deleting proof events")    
 
-    async def _async_delete_events_by_ids(self, event_ids: List[str], record_kind: int):
+    async def _async_delete_events_by_ids(
+        self,
+        event_ids: List[str],
+        record_kind: int,
+        verify: bool = True,
+        verify_timeout: float = 8.0,
+    ):
         if not event_ids:
-            return
+            return {"status": "OK", "event_id": None, "verified": True}
 
         tags = []
         for event_id in event_ids:
@@ -6779,6 +6813,36 @@ class Acorn:
             n_msg.sign(self.privkey_hex)
             c.publish(n_msg)
             await asyncio.sleep(1)
+
+        if verify:
+            verify_filter = [{
+                "limit": 1,
+                "authors": [self.pubkey_hex],
+                "kinds": [Event.KIND_DELETE],
+                "ids": [str(n_msg.id)],
+            }]
+            deadline = monotonic() + max(0.5, float(verify_timeout))
+            observed = False
+            while monotonic() < deadline:
+                async with ClientPool([self.home_relay]) as c:
+                    readback = await c.query(verify_filter)
+                    observed = any(str(event.id) == str(n_msg.id) for event in readback)
+                    if not observed:
+                        c.publish(n_msg)
+                if observed:
+                    break
+                await asyncio.sleep(0.4)
+            if not observed:
+                raise RuntimeError(
+                    "Proof deletion request could not be verified on "
+                    f"{self.home_relay}"
+                )
+
+        return {
+            "status": "OK",
+            "event_id": str(n_msg.id),
+            "verified": bool(verify),
+        }
 
     async def swap_proofs(self, incoming_swap_proofs: List[Proof]):
         '''This function swaps proofs'''
@@ -6924,6 +6988,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
             keyset_proofs,keyset_amounts = self._proofs_by_keyset()
             if not keyset_proofs:
@@ -7049,6 +7114,11 @@ class Acorn:
 
                         # print(proofs)
                         i+=1
+
+                    # A successful keyset consolidation has consumed all of
+                    # that keyset's inputs. Make its replacements durable
+                    # before processing another keyset.
+                    await self.add_proofs_obj(proof_objs, verify=True)
                 except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
                     raise RuntimeError(
                         f"Consolidation failed for keyset {each_keyset} at mint {self.known_mints.get(each_keyset)}: {exc}"
@@ -7066,11 +7136,12 @@ class Acorn:
             if not combined_proof_objs:
                 raise RuntimeError("Consolidation produced zero proofs; refusing to overwrite existing proofs")
 
-            self.proofs = combined_proof_objs
-            await self.write_proofs()
-
-            # self.add_proofs_obj(combined_proof_objs)
-            # self._load_proofs()
+            if source_event_ids:
+                await self._async_delete_events_by_ids(
+                    source_event_ids,
+                    record_kind=7375,
+                )
+            await self._load_proofs()
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError):
             raise
         
@@ -7096,6 +7167,7 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._load_proofs()
+            source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
             keyset_proofs,_keyset_amounts = self._proofs_by_keyset()
             if not keyset_proofs:
@@ -7258,6 +7330,12 @@ class Acorn:
                                             )
                             proof_objs.append(proof_obj)
                             i+=1
+
+                        # Each successful mint swap has already consumed its
+                        # input. Persist and verify the replacements before
+                        # another input can be touched so a later failure
+                        # cannot strand bearer proofs in process memory.
+                        await self.add_proofs_obj(proof_objs, verify=True)
                     except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
                         raise RuntimeError(
                             f"Swap-each failed for keyset {each_keyset} at mint {self.known_mints.get(each_keyset)}: {exc}"
@@ -7272,10 +7350,11 @@ class Acorn:
                     "Run repair-proofs only after confirming the mint state is stable."
                 )
 
-            await self.delete_proof_events()
-            self.logger.debug("XXXXX swap multi each")
-            await self.add_proofs_obj(combined_proof_objs)
-            
+            if source_event_ids:
+                await self._async_delete_events_by_ids(
+                    source_event_ids,
+                    record_kind=7375,
+                )
             await self._load_proofs()
 
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError):
@@ -7955,10 +8034,6 @@ class Acorn:
             comment=comment,
             tendered_amount=tendered_amount,
             tendered_currency=tendered_currency,
-        )
-        await self._maybe_maintain_received_proofs(
-            reason="accept_token",
-            added_proof_count=len(swap_proofs),
         )
         return f'Successfully accepted {token_amount} sats!', token_amount
 

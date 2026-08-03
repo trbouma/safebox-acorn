@@ -99,6 +99,7 @@ Current examples:
 acorn info --json
 acorn init --json
 acorn balance --json
+acorn balance --verify
 acorn check-proofs --json
 acorn get "Field Notes" --json
 acorn get_user_records --labels --json
@@ -125,6 +126,13 @@ proofs, delete events, rewrite proof state, or create transaction history.
 Duplicate copies are queried only once so the mint-confirmed amount is not
 overstated. A pending, unknown, or unreachable state is reported as
 inconclusive and should be rechecked before running a repair.
+
+`acorn balance` labels its ordinary total as **relay-visible** because it is
+derived from encrypted proof events returned by the home relay. It does not
+claim that every visible proof remains spendable. `acorn balance --verify`
+adds a read-only mint-state check and reports the mint-confirmed spendable
+total. JSON output includes `balance_basis`, `relay_visible_balance`, and,
+when requested, `mint_confirmed_balance` and the complete verification report.
 
 Proof mutation remains an explicit operator decision:
 
