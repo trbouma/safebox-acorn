@@ -245,13 +245,22 @@ Testing lanes:
   also used for opt-in NIP-05 and lightning-address payment tests because those
   prove source-wallet interoperability and real payment behavior.
 - Disposable wallet: receives most test mutations, including record lifecycle
-  and burn-wallet flows.
+  and burn-wallet flows. It also exercises a complete local Cashu token
+  round-trip: receive funding, issue a token, accept that same token, verify
+  balance and transaction history, and sweep the remaining funds back.
 - Separate opt-in tests: NIP-05 recipient resolution and real
   lightning-address payments.
 
 The burn live test creates a separate disposable burn wallet config next to the
 main test wallet, funds it from the source wallet, burns it, and verifies that
 remaining funds are swept back.
+
+The token round-trip live test creates another separate disposable wallet. It
+funds that wallet with `ACORN_TEST_AMOUNT`, issues a `cashuB` token from the
+disposable wallet, accepts the token back into the same wallet, verifies that
+the pre-issue balance is restored after relay readback, and checks for matching
+debit and credit transaction-history entries. Cleanup burns the wallet and
+attempts to sweep its funds back to the source wallet.
 
 The live test flow can also be used as a manual interoperability check with the
 Safebox web app: create or recover the same source wallet in the web app and
