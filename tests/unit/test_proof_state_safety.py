@@ -107,6 +107,103 @@ async def test_receive_maintenance_is_disabled_without_loading_or_swapping(monke
 
 
 @pytest.mark.asyncio
+async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
+    wallet = wallet_with_key()
+    wallet.home_mint = "https://mint.example"
+    wallet.proofs = [
+        Proof(
+            amount=31,
+            id="existing-keyset",
+            secret="existing",
+            C="existing-c",
+            Y="existing-y",
+        )
+    ]
+    wallet.balance = 31
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
+
+    serialized_point = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    dummy_point = SimpleNamespace(serialize=lambda: bytes.fromhex(serialized_point))
+    monkeypatch.setattr(
+        acorn_module,
+        "step1_alice",
+        lambda secret: (dummy_point, object(), dummy_point),
+    )
+    monkeypatch.setattr(acorn_module, "step3_alice", lambda *args: dummy_point)
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            if url.endswith("/v1/keysets"):
+                return Response(
+                    {
+                        "keysets": [
+                            {"id": "deposit-keyset", "unit": "sat", "active": True}
+                        ]
+                    }
+                )
+            return Response(
+                {
+                    "keysets": [
+                        {
+                            "keys": {
+                                "1": serialized_point,
+                                "4": serialized_point,
+                                "16": serialized_point,
+                            }
+                        }
+                    ]
+                }
+            )
+
+        async def post(self, url, **kwargs):
+            return Response(
+                {
+                    "signatures": [
+                        {"amount": 1, "C_": serialized_point},
+                        {"amount": 4, "C_": serialized_point},
+                        {"amount": 16, "C_": serialized_point},
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
+
+    result = await wallet._mint_proofs("paid-quote", 21)
+
+    assert result is True
+    assert wallet.balance == 52
+    assert sum(proof.amount for proof in wallet.proofs) == 52
+    assert len(wallet.proofs) == 4
+    assert wallet.known_mints["deposit-keyset"] == "https://mint.example"
+    wallet.add_proofs_obj.assert_awaited_once()
+    persisted_proofs = wallet.add_proofs_obj.await_args.args[0]
+    assert sum(proof.amount for proof in persisted_proofs) == 21
+    assert wallet.add_proofs_obj.await_args.kwargs == {"verify": True}
+    wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_swap_each_persists_first_replacement_before_later_failure(monkeypatch):
     wallet = wallet_with_key()
     keyset = "test-keyset"

@@ -4435,8 +4435,14 @@ class Acorn:
                 sum(each.amount for each in proof_objs),
             )
 
-            #TODO change this to write_proofs
-            await self.add_proofs_obj(proof_objs)
+            # Persist and verify the newly minted bearer proofs before exposing
+            # them through the in-memory wallet state. Callers such as the CLI
+            # and Safebox Web write transaction history immediately after this
+            # method returns, so self.balance must represent the post-deposit
+            # balance rather than the state loaded before minting.
+            await self.add_proofs_obj(proof_objs, verify=True)
+            self.proofs = self._deduplicate_proofs([*self.proofs, *proof_objs])
+            self.balance = sum(each.amount for each in self.proofs)
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as e:
             self.logger.error(
                 "op=mint_proofs status=failed amount=%s mint=%s error=%s",
