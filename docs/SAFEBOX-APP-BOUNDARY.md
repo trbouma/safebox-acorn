@@ -55,6 +55,26 @@ Safebox should therefore preserve:
 - eventual support for stronger key custody boundaries, such as local hardware,
   HSM-like devices, or constrained signing environments.
 
+### Execution provider and Lightning-address gateway
+
+The provider that runs Acorn code and the provider that supplies a Lightning
+address are distinct trust roles, even when Safebox performs both.
+
+An execution provider can observe component keys and plaintext while Acorn is
+running. A Lightning-address gateway does not need the recipient's `nsec`, but
+it receives Lightning, controls settlement and mint liquidity, and temporarily
+owes ecash delivery to the registered component. It also holds the mapping from
+the public address to the Acorn public key, delivery relays, and accepted-mint
+policy.
+
+Safebox should expose these roles separately in configuration, user messaging,
+logs, and operational controls. Combining them may improve usability, but must
+not obscure which party can observe secrets and which party can delay, lose,
+or misdirect funds in transit.
+
+The future registration and delivery model is documented in
+[Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
+
 ## What the app consumes from Acorn
 
 The web app should call Acorn for wallet and record primitives rather than
@@ -106,11 +126,17 @@ Acorn kernel:
 - support workflows;
 - product-specific onboarding;
 - deployment-specific reverse proxy configuration;
+- public LNURL-pay and Lightning-address HTTP endpoints;
+- the provider's address-registration directory and challenge service;
+- provider Lightning settlement, mint liquidity, delivery outbox, refund, and
+  unclaimed-payment operations;
 - healthcare, trade, identity, or other domain schemas beyond generic record
   primitives.
 
-Acorn may provide generic private records and issue/present mechanics. Domain
-applications should define the schema and workflow semantics.
+Acorn may provide generic private records, issue/present mechanics, signed
+registration clients, and gift-wrapped delivery primitives. Domain
+applications and provider services should define their public HTTP surface,
+operational custody, schema, and workflow semantics.
 
 ## Recovery and sensitive material
 

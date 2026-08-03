@@ -223,6 +223,10 @@ content in application logs.
 
 ## First mutation: Lightning-address payment
 
+This section describes an outbound, user-initiated payment from the connected
+Acorn. It does not make the stateless web application a Lightning-address
+provider for incoming payments.
+
 The payment page delegates the complete operation to
 `Acorn.pay_multi(amount, lnaddress, comment)`. The web layer does not select
 proofs, construct invoices, call a mint, update transaction history, or write
@@ -268,6 +272,25 @@ the page explicitly says not to refresh. Before pilot use, replace this with a
 POST/Redirect/GET result flow and add a durable, wallet-bound idempotency model;
 a stateless CSRF token alone does not prevent deliberate or accidental replay
 of a previously valid payment submission.
+
+### Inbound Lightning reachability is a separate service
+
+A future inbound service would let an Acorn register its component public key,
+delivery relays, and accepted-mint policy with a Lightning-address gateway.
+After receiving and settling Lightning, that gateway would obtain ecash and
+publish a NIP-59 kind `1059` gift wrap containing an inner kind `7378`
+transfer to the registered component.
+
+That gateway cannot remain stateless in the same sense as this web interface.
+It needs durable registration versions, payment-hash idempotency, settlement
+accounting, an encrypted bearer-token delivery outbox, retry state, and an
+unclaimed-payment or refund policy. Those provider records are operational
+state; they are not the recipient's Acorn wallet state.
+
+The receiving Acorn still retains its own key and relay-backed wallet data.
+The gateway never needs its `nsec`, but it is temporarily responsible for value
+between Lightning settlement and recipient acceptance. See
+[Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
 
 ## Transport boundary
 
@@ -417,6 +440,8 @@ mutation, address:
 - POST/Redirect/GET payment results and wallet-bound replay prevention;
 - protection against oversized cookies, forms, records, and relay responses;
 - durable transfer outbox behavior before any browser-initiated ecash send;
+- a separate provider architecture before offering inbound Lightning-address
+  registration or Lightning-to-ecash delivery;
 - deployment behind a correctly constrained TLS proxy; and
 - eventual hardware-backed or locally mediated signing so the hosted process
   need not receive unrestricted key authority.

@@ -80,6 +80,7 @@ trust. Each layer has a different role.
 | Relay | Stores and returns signed encrypted events | Availability, retention, indexing, query correctness, and censorship policy |
 | Mint | Issues and validates Cashu proofs | Correct issuance, redemption, spend-state reporting, availability, and operational integrity |
 | Lightning infrastructure | Routes deposits and payments | Invoice resolution, routing, settlement reporting, and upstream availability |
+| Lightning-address gateway | In a future provider design, maps a public address to an Acorn component and converts settled Lightning into private ecash delivery | Registration integrity, settlement accounting, liquidity, mint selection, bearer-token custody, delivery, retry, refund, and privacy policy |
 | Blob server | Stores encrypted attachments | Availability, retention, and resistance to traffic analysis |
 
 Encryption prevents a relay or blob operator from directly reading protected
@@ -199,6 +200,29 @@ the existing mint quote after interruption, and blocks another payment while a
 previous melt remains unresolved. This reduces duplicate-payment risk but
 cannot make an inconsistent or unavailable mint authoritative response appear.
 
+### Future Lightning-address gateway
+
+The proposed Lightning-address gateway is not currently an implemented Acorn
+safeguard. It would let an Acorn register a public key, delivery relays, and an
+accepted-mint policy with a provider through signed challenge-response. The
+provider would receive a conventional Lightning payment, obtain ecash, and
+deliver it as a NIP-59 kind `1059` gift wrap containing an inner kind `7378`
+transfer.
+
+This introduces a provider trust interval that does not exist in a direct
+wallet-to-wallet ecash transfer. After Lightning settlement and before
+recipient acceptance or a valid refund, the provider controls value owed to
+the recipient. Relay publication proves neither recipient acceptance nor
+completion of that obligation.
+
+A production gateway therefore requires registration replay protection,
+payment-hash idempotency, a durable encrypted bearer-token outbox, explicit
+mint and fee policy, bounded delivery retries, unclaimed-payment handling, and
+auditable recovery from ambiguous external operations. It must not request or
+store the recipient's `nsec`.
+
+See [Acorn Lightning-Address Gateway Design](docs/ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
+
 ### Relay continuity
 
 - Signed encrypted events can be replicated without decrypting and re-encrypting
@@ -299,6 +323,10 @@ formal audited severity score.
 | Balance interpretation | Total wallet balance may be distributed across independent mints or keysets and may exceed what one Lightning melt can spend. Fee reserves further reduce the payable amount. | Report mint/keyset balances and the largest single-keyset pre-fee Lightning capacity; obtain a melt quote before claiming an exact payable amount; keep multi-part payments out of scope until implemented and tested. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
 | Lightning ambiguity | Network or mint timeouts can leave payment outcome uncertain. | Persist pending melts and reconcile by quote ID; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
+| Gateway registration control | A replayed, weakly bound, or improperly recovered registration could redirect a Lightning address to an attacker's key, relay, or mint policy. | Treat the gateway as future work; require short-lived single-use challenges, exact NIP-98 URL/method/body/public-key binding, versioned updates, explicit revocation, and old-key-authorized rotation. |
+| Gateway funds in transit | After Lightning settles, a future gateway temporarily controls value until the recipient accepts ecash or receives a valid refund. Provider failure, insolvency, or dishonest accounting can lose or delay funds. | Do not describe the bridge as trustless or non-custodial; use bounded amounts, explicit fees and mint policy, durable accounting, reconciliation, operational reserves, and an unclaimed-payment/refund policy before pilot use. |
+| Gateway bearer-token outbox | A gateway must retain an issued bearer token while delivery is pending. Theft permits spending; loss can strand settled value; a retry can issue value twice. | Encrypt the outbox at rest, restrict credentials and access, key every payment by Lightning payment hash, persist the exact serialized event for retry, inject failures at every transition, and never issue again merely because publication was ambiguous. |
+| Gateway metadata correlation | A gateway can correlate a Lightning address, Acorn public key, relay set, invoice, amount, mint, timing, and delivery outcome. Gift wrapping does not hide this information from the gateway. | Minimize retention and logs, avoid public address-to-`npub` mappings by default, disclose the privacy boundary, and separate support identifiers from bearer secrets. |
 | Network privacy | Acorn does not itself provide Tor, VPN, traffic padding, or protection against endpoint correlation. | Deploy network privacy separately where required; use multiple infrastructure providers carefully; document metadata exposure. |
 | Dependency supply chain | Python packages, native cryptographic libraries, build tools, and their release channels may be compromised or incompatible. | Keep optional dependencies isolated; use lock files, hashes and reproducible artifacts where possible; add CI, SBOM, provenance, and dependency scanning before release. |
 | Cryptographic evolution | secp256k1/Nostr and current NIP-44 formats are not post-quantum. Long-lived ciphertext may face harvest-now-decrypt-later risk. | Maintain versioned formats and cryptographic agility; treat current PQ support as experimental; develop reviewed hybrid profiles and test vectors before claiming protection. |
@@ -335,6 +363,12 @@ For the current developer-preview phase:
 14. Monitor unresolved pending payments and stop rather than retrying an
     ambiguous Lightning payment blindly.
 
+The future Lightning-address gateway must not be used for production value
+until its signed registration, durable encrypted outbox, idempotent settlement,
+retry, unclaimed-payment, and refund behavior have passed deterministic failure
+injection and bounded live tests. Provider publication of a delivery event must
+not be reported as recipient acceptance.
+
 Highly sensitive deployments may place relays behind firewalls or private
 networks and run Acorn in a dedicated jail, appliance, or constrained service
 environment. That reduces exposure but does not remove the need for recovery,
@@ -347,6 +381,10 @@ Acorn currently does not claim:
 - independent audit assurance;
 - guaranteed preservation or deletion by relays;
 - trustless or non-custodial behavior by a Cashu mint;
+- trustless or non-custodial behavior during a future Lightning-to-ecash
+  gateway handoff;
+- proof that relay publication means the intended recipient accepted a
+  payment;
 - anonymity against network, timing, or traffic analysis;
 - protection after compromise of the `nsec` or execution environment;
 - safe use of large balances or irreplaceable records;
@@ -370,4 +408,4 @@ Security-relevant changes should update this file when they alter:
 - known residual risks or release gates; or
 - the project's audit and support status.
 
-Last reviewed: 2026-08-02.
+Last reviewed: 2026-08-03.

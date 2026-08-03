@@ -576,6 +576,43 @@ Pilot findings should be classified:
 No unresolved fund-loss, key-exposure, or unrecoverable-data finding should
 remain at stable release.
 
+## Post-preview workstream: Lightning-address gateway
+
+Lightning-address registration and inbound Lightning-to-ecash delivery are a
+separate provider workstream, not a gate for the initial Acorn developer
+preview. The Acorn package can be releasable before it operates or registers
+with such a gateway.
+
+The target design lets an Acorn prove control of its component key, register
+delivery relays and an accepted-mint policy, and receive settled Lightning as a
+gift-wrapped kind `7378` ecash transfer. The provider supplies public
+reachability and a temporary delivery bridge without receiving the Acorn
+`nsec` or becoming the permanent store of wallet state.
+
+Before this capability enters a Safebox pilot, complete:
+
+- canonical registration request and response schemas;
+- short-lived, single-use challenge verification with exact NIP-98 request and
+  body binding;
+- signed update, suspension, revocation, and old-key/new-key rotation flows;
+- payment-hash idempotency and versioned registration selection;
+- a durable encrypted bearer-token outbox and restart reconciliation;
+- explicit gateway fees, mint policy, liquidity, and whole-satoshi behavior;
+- bounded relay publication and readback without equating publication with
+  recipient acceptance;
+- duplicate-safe recipient processing and transaction history;
+- unclaimed-payment, retry, refund, and manual-review procedures;
+- deterministic failure injection at every settlement and delivery state; and
+- small-value live tests using disposable recipients and suitable relays.
+
+The public LNURL service, Lightning settlement infrastructure, provider
+liquidity, registration directory, and refund operations belong to Safebox or
+another gateway service. Acorn should supply the reusable signing, registration
+client, transfer, receipt, and validation primitives. The same operator may run
+both layers, but their trust and release boundaries remain distinct.
+
+See [Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
+
 ## Release automation
 
 The repository should have CI jobs for:
