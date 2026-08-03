@@ -150,3 +150,44 @@ async def test_add_proofs_obj_verifies_relay_readback(monkeypatch):
     assert result["verified"] is True
     assert len(result["event_ids"]) == 1
     assert result["verification"][wallet.home_relay]["readable"] is True
+
+
+@pytest.mark.asyncio
+async def test_issue_token_does_not_double_decrement_empty_wallet_balance():
+    wallet = wallet_with_key()
+    keyset = "00f300c64b950282"
+    wallet.proof_events = SimpleNamespace(proof_events=[])
+    wallet.proof_event_ids = []
+    wallet.events = 1
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet.proofs = [
+        Proof(
+            amount=1,
+            id=keyset,
+            secret="wallet-proof",
+            C="02" + "11" * 32,
+            Y="02" + "12" * 32,
+        )
+    ]
+    wallet.balance = 1
+    issued_proof = Proof(
+        amount=1,
+        id=keyset,
+        secret="issued-proof",
+        C="02" + "22" * 32,
+        Y="02" + "23" * 32,
+    )
+    wallet._require_resolved_pending_melts = AsyncMock()
+    wallet.swap_for_payment_multi = AsyncMock(return_value=[issued_proof])
+
+    async def write_and_reload_empty_proof_set():
+        wallet.balance = sum(proof.amount for proof in wallet.proofs)
+
+    wallet.write_proofs = AsyncMock(side_effect=write_and_reload_empty_proof_set)
+
+    token = await wallet.issue_token(1, comment="pytest issue token")
+
+    assert token.startswith("cashuB")
+    assert wallet.proofs == []
+    assert wallet.balance == 0
+    wallet.add_tx_history.assert_awaited_once()

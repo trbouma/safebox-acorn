@@ -8084,7 +8084,11 @@ class Acorn:
         if token_serialized is None:
             raise RuntimeError("Error issuing token: token serialization failed")
 
-        self.balance -= amount
+        # write_proofs() reloads the authoritative relay-backed proof set and
+        # recomputes self.balance. Derive the balance from the retained proofs
+        # instead of subtracting again, which produced negative balances when
+        # the issued token emptied the wallet.
+        self.balance = sum(each.amount for each in self.proofs)
         try:
             await self.add_tx_history(tx_type='D',amount=amount,comment=comment)
         except Exception as exc:

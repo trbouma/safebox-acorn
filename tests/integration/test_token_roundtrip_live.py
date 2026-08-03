@@ -66,7 +66,7 @@ async def cleanup_monstr_clients():
 @pytest.mark.integration
 @pytest.mark.asyncio
 @pytest.mark.parametrize("relay_scenario", live_relay_scenarios())
-async def test_live_disposable_wallet_issues_and_accepts_token(
+async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
     monkeypatch,
     relay_scenario,
 ):
@@ -122,6 +122,8 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
     )
 
     cleanup_sweep_event = None
+    issued_token = None
+    issued_token_accepted = False
     try:
         live_progress("token round-trip test: loading source wallet")
         await _await_or_skip(source_wallet.load_data(), "source wallet load", timeout)
@@ -168,7 +170,7 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
             "token round-trip test: issuing token from disposable wallet",
             amount=f"{amount} sat",
         )
-        token = await _await_or_skip(
+        issued_token = await _await_or_skip(
             test_wallet.issue_token(
                 amount,
                 comment="pytest disposable token issue",
@@ -176,13 +178,13 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
             "disposable wallet token issue",
             timeout,
         )
-        assert token.startswith("cashuB")
+        assert issued_token.startswith("cashuB")
         assert test_wallet.get_balance() == balance_before - amount
 
         live_progress("token round-trip test: accepting issued token")
         message, accepted_amount = await _await_or_skip(
             test_wallet.accept_token(
-                token,
+                issued_token,
                 comment="pytest disposable token accept",
             ),
             "disposable wallet token accept",
@@ -190,6 +192,7 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
         )
         assert accepted_amount == amount
         assert str(amount) in message
+        issued_token_accepted = True
 
         await _await_or_skip(test_wallet.load_data(), "round-trip wallet reload", timeout)
         assert test_wallet.get_balance() == balance_before
@@ -219,6 +222,81 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
             for entry in history
         )
 
+        proof_identity_before_swap = {
+            (str(proof.id), str(proof.secret))
+            for proof in test_wallet.proofs
+        }
+        live_progress(
+            "token round-trip test: refreshing all disposable wallet proofs",
+            proofs=len(test_wallet.proofs),
+            balance=f"{test_wallet.get_balance()} sats",
+        )
+        swap_result = await _await_or_skip(
+            test_wallet.swap_multi_each(),
+            "disposable wallet swap proofs",
+            timeout,
+        )
+        assert str(swap_result).startswith("multi swap ok")
+
+        await _await_or_skip(test_wallet.load_data(), "post-swap wallet reload", timeout)
+        assert test_wallet.get_balance() == balance_before
+        proof_identity_after_swap = {
+            (str(proof.id), str(proof.secret))
+            for proof in test_wallet.proofs
+        }
+        assert proof_identity_after_swap
+        assert proof_identity_after_swap != proof_identity_before_swap
+
+        swap_check = await _await_or_skip(
+            test_wallet.check_proofs(),
+            "post-swap proof check",
+            timeout,
+        )
+        assert swap_check["status"] == "clean", swap_check
+        assert swap_check["mint_confirmed_unspent"]["amount"] == balance_before
+        relay_suitable(
+            relay_scenario,
+            "disposable-swap-proofs",
+            balance=f"{balance_before} sats",
+            proofs=len(test_wallet.proofs),
+        )
+
+        live_progress(
+            "token round-trip test: repairing disposable wallet proofs",
+            proofs=len(test_wallet.proofs),
+            balance=f"{test_wallet.get_balance()} sats",
+        )
+        repair_result = await _await_or_skip(
+            test_wallet.repair_proofs(),
+            "disposable wallet repair proofs",
+            timeout,
+        )
+        assert "repair-proofs" in repair_result
+
+        await _await_or_skip(test_wallet.load_data(), "post-repair wallet reload", timeout)
+        assert test_wallet.get_balance() == balance_before
+        proof_identity_after_repair = {
+            (str(proof.id), str(proof.secret))
+            for proof in test_wallet.proofs
+        }
+        assert proof_identity_after_repair
+        assert proof_identity_after_repair != proof_identity_after_swap
+
+        repair_check = await _await_or_skip(
+            test_wallet.check_proofs(),
+            "post-repair proof check",
+            timeout,
+        )
+        assert repair_check["status"] == "clean", repair_check
+        assert repair_check["requires_repair"] is False
+        assert repair_check["mint_confirmed_unspent"]["amount"] == balance_before
+        relay_suitable(
+            relay_scenario,
+            "disposable-repair-proofs",
+            balance=f"{balance_before} sats",
+            proofs=len(test_wallet.proofs),
+        )
+
         relay_suitable(
             relay_scenario,
             "disposable-token-issue-accept",
@@ -226,7 +304,7 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
             balance=f"{balance_before} sats",
         )
         live_progress(
-            "PASSED disposable wallet token issue/accept round-trip",
+            "PASSED disposable wallet token and proof-maintenance round-trip",
             scenario=relay_scenario["name"],
             relay=relay_scenario["relay"],
             amount=f"{amount} sats",
@@ -234,6 +312,24 @@ async def test_live_disposable_wallet_issues_and_accepts_token(
 
     finally:
         live_progress("token round-trip test: cleanup")
+        if issued_token and not issued_token_accepted:
+            try:
+                live_progress(
+                    "token round-trip test: recovering locally issued token before cleanup"
+                )
+                await asyncio.wait_for(
+                    test_wallet.accept_token(
+                        issued_token,
+                        comment="pytest disposable token cleanup recovery",
+                    ),
+                    timeout=timeout,
+                )
+                issued_token_accepted = True
+            except Exception as exc:
+                live_progress(
+                    "token round-trip issued-token recovery was not confirmed",
+                    error=exc,
+                )
         try:
             await _await_or_skip(test_wallet.load_data(), "cleanup wallet load", timeout)
             if test_wallet.get_balance() > 0:

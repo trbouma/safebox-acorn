@@ -259,8 +259,11 @@ The token round-trip live test creates another separate disposable wallet. It
 funds that wallet with `ACORN_TEST_AMOUNT`, issues a `cashuB` token from the
 disposable wallet, accepts the token back into the same wallet, verifies that
 the pre-issue balance is restored after relay readback, and checks for matching
-debit and credit transaction-history entries. Cleanup burns the wallet and
-attempts to sweep its funds back to the source wallet.
+debit and credit transaction-history entries. It then refreshes every proof
+with `swap_multi_each`, runs a read-only mint-state check, repairs the refreshed
+proof set with `repair_proofs`, and confirms after each operation that the mint
+reports every sat as unspent and the relay-backed balance is unchanged. Cleanup
+burns the wallet and attempts to sweep its funds back to the source wallet.
 
 The live test flow can also be used as a manual interoperability check with the
 Safebox web app: create or recover the same source wallet in the web app and
