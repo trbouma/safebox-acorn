@@ -160,3 +160,14 @@ A clean rebuild should proceed by:
 
 This keeps the app focused on product polish while Acorn remains the
 user-controlled protocol component.
+
+## Working stateless integration pattern
+
+The first independently implemented Safebox Web slice now demonstrates a
+browser-held encrypted bootstrap session, request-scoped Acorn reconstruction,
+relay-backed balance loading, record-label listing, and individual record
+retrieval without a wallet database or server-side session store.
+
+The detailed contract, security boundaries, browser-origin lesson, residual
+risks, and resulting Acorn API recommendations are documented in
+[Stateless Web Integration for Acorn](STATELESS-WEB-INTEGRATION.md).
