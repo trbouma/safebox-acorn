@@ -41,6 +41,13 @@ home relay, a nominated relay, or a relay pool.
 This is protocol-first wallet delivery rather than social messaging with money
 attached.
 
+The same delivery primitive can provide the private final hop from a
+conventional Lightning address to an Acorn. In that model, a provider receives
+and settles the Lightning payment, then publishes a kind `1059` gift wrap
+containing an inner kind `7378` transfer to the registered component key. The
+registration, settlement, custody, idempotency, and outbox requirements are
+specified in [Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
+
 ## Recipient resolution
 
 The recipient can be supplied using the normal Acorn identity rules:

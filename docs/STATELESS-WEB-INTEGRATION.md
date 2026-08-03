@@ -173,6 +173,11 @@ The proven first slice consists of:
 5. list private record labels; and
 6. retrieve and render one selected private record.
 
+The next developer-preview slice adds an explicitly confirmed Lightning-address
+payment. It is the first state-changing web operation and therefore uses a
+separate mutation dependency rather than silently extending the read-only
+loaded-wallet contract.
+
 ### Balance
 
 `Acorn.load_data()` queries and decrypts the wallet record and kind `7375`
@@ -215,6 +220,54 @@ as trusted HTML.
 Missing records return a generic not-found response. Unexpected exceptions
 must not place the requested label, decrypted payload, key, or relay event
 content in application logs.
+
+## First mutation: Lightning-address payment
+
+The payment page delegates the complete operation to
+`Acorn.pay_multi(amount, lnaddress, comment)`. The web layer does not select
+proofs, construct invoices, call a mint, update transaction history, or write
+relay events itself.
+
+Before calling Acorn, the web route requires:
+
+- an authenticated loaded Acorn component;
+- a valid short-lived CSRF form token;
+- an explicit confirmation checkbox;
+- a syntactically plausible Lightning address;
+- a positive whole-sat amount no greater than displayed total balance; and
+- a bounded comment length.
+
+The total-balance precheck is only an early user-facing check. Acorn still
+decides whether amount plus mint fee reserve fits one spendable keyset. A
+wallet can have enough total value while lacking sufficient capacity in any
+single keyset.
+
+Acorn retains responsibility for the safety-critical sequence:
+
+```text
+acquire wallet lock
+reconcile previous pending melts
+resolve Lightning address and invoice
+obtain mint quote
+checkpoint post-swap proofs
+persist pending-melt journal
+submit melt
+resolve PAID / UNPAID / unknown outcome
+update proofs and transaction history
+release wallet lock
+```
+
+A timeout or exception is not presented as a definite failure. The web
+interface instructs the operator not to retry blindly and to run
+`acorn reconcile-payments` and inspect transaction history. This preserves the
+kernel's ambiguous-payment contract.
+
+The current developer-preview response renders the success result directly
+from the POST. Browsers normally warn before resubmitting a refreshed POST, and
+the page explicitly says not to refresh. Before pilot use, replace this with a
+POST/Redirect/GET result flow and add a durable, wallet-bound idempotency model;
+a stateless CSRF token alone does not prevent deliberate or accidental replay
+of a previously valid payment submission.
 
 ## Transport boundary
 
@@ -319,8 +372,12 @@ The web integration should have deterministic tests for:
 - request-scoped Acorn construction;
 - bounded relay loading and sanitized failures;
 - balance display from a fake loaded wallet;
-- label URL encoding and HTML escaping; and
-- payload escaping for both strings and structured JSON.
+- label URL encoding and HTML escaping;
+- payload escaping for both strings and structured JSON;
+- payment validation and explicit confirmation without calling a real mint;
+- exact delegation of address, amount, and comment to a fake Acorn; and
+- sanitized timeout and ambiguous-payment responses that never encourage an
+  automatic retry.
 
 These tests require no live relay or mint. A later opt-in interoperability test
 may use a disposable Acorn wallet and relay, but the kernel's relay suitability
@@ -348,7 +405,8 @@ repository.
 
 ## Residual risks and next gates
 
-Before adding payments or record mutation, address:
+Before treating browser-initiated payments as pilot-ready or adding record
+mutation, address:
 
 - cookie-key rotation and multi-key decryption during migration;
 - logout versus true session revocation;
@@ -356,6 +414,7 @@ Before adding payments or record mutation, address:
   even when an `HttpOnly` cookie cannot be read directly;
 - multiple concurrent requests using the same wallet and stale relay views;
 - mutation-specific locking, idempotency, and recovery journals;
+- POST/Redirect/GET payment results and wallet-bound replay prevention;
 - protection against oversized cookies, forms, records, and relay responses;
 - durable transfer outbox behavior before any browser-initiated ecash send;
 - deployment behind a correctly constrained TLS proxy; and
@@ -366,4 +425,3 @@ The appropriate next product step is not to reproduce the legacy web
 application feature by feature. It is to extend this small, tested boundary one
 capability at a time while keeping Acorn responsible for protocol behavior and
 Safebox responsible for presentation, sessions, deployment, and user consent.
-
