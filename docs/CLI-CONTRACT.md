@@ -196,7 +196,8 @@ conservative by default.
 Human flow:
 
 - if an existing config is present, show that an existing wallet was detected;
-- offer to display existing bootstrap/recovery material before continuing;
+- offer to display the existing operational `nsec` and relay before
+  continuing, but do not promise that an offline mnemonic can be recovered;
 - require confirmation before replacing the local config;
 - generate a new `nsec` by default;
 - import an existing `nsec` only through `--import-nsec` and a hidden prompt,
@@ -205,7 +206,9 @@ Human flow:
 - accept externally generated 256-bit entropy through `--entropy` and a hidden,
   confirmed prompt;
 - use default home relay and home mint if blank/default choices are accepted;
-- offer to display the newly created recovery/bootstrap material.
+- offer to display the newly created offline mnemonic and operational `nsec`
+  through an explicit sensitive-output flow. This is the one-time mnemonic
+  handoff; the operator should verify the offline backup before funding.
 
 External entropy initialization is explicit:
 
@@ -251,7 +254,9 @@ generated, the default home relay is used, and the default home mint is used.
 When `--entropy` is present, its hidden secret-input prompt remains mandatory.
 Successful JSON output is redacted by default and reports `key_source` as
 `acorn_generated`, `external_entropy`, `imported_nsec`, or `existing_nsec`.
-Recovery material is included only when `--include-recovery` is also supplied.
+Newly generated recovery material is included only when `--include-recovery`
+is also supplied. The offline mnemonic is available only during the creating
+invocation and is not a later export contract.
 
 If initialization writes wallet material but cannot read it back from the
 selected home relay, the command must fail clearly and must not replace the
@@ -268,8 +273,11 @@ restrictions. JSON output should return:
 ```
 
 Because a new key may already have been generated for the attempted wallet,
-recovery material may be requested explicitly after a human failure or through
-`--json --include-recovery`. Ordinary failure output remains redacted.
+the same initialization invocation must still offer its newly generated
+offline mnemonic after a human failure, or include it when
+`--json --include-recovery` was requested. Ordinary failure output remains
+redacted. A later command must not imply that it can reconstruct the mnemonic
+from the `nsec`.
 
 See [External Entropy Initialization](EXTERNAL-ENTROPY-INITIALIZATION.md) for
 the derivation contract, test vector, and operational guidance.
@@ -357,14 +365,14 @@ Ordinary profile, recovery, forced initialization, and JSON initialization
 output must not expose an `nsec`, raw private key, seed phrase, access key, or
 internal lock private key.
 
-The confirmed human-facing recovery path is:
+The confirmed human-facing operational-key export path is:
 
 ```sh
 acorn set --show-recovery
 ```
 
-Machine-readable initialization may include recovery secrets only through the
-explicit combination:
+Machine-readable initialization may include the newly generated offline
+mnemonic and other recovery secrets only through the explicit combination:
 
 ```sh
 acorn init --json --include-recovery
@@ -387,13 +395,19 @@ It must prompt:
 Sensitive recovery material will be displayed. Continue? [y/N]:
 ```
 
-If confirmed, it may display:
+Under the target offline-mnemonic policy, if confirmed it may display:
 
 ```text
 home_relay: ...
-seed_phrase: ...
+offline_mnemonic: unavailable (not retained after initialization)
 nsec: ...
 ```
+
+The newly generated offline mnemonic is displayed only by the initialization
+flow that creates it. Existing wallets may temporarily redisplay an encrypted
+retained phrase until the migration described in the
+[Recovery Specification](RECOVERY-SPEC.md#implementation-status-and-migration)
+is complete.
 
 It should not display unrelated private material such as private hex keys,
 access keys, record contents, or profile internals.

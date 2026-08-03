@@ -95,13 +95,17 @@ or process isolation boundary is used.
 
 - New wallets generate key material through the cryptographic randomness used
   by the underlying key libraries.
-- Acorn-generated wallets have a BIP39 recovery phrase that derives the wallet
-  key through the documented SLIP-10 secp256k1 path.
+- Acorn-generated wallets have a BIP39 offline mnemonic that derives the
+  wallet key through the documented SLIP-10 secp256k1 path.
 - `acorn init --entropy` accepts exactly 256 bits of externally generated
   entropy through a hidden, confirmed prompt and produces a 24-word BIP39
   phrase.
 - Imported `nsec` wallets do not claim to have a recoverable seed phrase. The
   imported key itself must be backed up.
+- The target policy hands the offline mnemonic to the operator once at
+  initialization and does not retain it in configuration or relay-backed
+  state. Existing wallets may still contain an encrypted retained phrase;
+  removing it safely is a documented pre-release migration requirement.
 - `acorn recover` verifies that the derived wallet state is readable from the
   selected home relay before replacing local configuration.
 - Recovery display is explicit and confirmation-gated.
@@ -152,13 +156,31 @@ See [Record Encryption Specification](docs/RECORD-ENCRYPTION-SPEC.md).
   gift wrap containing an inner kind `7378` transfer event.
 - Received proofs are accepted and refreshed through the mint before becoming
   part of the wallet's proof state.
+- Direct token acceptance requires one identifiable issuing mint. Acorn rejects
+  ambiguous tokens containing proofs from multiple mints.
+- A previously unseen mint can be learned from a valid token. Acorn associates
+  incoming keysets and any rotated keyset returned by the mint with that
+  issuing mint.
+- Refreshed proofs are published as encrypted kind `7375` events. Direct token
+  acceptance retries idempotent publication and requires relay readback before
+  reporting success.
+- The in-memory balance is derived from the actual retained and refreshed proof
+  set rather than incremented or decremented independently.
 - Accepted transfers create transaction-history entries.
 - The receiving operation is explicit rather than hidden inside a read-only
   balance command.
 - Proof inspection can query mint state without mutating the wallet.
-- Proof repair is a separate mutating operation.
+- Proof repair and proof swapping are separate mutating operations. The
+  read-only proof check is intended to precede repair when wallet state is in
+  doubt.
 - Wallet updates use relay readback checks and a lock record to reduce
   conflicting writers.
+
+The wallet's total balance can span multiple mints and keysets. An ordinary
+Lightning melt is currently constrained to one keyset, so the total balance is
+not necessarily available for one Lightning payment. `acorn balance` reports
+the largest mint-mapped keyset as the pre-fee Lightning capacity. The exact
+payable amount can be lower after the selected mint quotes its fee reserve.
 
 Gift wrapping reduces straightforward sender-recipient correlation. It does
 not provide complete traffic-analysis resistance.
@@ -231,6 +253,22 @@ input, secure logging, relay-backed records, proof inspection, interrupted
 payments, optional dependency behavior, disposable wallet lifecycle, relay
 suitability, and controlled spending flows.
 
+The disposable-wallet live lifecycle includes funding, local `cashuB`
+issuance, acceptance of that same token, relay and transaction-history
+readback, full proof refresh, proof repair, mint-state confirmation, balance
+preservation, burn, and attempted sweep-back to the source wallet. Cleanup
+retains an issued test token in memory and attempts to accept it if the test
+fails before normal acceptance. This reduces test-fund loss during an
+in-process assertion failure; it is not a durable production token outbox.
+
+A live-test regression exposed an accounting defect when a wallet issued its
+entire balance: proof persistence had already recomputed the retained balance
+as zero, after which issuance subtracted the amount a second time. The defect
+was fixed by deriving balance from retained proofs, and a deterministic
+regression test now covers full-balance issuance. The incident also reinforced
+that an issued bearer token must survive the handoff from wallet state to its
+recipient.
+
 Passing tests demonstrate the behavior covered by those tests. They do not
 replace adversarial review, fuzzing, dependency analysis, or an independent
 audit.
@@ -251,10 +289,14 @@ formal audited severity score.
 | Relay metadata | Relays can observe event kinds, timestamps, sizes, authors for non-gift-wrapped events, lookup patterns, network addresses, and replication relationships. | Encrypt content and labels; use gift wrapping for transfers; avoid claims of metadata anonymity; consider network privacy tools and relay diversity. |
 | Relay availability and correctness | A relay can censor, omit, delay, reorder, retain, or return a partial view of events. Replicas can diverge. | Readback verification, suitability tests, replication, migration, health checks, and future relay-pool reconciliation. |
 | Deletion | NIP-09 cannot guarantee physical erasure from relays, mirrors, logs, or backups. | Describe deletion as advisory; encrypt sensitive content so loss of ciphertext availability is not the only confidentiality control. |
-| Mint trust | A mint can fail, censor, misreport proof state, disappear, or become compromised. Cashu privacy does not remove issuer operational risk. | Keep mint choice explicit; track keyset-to-mint mappings; check proof state; support repair and future migration guidance; use small balances during preview. |
+| Mint trust | A mint can fail, censor, misreport proof state, disappear, or become compromised. Cashu privacy does not remove issuer operational risk. A valid token can introduce a mint that was not previously configured. | Track keyset-to-mint mappings; expose balances by mint; check proof state; support repair and future migration guidance; use small balances during preview; add explicit first-use mint approval before stable release. |
+| Token-specified mint endpoint | Accepting an untrusted token causes Acorn to contact the mint URL carried by that token. A malicious URL may target an unexpected host or internal service from the Acorn execution environment. | Accept tokens only from expected sources during preview; restrict host network egress; require one issuing mint per token; add URL-policy validation, private-address blocking, and/or explicit operator approval before broad deployment. |
 | Bearer proof theft | Anyone obtaining valid Cashu proofs or tokens may be able to spend them. | Encrypt relay-backed proof state; prohibit proof logging; refresh received proofs; protect process memory and backups. |
-| Outgoing-transfer crash window | An interruption around proof issuance and transfer publication can create uncertainty or unsafe retry behavior. A complete durable transfer outbox remains a release gate. | Use small test amounts; preserve transaction evidence; implement the roadmap's idempotent transfer outbox before pilot release. |
+| Bearer-token issuance and handoff | `issue_token` commits removal of the issued value from the wallet proof set before returning the bearer token to its caller. A crash, assertion, application error, or lost response during that handoff can strand funds even though the mint created valid outgoing proofs. | Derive balance from retained proofs; use small amounts; make callers capture and protect the returned token immediately; live-test cleanup attempts in-memory recovery; implement a durable encrypted token outbox and acknowledged handoff before pilot release. |
+| Accepted-token persistence gap | The mint can successfully refresh an incoming token before Acorn proves that the new kind `7375` event is readable from the home relay. If the process terminates during a persistent relay failure, the refreshed proofs may exist only in memory. | Retry idempotent proof publication; require relay readback before reporting success; keep the process running while resolving failures; design a durable encrypted receive journal or emergency recovery export before stable release. |
+| Outgoing-transfer crash window | An interruption between bearer-token issuance and gift-wrapped transfer publication can create uncertainty or unsafe retry behavior. A complete durable transfer outbox remains a release gate. | Use small test amounts; preserve transaction evidence; implement the roadmap's idempotent transfer outbox and acknowledged delivery state before pilot release. |
 | Concurrent wallet writers | Multiple processes, workers, devices, or stale relay views can race and overwrite proof state. Relay locks reduce but do not eliminate distributed concurrency risk. | Lock records, readback checks, proof audits, and repair tools; complete wallet-state isolation and failure-injection gates before stable release. |
+| Balance interpretation | Total wallet balance may be distributed across independent mints or keysets and may exceed what one Lightning melt can spend. Fee reserves further reduce the payable amount. | Report mint/keyset balances and the largest single-keyset pre-fee Lightning capacity; obtain a melt quote before claiming an exact payable amount; keep multi-part payments out of scope until implemented and tested. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
 | Lightning ambiguity | Network or mint timeouts can leave payment outcome uncertain. | Persist pending melts and reconcile by quote ID; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
 | Network privacy | Acorn does not itself provide Tor, VPN, traffic padding, or protection against endpoint correlation. | Deploy network privacy separately where required; use multiple infrastructure providers carefully; document metadata exposure. |
@@ -278,10 +320,19 @@ For the current developer-preview phase:
    networks.
 6. Select relays for availability and policy, then replicate before a failure.
 7. Treat third-party mints as independent trust domains and limit exposure.
-8. Do not interpret a successful deletion request as guaranteed erasure.
-9. Run deterministic tests before deployment and opt-in live tests only with a
-   funded test wallet whose possible loss is acceptable.
-10. Monitor unresolved pending payments and stop rather than retrying an
+8. Accept tokens only when the mint endpoint is expected, or constrain the
+   execution environment so token-provided URLs cannot reach sensitive
+   internal services.
+9. Treat an issued token as funds in transit: capture it immediately and do not
+   assume it can be reconstructed from the relay-backed wallet after issuance.
+10. Run `acorn check-proofs` before repair when proof state is uncertain. Do not
+    deliberately interrupt proof swap or repair operations.
+11. Interpret total balance and single-keyset Lightning capacity separately;
+    actual capacity is lower when the mint requires a fee reserve.
+12. Do not interpret a successful deletion request as guaranteed erasure.
+13. Run deterministic tests before deployment and opt-in live tests only with a
+    funded test wallet whose possible loss is acceptable.
+14. Monitor unresolved pending payments and stop rather than retrying an
     ambiguous Lightning payment blindly.
 
 Highly sensitive deployments may place relays behind firewalls or private

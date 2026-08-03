@@ -17,9 +17,9 @@ Acorn prompts twice for the entropy without echoing it to the terminal. The
 value is not supplied as a command-line argument, which keeps it out of normal
 shell history and process listings.
 
-This option is different from importing an `nsec`. External entropy produces a
-recoverable BIP39 phrase; an imported `nsec` cannot be reversed into its
-original seed phrase.
+This option is different from importing an `nsec`. External entropy produces
+an offline BIP39 mnemonic; an imported `nsec` cannot be reversed into its
+original mnemonic.
 
 ## Input contract
 
@@ -51,15 +51,22 @@ The current derivation is:
 ```text
 32-byte external entropy
     -> English BIP39 encoding with checksum
-    -> 24-word BIP39 recovery phrase
+    -> 24-word offline BIP39 mnemonic
     -> BIP39 seed generation
     -> SLIP-10 secp256k1 root private key
     -> Nostr nsec encoding
 ```
 
-The 24-word phrase is stored as the wallet's recovery phrase in encrypted Acorn
-wallet metadata. The local configuration stores the resulting `nsec`, not the
-original hexadecimal entropy.
+The 24-word phrase is the wallet's offline mnemonic. The target security
+contract displays it during initialization for verified offline backup and
+does not retain it in local configuration or encrypted relay-backed wallet
+metadata. The local configuration stores the resulting operational `nsec`, not
+the original hexadecimal entropy or mnemonic.
+
+Current Acorn wallet metadata may still retain the phrase. This is a known
+migration gap documented in the
+[Recovery Specification](RECOVERY-SPEC.md#implementation-status-and-migration),
+not the intended long-term behavior.
 
 The derivation method is Acorn's current recovery contract. It must remain
 stable for existing wallets even if future versions introduce a versioned key
@@ -120,8 +127,10 @@ JSON output identifies the source without exposing secrets:
 }
 ```
 
-Recovery secrets appear in JSON only when the caller explicitly adds
-`--include-recovery`. Captured output from that mode must be protected as key
+At initialization, recovery secrets appear in JSON only when the caller
+explicitly adds `--include-recovery`. This is the one-time machine-readable
+handoff of the offline mnemonic; Acorn must not imply that the mnemonic can be
+exported again later. Captured output from that mode must be protected as key
 material.
 
 ## Recovery
@@ -135,14 +144,15 @@ acorn recover --homerelay relay.example.com
 Recovery derives the same `nsec`, verifies that the selected relay contains
 the wallet bootstrap record, and only then replaces the local configuration.
 
-The original 64-character entropy can also recreate the phrase and key through
-the same derivation contract, but `acorn recover` accepts the phrase rather than
-raw entropy. Backing up the phrase is the ordinary Acorn recovery path.
+The original 64-character entropy can also recreate the mnemonic and key
+through the same derivation contract, but `acorn recover` accepts the mnemonic
+rather than raw entropy. Backing up the offline mnemonic at initialization is
+the ordinary Acorn recovery path.
 
 The practical recovery bundle remains:
 
 ```text
-24-word seed phrase + home relay
+24-word offline mnemonic + home relay
 ```
 
 or:
@@ -161,7 +171,8 @@ nsec + home relay
 - Do not paste entropy, phrases, or nsecs into chats, tickets, logs, or source
   control.
 - Do not use this workflow while screen sharing or recording a terminal.
-- Verify and protect the recovery phrase before funding the wallet.
+- Verify and protect the offline mnemonic before funding the wallet. Acorn
+  should not be expected to display it again after initialization.
 - Keep backups in more than one location without giving a single operator
   unnecessary access to every copy.
 - Treat exposure of the entropy, phrase, or `nsec` as compromise of the same
@@ -207,10 +218,10 @@ deletion remains advisory under NIP-09 even when the test passes.
 
 ## Key-source comparison
 
-| Initialization path | Entropy source | Seed phrase | Primary recovery material |
+| Initialization path | Entropy source | Offline mnemonic | Primary recovery material |
 | --- | --- | --- | --- |
-| `acorn init` with blank key | Acorn CSPRNG | 12-word BIP39 phrase | Phrase plus home relay |
-| `acorn init --entropy` | External 256-bit source | 24-word BIP39 phrase | Phrase plus home relay |
+| `acorn init` with blank key | Acorn CSPRNG | 12-word BIP39 mnemonic | Mnemonic plus home relay |
+| `acorn init --entropy` | External 256-bit source | 24-word BIP39 mnemonic | Mnemonic plus home relay |
 | `acorn init --import-nsec` or `--nsec-file` | External final private key | Unavailable | `nsec` plus home relay |
 
 These paths create the same kind of Acorn component identity. They differ only
