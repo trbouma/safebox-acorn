@@ -75,6 +75,26 @@ or misdirect funds in transit.
 The future registration and delivery model is documented in
 [Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
 
+### Network edge and proxy authority
+
+The network that makes Safebox reachable and the reverse proxy that asserts
+public HTTPS are also separate roles. A VPN can authenticate and encrypt the
+private path between a proxy machine and a Safebox machine. It does not mean
+that every VPN peer should be trusted to provide forwarded transport headers.
+
+Safebox deployment configuration should distinguish:
+
+- the bind address and port, which determine network reachability;
+- VPN or firewall policy, which restricts connections;
+- the reverse proxy address, which is authorized to supply
+  `X-Forwarded-Proto`, host, and client metadata; and
+- the public TLS hostname presented to the browser.
+
+Binding the application to `0.0.0.0` can be appropriate when a reverse proxy
+runs on another private machine. It must not be interpreted as trusting every
+reachable caller. Forwarded headers should still be accepted only from the
+designated proxy, and direct internal HTTP should remain an expected rejection.
+
 ## What the app consumes from Acorn
 
 The web app should call Acorn for wallet and record primitives rather than

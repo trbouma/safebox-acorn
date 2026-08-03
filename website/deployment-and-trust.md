@@ -21,6 +21,7 @@ code  -> the execution environment and trusted operator
 data  -> signed and encrypted state hosted on relays
 mint  -> ecash issuance and spend-state authority
 app   -> experience, workflow, policy, and support
+edge  -> private reachability, TLS termination, and transport metadata
 ```
 
 One organization may provide several of these roles, but they are not the same
@@ -62,6 +63,37 @@ If keys remain local, hardware-held, or available only through constrained
 operations, a provider may run more of the service without holding the entire
 authority boundary. Acorn's protocol model is intended to support movement in
 that direction, but hardware custody remains future work.
+
+## Layered network trust
+
+A hosted Acorn service may be private on one machine while a reverse proxy on
+another machine supplies its public HTTPS endpoint. A VPN such as Tailscale can
+provide authenticated, encrypted reachability between those machines. The
+reverse proxy terminates public TLS and forwards an internal HTTP request to
+the application.
+
+Those facts create two separate controls:
+
+```text
+bind address             -> who can establish a network connection
+trusted proxy allowlist  -> who may describe the original browser transport
+```
+
+Listening on `0.0.0.0` does not mean that every caller is trusted as a proxy.
+It makes a port reachable on every host interface, subject to the VPN, host
+firewall, and access policy. The application should separately accept
+`X-Forwarded-Proto`, client-address, and host information only from the exact
+reverse proxy or a narrowly scoped proxy network.
+
+This layered approach is useful even inside a trusted community or household
+VPN. The VPN establishes membership and protects the path; the proxy allowlist
+assigns a specific service role. A peer that can reach the application is not
+automatically authorized to claim that a request arrived over public HTTPS.
+
+The architecture should be verified in both directions: a direct internal HTTP
+request must be rejected, while the same request from the designated proxy with
+trusted HTTPS metadata must succeed. This negative test is as important as the
+successful public request.
 
 ## Acorn as a tenant and a client
 
@@ -110,6 +142,8 @@ The right model depends on what must be protected and from whom:
 5. How can the user recover if the operator disappears?
 6. What metadata remains visible to relays and networks?
 7. What is monitored, backed up, tested, and documented?
+8. Which network peer is authorized to assert public transport and client
+   metadata?
 
 User-controlled architecture is not a single hosting prescription. It is the
 discipline of answering these questions while keeping continuity portable.
@@ -123,4 +157,4 @@ discipline of answering these questions while keeping continuity portable.
 - [Safebox Application Boundary](https://github.com/trbouma/safebox-acorn/blob/main/docs/SAFEBOX-APP-BOUNDARY.md)
 - [FreeBSD Jail Installation](https://github.com/trbouma/safebox-acorn/blob/main/docs/FREEBSD-JAIL-INSTALL.md)
 - [Acorn Product North Star](https://github.com/trbouma/safebox-acorn/blob/main/docs/ACORN-PRODUCT-NORTH-STAR.md)
-
+- [Safebox Web Tailscale Reverse-Proxy Deployment](https://github.com/trbouma/safebox-web/blob/main/docs/TAILSCALE-REVERSE-PROXY-DEPLOYMENT.md)

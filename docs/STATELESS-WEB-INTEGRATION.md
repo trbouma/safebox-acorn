@@ -310,6 +310,25 @@ Behind a TLS-terminating reverse proxy, the application must receive a trusted
 configured proxy address. Trusting arbitrary `X-Forwarded-Proto` headers lets a
 remote client bypass the transport decision.
 
+When the reverse proxy runs on another VPN-connected machine, the application
+may need to bind its published container port to `0.0.0.0` so that the proxy can
+reach it. This changes reachability, not authority. The VPN and firewall define
+who can connect; Uvicorn's forwarded-header allowlist defines which immediate
+peer may assert that the original browser request used HTTPS.
+
+A deployment should prove both properties explicitly:
+
+1. a direct HTTP request from the proxy machine without forwarded HTTPS
+   metadata receives the application's HTTPS-required response; and
+2. the same request with `X-Forwarded-Proto: https` succeeds only when it comes
+   from the configured proxy address.
+
+The first independently deployed Safebox Web instance validated this pattern
+with Nginx on one Tailscale machine and the Dockerized application on another.
+The public `/health` response returned status 200 with HSTS and the expected
+security headers, while direct internal HTTP remained rejected. This is a
+useful deployment acceptance test rather than merely a troubleshooting step.
+
 Recommended response controls include:
 
 - `Cache-Control: no-store`;
