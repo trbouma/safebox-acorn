@@ -10,6 +10,7 @@ import pytest
 import yaml
 import click
 from click.testing import CliRunner
+from mnemonic import Mnemonic
 from monstr.encrypt import Keys
 
 
@@ -199,6 +200,61 @@ def test_init_help_does_not_offer_broken_longseed_option(monkeypatch, tmp_path):
     assert result.exit_code == 0
     assert "--longseed" not in result.output
     assert "--entropy" in result.output
+    assert "--words 12|24" in result.output
+
+
+@pytest.mark.parametrize(("words", "word_count"), [("12", 12), ("24", 24)])
+def test_init_can_generate_selected_mnemonic_length(
+    monkeypatch, tmp_path, words, word_count
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+    observed = {}
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.seed_phrase = None
+            self.privkey_bech32 = kwargs["nsec"]
+            keys = Keys(priv_k=kwargs["nsec"])
+            self.pubkey_bech32 = keys.public_key_bech32()
+            self.pubkey_hex = keys.public_key_hex()
+
+        async def create_instance(self, keepkey=False, seed_phrase=None):
+            observed["keepkey"] = keepkey
+            observed["seed_phrase"] = seed_phrase
+            self.seed_phrase = seed_phrase
+            return self.privkey_bech32
+
+        async def load_data(self):
+            return None
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+    monkeypatch.setattr(cli, "write_config", lambda: None)
+    cli.config_obj.clear()
+    cli.CONFIG_FILE_EXISTED = False
+    cli.NSEC = None
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--words", words, "--force", "--json"],
+    )
+
+    assert result.exit_code == 0
+    assert len(observed["seed_phrase"].split()) == word_count
+    assert Mnemonic("english").check(observed["seed_phrase"])
+    assert observed["keepkey"] is False
+    assert json.loads(result.stdout)["key_source"] == "acorn_generated"
+
+
+def test_init_rejects_words_with_external_key_sources(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.init,
+        ["--words", "24", "--entropy", "--force"],
+    )
+
+    assert result.exit_code != 0
+    assert "--words applies only to Acorn-generated keys" in result.output
 
 
 def test_init_rejects_entropy_with_import_nsec(monkeypatch, tmp_path):

@@ -25,6 +25,15 @@ memory, render a response, and then discard the request-scoped object. It does
 not need a wallet database, local Acorn configuration file, or server-side
 session store.
 
+A provider-owned service Acorn is a deliberate exception with a different
+boundary. It is application operational state intended to bridge future
+inbound Lightning settlements into ecash delivery. A standalone singleton
+worker owns it; the FastAPI web processes do not. The worker uses an owner-only
+persistent recovery file so routine restarts and unclean stops do not abandon
+its key or proofs. Sweeping and burning require an explicit retirement command.
+This does not change the stateless treatment of user-attached Acorns and allows
+the web tier to scale independently from the single proof-state owner.
+
 This pattern is **stateless at the web application persistence layer**. It is
 not trustless and it is not a claim that the server cannot access keys. The
 running code decrypts the cookie and necessarily holds the operational `nsec`,
@@ -299,11 +308,13 @@ of a previously valid payment submission.
 
 ### Inbound Lightning reachability is a separate service
 
-A future inbound service would let an Acorn register its component public key,
-delivery relays, and accepted-mint policy with a Lightning-address gateway.
-After receiving and settling Lightning, that gateway would obtain ecash and
-publish a NIP-59 kind `1059` gift wrap containing an inner kind `7378`
-transfer to the registered component.
+Safebox Web now provides the first inbound service slice. An authenticated
+Acorn claims a handle mapped to its component public key and home relay. A
+separate singleton provider Acorn worker accepts a Lightning-address invoice,
+records settlement in a durable job row, obtains ecash, and publishes a NIP-59
+kind `1059` gift wrap containing an inner kind `7378` transfer to the registered
+component. The deployed web and worker containers use one image with different
+entry points and communicate through the shared database rather than memory.
 
 That gateway cannot remain stateless in the same sense as this web interface.
 It needs durable registration versions, payment-hash idempotency, settlement

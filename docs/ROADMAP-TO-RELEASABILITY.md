@@ -599,6 +599,13 @@ separate provider workstream, not a gate for the initial Acorn developer
 preview. The Acorn package can be releasable before it operates or registers
 with such a gateway.
 
+The first Safebox Web implementation is now deployed and has completed a real
+small-value payment through LNURL discovery, a durable provider-payment row,
+service-Acorn mint settlement, and gift-wrapped ecash delivery. It runs one
+Docker image as a web container and a singleton wallet-worker container. This
+validates the principal architecture while leaving the reliability controls
+below as pre-pilot work.
+
 The target design lets an Acorn prove control of its component key, register
 delivery relays and an accepted-mint policy, and receive settled Lightning as a
 gift-wrapped kind `7378` ecash transfer. The provider supplies public

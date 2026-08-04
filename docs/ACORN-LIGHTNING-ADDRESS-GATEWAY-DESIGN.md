@@ -2,8 +2,31 @@
 
 ## Status
 
-This document is a design proposal. It describes a future provider interface
-and does not describe functionality that is currently complete in Acorn.
+This document describes the target provider interface. Its first end-to-end
+slice is now implemented in Safebox Web; the full reliability and registration
+model remains a design proposal.
+
+As an initial application-boundary milestone, Safebox Web now includes an
+optional standalone **service Acorn worker**. Exactly one worker process creates
+or recovers this provider-owned wallet and retains minimum recovery state in an
+owner-only persistent file across routine restarts. The FastAPI web tier does
+not load the provider key or proof state and can therefore run multiple web
+workers. Sweeping and burning are an explicit wallet-retirement operation, not
+normal process-shutdown behavior.
+
+Safebox Web now also implements the first durable LNURL-pay slice: handle
+resolution, queued invoice creation, settlement checking, and gift-wrapped
+ecash delivery. Delivery exceptions stop in a manual-review state rather than
+risk an automatic duplicate payment. Invoice cleanup, idempotent delivery
+acknowledgement, retry, refund, and complete restart reconciliation remain to be
+implemented. The service Acorn must not accept meaningful third-party funds
+until those obligations are durable and tested.
+
+The two-container deployment has also been verified with a real Lightning
+payment: the web process created the durable request, the singleton provider
+Acorn accepted settlement, and the worker delivered gift-wrapped ecash to the
+registered recipient. This is evidence that the boundary works, not a claim of
+production readiness.
 
 ## Summary
 

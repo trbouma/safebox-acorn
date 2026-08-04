@@ -208,6 +208,8 @@ Human flow:
   continuing, but do not promise that an offline mnemonic can be recovered;
 - require confirmation before replacing the local config;
 - generate a new `nsec` by default;
+- generate a 12-word BIP39 offline mnemonic by default, or a 24-word mnemonic
+  when `--words 24` is selected;
 - import an existing `nsec` only through `--import-nsec` and a hidden prompt,
   or through `--nsec-file`;
 - prompt for home relay and home mint;
@@ -229,6 +231,18 @@ those bytes as a 24-word English BIP39 phrase and derives the wallet `nsec`
 through the same SLIP-10 secp256k1 path used by `acorn recover`. It does not hash
 the supplied value again. `--entropy` is mutually exclusive with
 `--import-nsec`, `--nsec-file`, and `--keepkey`.
+
+Acorn-generated mnemonic length is selected explicitly when a longer backup is
+desired:
+
+```sh
+acorn init --words 24
+```
+
+`--words` accepts only `12` or `24`, defaults to 12 when omitted, and applies
+only to Acorn-generated keys. It is mutually exclusive with `--entropy`,
+`--import-nsec`, `--nsec-file`, and `--keepkey`. Recovery accepts either valid
+word count and follows the same Acorn BIP39-to-SLIP-10 derivation.
 
 The entropy is intentionally entered through a hidden prompt rather than as a
 command-line value. `--force` and `--json` do not remove that prompt. Normal

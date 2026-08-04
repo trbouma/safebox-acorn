@@ -9,7 +9,11 @@ def _import_acorn_runtime():
     from acorn.acorn import Acorn
     from acorn.models import nostrProfile, SafeboxItem, SafeboxRecord
     from acorn.lightning import lightning_address_pay
-    from acorn.func_utils import recover_nsec_from_seed, seed_phrase_and_nsec_from_entropy
+    from acorn.func_utils import (
+        generate_seed_phrase_and_nsec,
+        recover_nsec_from_seed,
+        seed_phrase_and_nsec_from_entropy,
+    )
 
     return (
         Acorn,
@@ -17,6 +21,7 @@ def _import_acorn_runtime():
         SafeboxItem,
         SafeboxRecord,
         lightning_address_pay,
+        generate_seed_phrase_and_nsec,
         recover_nsec_from_seed,
         seed_phrase_and_nsec_from_entropy,
     )
@@ -28,6 +33,7 @@ def _import_acorn_runtime():
     SafeboxItem,
     SafeboxRecord,
     lightning_address_pay,
+    generate_seed_phrase_and_nsec,
     recover_nsec_from_seed,
     seed_phrase_and_nsec_from_entropy,
 ) = _import_acorn_runtime()
@@ -558,6 +564,13 @@ def info(ctx, json_output):
     is_flag=True,
     help="Initialize from externally generated 256-bit entropy entered at a hidden prompt.",
 )
+@click.option(
+    "--words",
+    type=click.Choice(["12", "24"]),
+    default=None,
+    metavar="12|24",
+    help="Generate a 12- or 24-word BIP39 offline mnemonic (default: 12).",
+)
 @click.option("--homerelay","-h", default=None, help=HOME_RELAY_HELP)
 @click.option("--mint", "-m", default=None, help="home mint")
 @click.option("--keepkey","-k", is_flag=True, show_default=True, default=False, help="Keep existing key(nsec).")
@@ -569,7 +582,7 @@ def info(ctx, json_output):
     help="Include the seed phrase and nsec in JSON output. Requires --json.",
 )
 
-def init(import_nsec, nsec_file, use_entropy, keepkey, homerelay, mint, force, json_output, include_recovery):
+def init(import_nsec, nsec_file, use_entropy, words, keepkey, homerelay, mint, force, json_output, include_recovery):
     if include_recovery and not json_output:
         raise click.ClickException("--include-recovery requires --json")
     if use_entropy and (import_nsec or nsec_file):
@@ -578,6 +591,11 @@ def init(import_nsec, nsec_file, use_entropy, keepkey, homerelay, mint, force, j
         raise click.ClickException("--entropy and --keepkey are mutually exclusive")
     if keepkey and (import_nsec or nsec_file):
         raise click.ClickException("--keepkey cannot be combined with --import-nsec or --nsec-file")
+    if words is not None and (use_entropy or import_nsec or nsec_file or keepkey):
+        raise click.ClickException(
+            "--words applies only to Acorn-generated keys and cannot be combined "
+            "with --entropy, --import-nsec, --nsec-file, or --keepkey"
+        )
 
     existing_nsec = config_obj.get("nsec")
     existing_home_relay = config_obj.get("home_relay")
@@ -670,6 +688,12 @@ def init(import_nsec, nsec_file, use_entropy, keepkey, homerelay, mint, force, j
         except ValueError as exc:
             raise click.ClickException(f"Invalid entropy: {exc}") from exc
         key_source = "external_entropy"
+    elif words is not None:
+        strength = 128 if words == "12" else 256
+        supplied_seed_phrase, prompted_nsec = generate_seed_phrase_and_nsec(
+            strength=strength
+        )
+        key_source = "acorn_generated"
     if keepkey and not prompted_nsec:
         prompted_nsec = existing_nsec
         if prompted_nsec:

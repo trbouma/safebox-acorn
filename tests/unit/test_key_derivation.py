@@ -24,6 +24,15 @@ def test_generated_seed_phrase_round_trips_to_same_nsec():
     assert seed_phrase_matches_nsec(seed_phrase, nsec)
 
 
+@pytest.mark.parametrize(("strength", "word_count"), [(128, 12), (256, 24)])
+def test_generated_seed_phrase_supports_both_recovery_lengths(strength, word_count):
+    seed_phrase, nsec = generate_seed_phrase_and_nsec(strength=strength)
+
+    assert len(seed_phrase.split()) == word_count
+    assert Mnemonic("english").check(seed_phrase)
+    assert recover_nsec_from_seed(seed_phrase) == nsec
+
+
 def test_external_entropy_produces_recoverable_24_word_phrase_deterministically():
     entropy_hex = "00" * 32
 
