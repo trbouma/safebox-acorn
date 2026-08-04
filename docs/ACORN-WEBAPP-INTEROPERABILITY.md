@@ -78,8 +78,8 @@ wallet recovery path.
 
    Testing lanes:
 
-   - Source wallet: funds the suite, receives sweep-backs, and runs the narrow
-     source-wallet ecash self-transfer used for web-app interoperability.
+   - Source wallet: funds the suite, receives sweep-backs, and funds the
+     separate opt-in external interoperability tests.
    - Disposable wallets: carry most test mutations, including private record
      lifecycle and burn-wallet flows.
    - Separate opt-in tests: cover NIP-05 recipient resolution and real
@@ -99,7 +99,7 @@ wallet recovery path.
    | `ACORN_SOURCE_CONFIG` | Uses `~/.acorn/config.yml` as the funded source wallet. | You want a different source wallet config file. |
    | `ACORN_TEST_MINT` | Disposable wallets inherit the source wallet's relay-backed mint. | You are intentionally testing a different mint. |
    | `ACORN_TEST_TRANSFER_RELAY` | Uses the active relay scenario. | You want transfers published to a relay different from the scenario relay. |
-   | `ACORN_NIP05_RECIPIENT` | NIP-05 tests are skipped. | You want to run the separate source-wallet NIP-05 ecash transfer test. |
+   | `ACORN_NIP05_RECIPIENT` | NIP-05 tests are skipped. | You intentionally want the source wallet to send ecash to an external NIP-05 wallet and will verify receipt separately. |
    | `ACORN_LIGHTNING_ADDRESS` | Lightning payment tests are skipped. | You intentionally want to spend sats in the separate lightning-address test. |
 
    Before running tests, it is useful to check for exported shell variables that
@@ -112,7 +112,10 @@ wallet recovery path.
    Keep NIP-05 and lightning-address tests separate from the default
    interoperability flow. They exercise different behavior:
 
-   - NIP-05 tests prove recipient identifier resolution and relay hints.
+   - The NIP-05 test resolves an external recipient, uses its advertised relay
+     hints, publishes a gift-wrapped transfer, and verifies the source debit.
+     Because the test does not hold the external recipient's private key,
+     successful receipt must be confirmed separately in that wallet.
    - Lightning-address tests prove mint melt/payment behavior and spend real
      sats.
    - The default source-wallet ecash transfer proves Acorn's core
@@ -133,7 +136,7 @@ wallet recovery path.
 
    - initial deposit visibility;
    - source-wallet gift-wrapped ecash self-transfer;
-   - source-wallet NIP-05 recipient resolution;
+   - source-wallet ecash transfer to an external NIP-05 recipient;
    - source-wallet lightning-address payment;
    - source-wallet transaction history rendering.
 

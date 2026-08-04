@@ -244,8 +244,9 @@ Testing lanes:
 
 - Source wallet: funds the suite, receives sweep-backs, and runs the minimal
   source-wallet ecash self-transfer used for web-app interoperability. It is
-  also used for opt-in NIP-05 and lightning-address payment tests because those
-  prove source-wallet interoperability and real payment behavior.
+  also used to fund opt-in sends to external NIP-05 wallets and Lightning
+  addresses because those prove interoperability with independently operated
+  recipients and real payment behavior.
 - Disposable wallet: receives most test mutations, including record lifecycle
   and burn-wallet flows. It also exercises a complete local Cashu token
   round-trip: receive funding, issue a token, accept that same token, verify
@@ -303,11 +304,14 @@ NIP-05 recipient resolution and lightning-address payments are separate opt-in
 tests:
 
 ```env
-# Source-wallet-only NIP-05 ecash transfer test. The identifier must resolve to
-# the source wallet pubkey.
-# ACORN_NIP05_RECIPIENT=trbouma@getsafebox.app
+# External NIP-05 ecash transfer test. This spends source-wallet sats and
+# requires separate confirmation in the recipient wallet.
+# ACORN_NIP05_RECIPIENT=someone@example.com
+# ACORN_NIP05_TEST_AMOUNT=1
+# ACORN_NIP05_TEST_COMMENT=pytest nip05 ecash transfer
 
-# Real lightning-address payment test. This spends sats and runs when set.
+# Real lightning-address payment test. This spends source-wallet sats and runs
+# when set.
 # ACORN_LIGHTNING_ADDRESS=someone@example.com
 # ACORN_LIGHTNING_TEST_AMOUNT=1
 ```

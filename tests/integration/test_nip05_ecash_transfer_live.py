@@ -57,7 +57,7 @@ async def cleanup_monstr_clients():
 @pytest.mark.live
 @pytest.mark.integration
 @pytest.mark.asyncio
-async def test_live_nip05_ecash_transfer_to_source_wallet():
+async def test_live_nip05_ecash_transfer_to_external_wallet():
     nip05 = os.getenv("ACORN_NIP05_RECIPIENT")
     if not nip05:
         pytest.skip("ACORN_NIP05_RECIPIENT is required for the NIP-05 ecash live test")
@@ -68,15 +68,21 @@ async def test_live_nip05_ecash_transfer_to_source_wallet():
     amount = int(os.getenv("ACORN_NIP05_TEST_AMOUNT", os.getenv("ACORN_TEST_AMOUNT", "1")))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
     comment = os.getenv("ACORN_NIP05_TEST_COMMENT", "pytest nip05 ecash transfer")
-    expected_pubkey = Keys(priv_k=source_nsec).public_key_hex()
+    source_pubkey = Keys(priv_k=source_nsec).public_key_hex()
 
     live_progress("nip05 ecash test: resolving recipient", nip05=nip05)
     resolved_pubkey, resolved_relays = nip05_to_npub(nip05)
     if not resolved_pubkey:
         pytest.skip(f"NIP-05 recipient did not resolve: {nip05}")
-    assert resolved_pubkey == expected_pubkey, (
-        "NIP-05 live test is source-wallet-only. "
-        "Set ACORN_NIP05_RECIPIENT to a NIP-05 identifier controlled by the source wallet."
+    assert resolved_pubkey != source_pubkey, (
+        "NIP-05 live test requires an external recipient. "
+        "Set ACORN_NIP05_RECIPIENT to an identifier that does not resolve to "
+        "the source wallet."
+    )
+    live_progress(
+        "nip05 ecash test: recipient resolved",
+        pubkey=resolved_pubkey[:12],
+        relays=resolved_relays,
     )
 
     wallet = Acorn(
@@ -104,37 +110,31 @@ async def test_live_nip05_ecash_transfer_to_source_wallet():
         timeout,
     )
 
-    assert transfer["recipient_pubkey"] == expected_pubkey
+    assert transfer["recipient_pubkey"] == resolved_pubkey
     assert transfer["recipient_relays"] == resolved_relays
 
-    receive_relays = transfer["relays"] or resolved_relays or [source_relay]
-    live_progress("nip05 ecash test: receiving transfer", event=transfer["event_id"][:12], relays=receive_relays)
-    receive = await _await_or_skip(
-        wallet.sweep_ecash_transfers(
-            relays=receive_relays,
-            event_id=transfer["event_id"],
-        ),
-        "nip05 ecash transfer receive",
-        timeout,
-    )
-
-    assert receive["accepted_count"] == 1, receive
-    assert receive["accepted_amount"] == amount, receive
     tx_history = await _await_or_skip(
         wait_for_tx_history_entry(
             wallet,
-            lambda entry: entry.get("tx_type") == "C"
+            lambda entry: entry.get("tx_type") == "D"
             and entry.get("amount") == amount
             and comment in entry.get("comment", ""),
             timeout,
-            "source credit for NIP-05 ecash transfer",
+            "source debit for external NIP-05 ecash transfer",
         ),
-        "source NIP-05 credit transaction history readback",
+        "source NIP-05 debit transaction history readback",
         timeout + 2,
     )
     assert any(
-        entry.get("tx_type") == "C"
+        entry.get("tx_type") == "D"
         and entry.get("amount") == amount
         and comment in entry.get("comment", "")
         for entry in tx_history
+    )
+    live_progress(
+        "PASSED external NIP-05 ecash send test; verify receipt in recipient wallet",
+        nip05=nip05,
+        amount=f"{amount} sat",
+        event=transfer["event_id"][:12],
+        relays=transfer["relays"] or resolved_relays,
     )
