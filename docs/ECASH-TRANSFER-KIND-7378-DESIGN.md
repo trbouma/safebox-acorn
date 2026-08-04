@@ -61,6 +61,16 @@ When the recipient is a NIP-05 identifier, Acorn resolves both:
 - the recipient public key; and
 - any relay hints published in the NIP-05 document.
 
+This resolution inherits the NIP-05 provider's trust boundary. The domain
+owner controls DNS, the reverse-proxy operator controls TLS termination and
+upstream routing, and the application operator controls the directory response
+and its database. Any of them can redirect a handle to a different public key
+or relay. A successful lookup means that the domain
+currently asserts the mapping; it does not independently prove the human
+identity of the recipient or permanent control of the name. For material
+transfers, callers should verify the resolved `npub` through an independent
+channel or use an already trusted raw public key.
+
 If the sender does not provide an explicit `--relay`, those NIP-05 relay hints
 should be used as the transfer publication relays. If the recipient is an
 `npub` or hex key, or if NIP-05 does not provide relay hints, Acorn falls back

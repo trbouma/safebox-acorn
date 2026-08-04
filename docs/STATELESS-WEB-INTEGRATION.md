@@ -65,9 +65,33 @@ The pattern makes Acorn's separation model concrete:
 | Executing code | Safebox Web process | Trusted to decrypt the cookie, construct Acorn, and avoid leaking secrets. |
 | Durable data | User-selected bootstrap relay | Encrypted and signed by Acorn; the relay provides availability but need not see plaintext. |
 | Funds | Cashu mint, represented by encrypted relay-backed proofs | Mint remains an independent trust domain; merely displaying balance need not contact it. |
+| Public NIP-05 name | Domain DNS, TLS/reverse proxy, and the application operator's directory database | The domain asserts a current name-to-key mapping; it does not independently prove a person's identity or permanent ownership. |
 
 The browser becomes the holder of an encrypted bootstrap capability. The relay
 remains the durable data layer. The web process joins them transiently.
+
+### NIP-05 naming trust boundary
+
+An Acorn may cryptographically prove control of its component key to a web
+application before claiming a NIP-05 handle. That protects the claim endpoint,
+but it does not make the resulting public name self-authenticating. A NIP-05
+identifier is trustworthy only to the extent that a relying party trusts:
+
+- the domain registrant and DNS/TLS configuration to direct requests to the
+  intended service; and
+- the reverse-proxy operator to terminate TLS and route requests to the
+  intended application without substituting another backend or response; and
+- the application operator, running code, and directory database to return the
+  authorized name-to-public-key and relay mapping.
+
+A domain, proxy, or application compromise can reassign a handle or redirect
+its relay hints even though the Acorn private key remains safe. Application
+controls can restrict which proxy addresses are authorized to supply forwarded
+metadata, but they cannot force an authorized proxy to route to the genuine
+application. NIP-05 therefore means
+“this domain currently asserts that this name maps to this key.” It is not, by
+itself, proof of civil identity, a permanent ownership guarantee, or a
+substitute for verifying a high-value recipient key through another channel.
 
 This is an inversion of the usual hosted-wallet architecture: the application
 does not make its account database the authoritative home of identity, funds,
