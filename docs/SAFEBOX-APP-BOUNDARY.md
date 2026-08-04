@@ -214,6 +214,15 @@ browser-held encrypted bootstrap session, request-scoped Acorn reconstruction,
 relay-backed balance loading, record-label listing, and individual record
 retrieval without a wallet database or server-side session store.
 
+The boundary has since been extended through an end-to-end external NIP-05
+ecash milestone. Safebox Web provides the authenticated, CSRF-protected user
+action to check for incoming transfers, while the request-scoped Acorn performs
+gift-wrap decryption, mint acceptance and proof refresh, kind `7375`
+persistence, and kind `7377` transaction journalling. The updated balance and
+credit history are then rendered by the web application. This keeps protocol
+and fund-state authority inside Acorn while allowing Safebox Web to concentrate
+on session handling and user experience.
+
 The detailed contract, security boundaries, browser-origin lesson, residual
 risks, and resulting Acorn API recommendations are documented in
 [Stateless Web Integration for Acorn](STATELESS-WEB-INTEGRATION.md).

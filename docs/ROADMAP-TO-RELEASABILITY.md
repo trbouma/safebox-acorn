@@ -551,6 +551,20 @@ must not expose keys, mutate proofs, or spend sats.
 
 The pilot is where user polish and operational assumptions become visible.
 
+An important pre-pilot boundary milestone was demonstrated in August 2026
+using the independently packaged
+[Safebox Web application](https://github.com/trbouma/safebox-web). A funded
+Acorn resolved an external NIP-05 recipient and sent a gift-wrapped ecash
+transfer; the recipient attached its Acorn to Safebox Web, explicitly received
+the transfer, and observed the accepted funds and credit transaction. Safebox
+Web delegated relay, encryption, mint, proof, and journal operations to Acorn
+rather than duplicating wallet logic or storing wallet state in its database.
+
+This result is evidence that the package/application boundary is usable and
+that CLI-to-web interoperability works for an external recipient. It does not
+replace the remaining pilot work on interruption recovery, concurrency,
+operational support, usability, or sustained testing.
+
 At least one pilot should exercise:
 
 - Acorn as a private component operated through Safebox;

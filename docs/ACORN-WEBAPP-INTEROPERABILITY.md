@@ -29,6 +29,43 @@ The current acceptance flow confirms:
 - transaction history is rendered consistently enough for the web app to show
   deposits, debits, credits, and burn sweep details.
 
+## Milestone: external NIP-05 ecash delivery through Safebox Web
+
+In August 2026, the standalone
+[Safebox Web application](https://github.com/trbouma/safebox-web) completed a
+manual end-to-end external-recipient test:
+
+1. the Acorn live test resolved an external NIP-05 address to its component
+   public key and advertised home relay;
+2. the funded source Acorn issued ecash and published a NIP-59 gift-wrapped
+   kind `7378` transfer to that relay;
+3. the recipient attached its Acorn to Safebox Web through the encrypted,
+   authenticated browser session;
+4. the user selected **Check and receive ecash** on the transaction-history
+   page;
+5. Safebox Web invoked Acorn's `sweep_ecash_transfers()` method on the
+   request-scoped component;
+6. Acorn unwrapped the transfer, accepted and refreshed the proofs through the
+   issuing mint, persisted the resulting kind `7375` proof state, and wrote the
+   kind `7377` credit history; and
+7. Safebox Web displayed both the received funds and the resulting transaction.
+
+This milestone formalizes the application boundary. Acorn owns recipient
+resolution, transfer encryption, relay queries, mint interaction, proof-state
+mutation, and transaction journalling. Safebox Web owns the user-controlled
+browser session, CSRF protection, progress and error presentation, and the
+explicit user action that invokes the mutation. The web application does not
+reimplement proof handling or maintain a separate wallet-state database.
+
+The result also demonstrates that the sender and recipient need not use the
+same application surface. A CLI-driven source Acorn can send to a NIP-05
+address whose recipient later accepts the transfer through Safebox Web, while
+both sides remain anchored in Acorn's relay-backed protocol state.
+
+This is milestone evidence, not a complete fund-safety claim. It does not yet
+close the durable receive-journal, interrupted-operation recovery, concurrent
+writer, or independent security-review gates in the releasability roadmap.
+
 ## Acceptance scenario
 
 Use this as a manual interoperability check after changes to Acorn recovery,
