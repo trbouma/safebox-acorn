@@ -1,12 +1,12 @@
 ---
 title: How Acorn Works
-description: A plain-language guide to Acorn identity, controlled funds and records, infrastructure, and recovery.
+description: A plain-language guide to Acorn keys, controlled funds and records, infrastructure, and recovery.
 ---
 
 # How Acorn works
 
 Acorn separates a user's portable protocol state from the application used to
-access it. The component provides cryptographic identity, wallet functions,
+access it. The component provides cryptographic key authority, wallet functions,
 private records, and recovery mechanics that compatible applications can build
 on.
 
@@ -25,10 +25,10 @@ trusted hosted service, or dedicated appliance can use the same component model.
 This matters because the application does not have to become the only place
 where the user's state can be understood or recovered.
 
-## Identity belongs to the component
+## Keys provide continuity and authority
 
-In Acorn, identity does not mean the person. It means the cryptographic identity
-of the Acorn component or wallet lineage.
+Acorn safeguards and exercises the cryptographic keys of the component or
+wallet lineage.
 
 ```text
 private key (nsec) -> signing, decryption, and authorization
@@ -39,18 +39,20 @@ seed phrase        -> recovery material when Acorn generated or derived the wall
 The public/private keypair provides two important properties:
 
 - **Continuity:** another compatible Acorn environment can restore and continue
-  the same protocol identity.
+  the same key authority and protocol state.
 - **Authority:** control of the private key authorizes Acorn to sign, decrypt,
   update records, and perform wallet actions.
 
-The keypair does not prove someone's civil, legal, social, or organizational
-identity. Names, NIP-05 addresses, credentials, roles, and legal assertions are
-separate claims that may be associated with the component.
+The keypair is not identity and does not prove someone's civil, legal, social,
+or organizational identity. Identity is interpreted outside Acorn. Another
+party may associate the public key with a NIP-05 name, kind `0` profile,
+Lightning address, credentials, relationships, prior interactions, and its own
+understanding of the controller.
 
 ## Funds and records are controlled objects
 
-Identity supplies continuity and authority. Funds and records are the principal
-objects controlled through that identity.
+Keys supply cryptographic continuity and authority. Funds and records are the
+principal objects controlled through them.
 
 <div class="acorn-grid acorn-grid--two" markdown>
 
@@ -132,7 +134,7 @@ This creates an explicit trust boundary:
 - the user chooses which mint to use;
 - proofs remain associated with their issuing mint;
 - Acorn checks proof state and provides repair and recovery tools;
-- changing applications does not require changing the Acorn identity.
+- changing applications does not require changing the Acorn keys.
 
 Mint choice is therefore important. Replaceable application infrastructure does
 not mean that existing proofs can simply be treated as liabilities of another
@@ -140,7 +142,7 @@ mint.
 
 ## Applications are replaceable interfaces
 
-The same Acorn protocol identity and compatible state can be operated through
+The same Acorn keys and compatible state can be operated through
 different surfaces:
 
 ```text
@@ -163,7 +165,7 @@ key material + location of relay-backed state
 ```
 
 The private key—or the original seed phrase when Acorn generated or derived the
-wallet key—restores the Acorn protocol identity. This includes the 24-word
+wallet key—restores the Acorn keypair and protocol authority. This includes the 24-word
 phrase created from external entropy. An imported `nsec` has no Acorn-generated
 seed phrase and must be backed up directly. The home relay tells
 the recovered component where to locate its encrypted wallet events. From
@@ -214,7 +216,7 @@ idempotency, failure injection, clean async lifecycle handling, package
 validation, FreeBSD deployment, and release automation. Acorn should currently
 be treated as developer-stage software and used only with small test balances.
 
-[Explore user-controlled funds and records](user-controlled-funds-and-records.md){ .md-button .md-button--primary }
+[Explore user-controlled keys, funds and records](user-controlled-funds-and-records.md){ .md-button .md-button--primary }
 [Explore the user-controlled architecture](user-controlled-architecture.md){ .md-button }
 [Return to the Acorn home page](index.md){ .md-button }
 [View the source repository](https://github.com/trbouma/safebox-acorn){ .md-button }

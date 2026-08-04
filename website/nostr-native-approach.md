@@ -6,7 +6,7 @@ description: Why Acorn uses Nostr, what the protocol makes possible, and why Nos
 # Nostr-native approach
 
 Acorn uses Nostr as its current protocol foundation because Nostr provides a
-small, practical set of building blocks for user-controlled identity and state:
+small, practical set of building blocks for user-controlled keys and state:
 cryptographic keypairs, signed events, extensible event kinds, and a choice of
 relays that can store and forward those events.
 
@@ -31,7 +31,7 @@ That model gives Acorn several useful properties:
 - **Storage is separable from authority.** A relay can store encrypted,
   signed state without possessing the private key that controls it.
 - **The same event can have more than one home.** Signed events can be copied to
-  other suitable relays without changing their identity or authorship.
+  other suitable relays without changing their event IDs or authorship.
 - **Event meanings can evolve.** Kinds and tags provide an extensible envelope
   for wallet state, private records, delivery messages, and future controlled
   objects.
@@ -41,7 +41,7 @@ That model gives Acorn several useful properties:
 
 These capabilities are part of the
 [Nostr base protocol, NIP-01](https://github.com/nostr-protocol/nips/blob/master/01.md).
-Acorn combines them into a component model for identity, funds, records,
+Acorn combines them into a component model for keys, funds, records,
 recovery, replication, and migration.
 
 ## What it changes
@@ -51,7 +51,7 @@ where continuity and authority reside.
 
 | Conventional account-centric service | Acorn's Nostr-native model |
 | --- | --- |
-| The provider assigns and administers the account. | The Acorn keypair supplies protocol identity and authority. |
+| The provider assigns and administers the account. | The Acorn keypair supplies a protocol identifier and cryptographic authority. |
 | The provider's database is the primary source of state. | Signed events remain attributable and verifiable outside one database. |
 | The service endpoint and storage layer are usually fixed together. | Clients can use, test, replicate to, and migrate among suitable relays. |
 | Export and migration are application features. | Portability and relay choice are architectural concerns. |
@@ -96,7 +96,7 @@ normally called a *digital wallet* can be understood as a user-controlled
 component that carries:
 
 ```text
-protocol identity  -> continuity and authority
+keys               -> continuity and authority
 funds              -> controllable value issued by mints
 records            -> encrypted or issued controlled objects
 recovery context   -> the material and locations needed to continue
@@ -105,7 +105,7 @@ recovery context   -> the material and locations needed to continue
 In this model, a wallet is not limited to a payment interface on one device. It
 can operate inside a web application, command-line tool, trusted hosted
 service, FreeBSD jail, dedicated appliance, or future hardware-backed system.
-The surrounding experience can change while the component identity and
+The surrounding experience can change while the component keys and
 recoverable state continue.
 
 ## Nostr-native does not mean Nostr-only
@@ -144,9 +144,9 @@ A Nostr-native design does not mean that:
 - protocol portability removes the need to trust running code.
 
 Acorn treats these limits as design boundaries. It tests relay capabilities,
-keeps mint authority distinct from wallet control, separates component identity
-from human identity, and makes recovery part of the protocol model rather than
-an afterthought.
+keeps mint authority distinct from wallet control, separates cryptographic keys
+from external identity claims, and makes recovery part of the protocol model
+rather than an afterthought.
 
 [Continue to recovery and continuity](recovery-and-continuity.md){ .md-button .md-button--primary }
 [Explore the user-controlled architecture](user-controlled-architecture.md){ .md-button }

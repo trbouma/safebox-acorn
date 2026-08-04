@@ -50,7 +50,7 @@ specified in [Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GA
 
 ## Recipient resolution
 
-The recipient can be supplied using the normal Acorn identity rules:
+The recipient can be supplied using the normal Acorn key-identifier rules:
 
 - NIP-05 identifier, such as `alice@example.com`;
 - Nostr `npub`;
@@ -200,13 +200,13 @@ records.
 
 By default, the transfer should be NIP-59 style gift-wrapped using NIP-44
 encryption. The recipient decrypts the outer wrapper using the private key for
-the resolved receiving identity, then decrypts the sealed inner event to obtain
+the resolved receiving key, then decrypts the sealed inner event to obtain
 the sender-authored inner kind `7378` transfer payload.
 
 For direct mode, the event `content` itself is NIP-44 encrypted to the
 recipient.
 
-The receiving identity may be the Acorn wallet key, or it may be a transient
+The receiving key may be the Acorn wallet key, or it may be a transient
 receiving key supplied only for the receive operation. If decryption fails, the
 event is ignored or reported as an unreadable transfer candidate.
 

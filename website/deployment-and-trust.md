@@ -105,7 +105,8 @@ The same Acorn wallet has different relationships with different providers:
   operator-provided execution environment.
 
 A relay does not become the mint. A mint does not become the private-record
-store. The application does not need to become the permanent wallet identity.
+store. The application does not need to become the permanent custodian of the
+wallet keys or protocol state.
 
 ## Safebox as a service surface
 
@@ -115,7 +116,7 @@ mints, monitoring, backups, and customer support.
 
 Those services make Acorn usable without requiring every person to administer
 servers. The design remains user-controlled when the user retains a practical
-path to recover the component identity and compatible state through another
+path to recover the component keys and compatible state through another
 environment.
 
 ## Choosing a deployment

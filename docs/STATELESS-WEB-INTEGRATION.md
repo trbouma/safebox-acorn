@@ -94,7 +94,7 @@ itself, proof of civil identity, a permanent ownership guarantee, or a
 substitute for verifying a high-value recipient key through another channel.
 
 This is an inversion of the usual hosted-wallet architecture: the application
-does not make its account database the authoritative home of identity, funds,
+does not make its account database the authoritative home of keys, funds,
 and records. It reconstructs a component whose continuity comes from its key
 and protocol state.
 
@@ -191,7 +191,7 @@ or mint.
 The proven first slice consists of:
 
 1. connect with an `nsec` or offline mnemonic;
-2. reconstruct the component identity;
+2. reconstruct the component's key authority;
 3. load wallet state from the bootstrap relay;
 4. display balance;
 5. list private record labels; and
@@ -462,7 +462,7 @@ The prototype identified public API improvements that belong in Acorn:
    payload objects longer than required.
 4. Return typed, sanitized exceptions that distinguish missing wallet data,
    relay timeout, incompatible relay behavior, and invalid records.
-5. Provide an immutable read model for identity, balance, mint/keyset capacity,
+5. Provide an immutable read model for public-key information, balance, mint/keyset capacity,
    and record labels so applications do not depend on mutable Acorn internals.
 
 The web application should consume these APIs rather than copy cryptography,

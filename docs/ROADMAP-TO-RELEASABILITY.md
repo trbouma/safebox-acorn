@@ -2,8 +2,8 @@
 
 ## Summary
 
-Acorn is a protocol-first component for user-controlled identity, funds and
-records.
+Acorn is a protocol-first component for safeguarding user-controlled keys,
+funds and records.
 
 Acorn is approaching the point where it can be distributed independently from
 Safebox. It already has a standalone package, an editable development workflow,
@@ -285,7 +285,7 @@ by tests. Candidate boundaries are:
 - relay storage and publication;
 - record encryption and blob handling;
 - ecash transfer orchestration;
-- identity and NIP-05 discovery;
+- key identifiers, NIP-05 resolution, and external identity claims;
 - CLI formatting and command orchestration.
 
 Modularization is not a prerequisite for the first developer preview, but the
@@ -297,8 +297,10 @@ single module through the pilot.
 Before publishing:
 
 - identify the supported Python imports;
-- define identity consistently as the Acorn component's public/private keypair,
-  distinct from the civil, legal, or social identity of a person;
+- define the public/private keypair consistently as cryptographic continuity
+  and authority, not identity; explain that NIP-05, kind `0` profiles,
+  Lightning addresses, credentials, relationships, and other external context
+  may contribute to identity judgments made outside Acorn;
 - document whether `Acorn` construction performs I/O;
 - define sync versus async entry points;
 - document every CLI command intended to remain supported;

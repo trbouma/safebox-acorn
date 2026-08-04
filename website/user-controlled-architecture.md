@@ -1,6 +1,6 @@
 ---
 title: User-Controlled Architecture
-description: How Acorn reverses the conventional relationship between users, applications, identity, funds, records, and infrastructure.
+description: How Acorn reverses the conventional relationship between users, applications, keys, funds, records, and infrastructure.
 ---
 
 # User-controlled architecture
@@ -10,8 +10,8 @@ the model. The provider creates the account, stores the records, maintains the
 balance, controls recovery, and decides which interfaces may access the system.
 The user receives permission to use an account inside it.
 
-Acorn starts from the opposite direction. A user-controlled component carries
-cryptographic identity, funds, records, and recovery context. Applications and
+Acorn starts from the opposite direction. A user-controlled component safeguards
+cryptographic keys, funds, records, and recovery context. Applications and
 providers can offer useful services around that component without becoming the
 only place where its continuity can exist.
 
@@ -28,12 +28,12 @@ permanently dependent on it.
 
 ## The conventional centre of gravity
 
-In a conventional application, identity, data, permissions, and recovery are
+In a conventional application, account identifiers, data, permissions, and recovery are
 usually records in the provider's database:
 
 ```text
 provider account
-├── login and identity
+├── login and account profile
 ├── application balance
 ├── private records
 ├── permissions
@@ -46,7 +46,7 @@ loses data, disables an account, or stops supporting an export format, the
 user's practical ability to continue may disappear with it.
 
 Backups can protect the provider. Data exports can help the user. Neither, by
-itself, makes another application capable of continuing the same identity and
+itself, makes another application capable of continuing the same key authority and
 protocol state.
 
 ## Acorn moves continuity to the component
@@ -55,7 +55,7 @@ Acorn separates the responsibilities that are often bundled inside one
 account:
 
 ```text
-identity    -> Acorn keypair provides continuity and authority
+keys        -> Acorn keypair provides continuity and authority
 funds       -> wallet controls proofs; mint validates spend state
 records     -> encrypted protocol state; issuers remain authoritative for claims
 application -> experience, workflows, policy, and support
@@ -69,21 +69,22 @@ code, a community can operate relays, and a mint can issue value. The inversion
 comes from keeping those roles distinct and preserving a credible path to move
 between compatible applications and operators.
 
-## An Acorn wallet is a component with its own cryptographic identity
+## An Acorn wallet is a component with its own cryptographic keys
 
 Conventional services normally assign an internal user identifier and decide
 how the account is authenticated and recovered. Other applications cannot
 continue that account unless the provider permits it.
 
-An Acorn wallet instead has a user-controlled protocol identity: the
-public/private keypair of the component or wallet lineage. This is not the
-identity of the user. It is the identity of the component itself.
+An Acorn wallet instead has a user-controlled public/private keypair. The keys
+provide protocol continuity and cryptographic authority over funds and records.
+They are not the identity of the user or an identity contained by the
+component.
 
-The component identity can be linked to a user's civil, social, legal, or
-organizational identity through names, credentials, attestations, or other
-claims. It can also exist on its own, without making a claim about the person
-or organization operating it. In either case, the component identity exercises
-continuity and cryptographic authority over its controlled funds and records.
+Identity is formed outside Acorn. A person or organization may be associated
+with the public key through a NIP-05 name, kind `0` profile, Lightning address,
+credential, attestation, legal claim, social relationship, prior interaction,
+or some combination of them. Ultimately, a counterparty decides what those
+signals mean and whom it believes controls the key.
 
 ```text
 private key -> signing, decryption, and authorization
@@ -92,11 +93,11 @@ seed phrase -> recovery material when Acorn generated or derived the wallet key
 ```
 
 The keypair allows another compatible Acorn environment to continue the same
-component identity. Control of the private key authorizes signing, decryption,
+cryptographic authority and protocol state. Control of the private key authorizes signing, decryption,
 record updates, and wallet actions, subject to the separate authority of mints,
 record issuers, and applicable legal frameworks. The inversion is therefore
-precise: the provider no longer has to be the sole source of the component's
-continuity or authority.
+precise: the provider no longer has to be the sole source of continuity or
+authority.
 
 ## Funds: from provider balance to controlled value
 
@@ -180,7 +181,7 @@ portable continuity when they do not.
 
 When the model works as intended, a user can:
 
-- replace an application without creating a new component identity;
+- replace an application without creating new keys or abandoning existing protocol state;
 - recover through another compatible environment after losing a device;
 - replicate encrypted state before a relay becomes unavailable;
 - change the trusted operator that runs the component;
@@ -197,7 +198,7 @@ of the architecture rather than emergency features added after lock-in has
 already occurred.
 
 [Explore the Nostr-native approach](nostr-native-approach.md){ .md-button .md-button--primary }
-[Explore user-controlled funds and records](user-controlled-funds-and-records.md){ .md-button }
+[Explore user-controlled keys, funds and records](user-controlled-funds-and-records.md){ .md-button }
 [Return to How Acorn Works](how-acorn-works.md){ .md-button }
 [View the source repository](https://github.com/trbouma/safebox-acorn){ .md-button }
 

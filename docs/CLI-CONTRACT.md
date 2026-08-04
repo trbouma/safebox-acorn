@@ -50,7 +50,7 @@ acorn set --import-nsec --home relay.example.com
 ```
 
 An ordinary command without an initialized config should explain how to run
-`acorn init`; it must not silently generate a replacement identity.
+`acorn init`; it must not silently generate a replacement keypair.
 
 The command:
 
@@ -546,7 +546,7 @@ The CLI may evolve, but the following behaviors should remain stable once
 downstream applications depend on them:
 
 - `acorn --help` loads without requiring Safebox;
-- `acorn info --json` emits machine-readable identity info;
+- `acorn info --json` emits machine-readable key and component information;
 - `acorn balance --json` emits balance and proof count;
 - `acorn get <label> --json` emits a single record;
 - `acorn get_user_records --labels --json` emits labels without payloads;

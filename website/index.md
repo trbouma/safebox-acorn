@@ -1,6 +1,6 @@
 ---
 title: Acorn
-description: A protocol-first component for user-controlled identity, funds and records.
+description: A protocol-first component for safeguarding user-controlled keys, funds and records.
 ---
 
 <section class="acorn-hero" markdown>
@@ -9,9 +9,9 @@ description: A protocol-first component for user-controlled identity, funds and 
 
 <img class="acorn-hero-mark" src="assets/images/acorn-logo.png" alt="Acorn geometric logo">
 
-<p class="acorn-tagline">A protocol-first component for user-controlled identity, funds and records.</p>
+<p class="acorn-tagline">A protocol-first component for safeguarding user-controlled keys, funds and records.</p>
 
-<p class="acorn-intro">A portable foundation for cryptographic identity, private records, value, recovery, and continuity across replaceable infrastructure.</p>
+<p class="acorn-intro">Portable cryptographic authority, private records, value, recovery, and continuity across replaceable infrastructure.</p>
 
 [How Acorn works](how-acorn-works.md){ .md-button .md-button--primary }
 [View the source](https://github.com/trbouma/safebox-acorn){ .md-button }
@@ -21,7 +21,7 @@ description: A protocol-first component for user-controlled identity, funds and 
 ## Why Acorn exists
 
 People increasingly depend on platforms, services, devices, and applications
-to hold the things that matter to them. The convenience is real, but identity,
+to hold the things that matter to them. The convenience is real, but keys,
 records, value, and recovery can become inseparable from a particular product
 or provider.
 
@@ -38,11 +38,11 @@ The goal is practical independence, not isolation.
 
 <article class="acorn-card" markdown>
 
-### Identity
+### Keys
 
-Identity means the cryptographic identity of the Acorn component—not the civil,
-legal, or social identity of a person. A public/private keypair provides
-continuity and authority across compatible applications and environments.
+Acorn safeguards and exercises a public/private keypair. The keys provide
+continuity and cryptographic authority across compatible applications and
+environments without claiming to define the identity of the controller.
 
 </article>
 
@@ -69,10 +69,9 @@ compatible Acorn environments.
 
 </div>
 
-## Protocol identity, precisely defined
+## Keys are not identity
 
-An Acorn identity is a cryptographic public/private keypair associated with an
-Acorn component or wallet lineage:
+An Acorn uses a cryptographic public/private keypair:
 
 ```text
 private key (nsec) -> signing, decryption, and authorization
@@ -80,9 +79,12 @@ public key (npub)  -> addressing, verification, and encryption to Acorn
 seed phrase        -> recovery material when Acorn generated or derived the wallet key
 ```
 
-The keypair does not claim to be the person. Human-readable names,
-credentials, roles, and legal assertions are separate claims that may be
-associated with the component through records or external trust frameworks.
+The keypair supplies authority and a stable protocol identifier, but it is not
+identity itself. A counterparty may form an identity judgment from an amalgam
+of NIP-05 names, kind `0` profiles, Lightning addresses, credentials,
+relationships, prior interactions, and other context. Acorn can carry or
+resolve some of those claims; it does not decide what they mean to another
+party.
 
 ## Protocol-first continuity
 
@@ -97,8 +99,8 @@ app   -> experience and workflows
 ```
 
 Because these layers are distinct, an application, device, relay, operator, or
-deployment can be replaced without automatically replacing the Acorn identity
-and its controlled state.
+deployment can be replaced without automatically replacing the Acorn keys,
+authority, and controlled state.
 
 This design supports individual use, trusted service providers, community
 infrastructure, and appliance-style deployments without requiring every user

@@ -6,7 +6,7 @@ description: What an Acorn wallet needs for recovery and how continuity survives
 # Recovery and continuity
 
 Recovery is not merely regaining access to an application account. For Acorn,
-recovery means restoring the cryptographic identity of the wallet and locating
+recovery means restoring the cryptographic keys and authority of the wallet and locating
 enough relay-backed state to continue operating its funds and records.
 
 The practical recovery model is:
@@ -41,8 +41,9 @@ for hashes of passwords or other guessable text.
 
 ## What recovery restores
 
-Restoring the keypair restores the Acorn component identity. That identity can
-then locate, verify, decrypt, and continue compatible wallet state.
+Restoring the keypair restores the Acorn component's cryptographic authority.
+The keypair can then locate, verify, decrypt, and continue compatible wallet
+state. It does not, by itself, restore or prove a person's identity.
 
 Recovery may restore:
 

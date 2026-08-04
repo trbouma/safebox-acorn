@@ -1,13 +1,14 @@
 # Safebox Acorn
 
-Acorn is a protocol-first component for user-controlled identity, funds and records.
+Acorn is a protocol-first component for safeguarding user-controlled keys,
+funds and records.
 
 Safebox Acorn is the standalone Acorn component extracted from Safebox. It
 provides:
 
 - the `Acorn` Python runtime class
 - the `acorn` command-line interface
-- supporting identity, Nostr, Cashu, Lightning, record, and crypto helpers used
+- supporting key, Nostr profile, Cashu, Lightning, record, and crypto helpers used
   by Acorn
 
 This package is intended to make Acorn installable into other Python projects
@@ -153,7 +154,7 @@ ACORN_RELAY_SCENARIO=controlled poetry run pytest \
 ```
 
 It creates a uniquely named temporary wallet config, initializes an unfunded
-wallet from fresh 256-bit entropy, reads it back, reconstructs the same identity
+wallet from fresh 256-bit entropy, reads it back, reconstructs the same keypair
 from its 24-word phrase, burns its relay-backed data, and removes the config.
 NIP-09 deletion is advisory, so a successful burn confirms publication of the
 deletion request rather than guaranteed physical erasure by the relay.

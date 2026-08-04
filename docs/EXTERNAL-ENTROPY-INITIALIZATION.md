@@ -96,7 +96,7 @@ should reproduce both the phrase and the `nsec` exactly.
 
 - `--import-nsec` or `--nsec-file`, because one path derives a new key while
   the other imports a final private key; and
-- `--keepkey`, because external entropy intentionally selects a new identity.
+- `--keepkey`, because external entropy intentionally selects a new keypair.
 
 The home relay and mint can still be supplied normally:
 
@@ -190,7 +190,7 @@ each selected controlled or third-party relay scenario, it:
 1. generates fresh disposable 256-bit entropy;
 2. derives the 24-word phrase and expected `nsec`;
 3. initializes and reads back the wallet bootstrap record;
-4. reconstructs the identity from the phrase in a new `Acorn` object;
+4. reconstructs the keypair from the phrase in a new `Acorn` object;
 5. verifies the same `npub`, phrase, and zero balance;
 6. publishes the wallet deletion request; and
 7. removes the temporary YAML configuration.
@@ -224,5 +224,5 @@ deletion remains advisory under NIP-09 even when the test passes.
 | `acorn init --entropy` | External 256-bit source | 24-word BIP39 mnemonic | Mnemonic plus home relay |
 | `acorn init --import-nsec` or `--nsec-file` | External final private key | Unavailable | `nsec` plus home relay |
 
-These paths create the same kind of Acorn component identity. They differ only
+These paths create the same kind of Acorn key authority. They differ only
 in how the private key originates and which recovery representation is valid.

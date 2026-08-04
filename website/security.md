@@ -26,8 +26,9 @@ Acorn is designed to protect:
 - wallet configuration and transaction history; and
 - continuity of access to relay-backed state.
 
-The keypair is the cryptographic identity of the Acorn component. It is not, by
-itself, the civil, legal, or social identity of a person.
+The keypair provides the Acorn component's cryptographic continuity and
+authority. It is not, by itself, the civil, legal, or social identity of a
+person. Identity claims and interpretations remain outside the keypair.
 
 ## Safeguards implemented today
 

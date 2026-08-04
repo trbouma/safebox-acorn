@@ -32,7 +32,7 @@ Each command reads the secret from a hidden prompt. Recovery phrases and
 transient or initialization keys are entered once. BIP39 validates the recovery
 phrase checksum, while the nsec parser validates imported key syntax. Only
 `acorn set --import-nsec` requires double entry because it replaces the active
-component identity. Secret values must not appear in ordinary output, debug
+component keypair. Secret values must not appear in ordinary output, debug
 logs, tracebacks, or the process argument list.
 
 Ordinary `acorn init` does not ask for a private key. It generates a new key and

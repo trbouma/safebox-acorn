@@ -16,7 +16,7 @@ The default private record kind is:
 In this specification, the publisher public key identifies the Acorn component
 or wallet lineage, not necessarily a person. Its corresponding private key
 provides decryption and signing authority over the record namespace. Any claim
-linking that protocol identity to a human identity is separate record content
+linking that protocol key to a human identity is separate record content
 or an external assertion.
 
 The current design supports two storage layers:

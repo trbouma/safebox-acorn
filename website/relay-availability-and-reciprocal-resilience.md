@@ -21,7 +21,7 @@ On relay infrastructure, an Acorn wallet is best understood as an isolated
 encrypted tenant:
 
 ```text
-wallet identity
+wallet key authority
 encrypted record namespace
 signed event set
 wallet and proof metadata
@@ -148,4 +148,3 @@ The operator-facing question should become:
 - [Relay Configuration Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-CONFIGURATION-SPEC.md)
 - [Relay Migration Runbook](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Relay Suitability Ledger](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-SUITABILITY-LEDGER.md)
-

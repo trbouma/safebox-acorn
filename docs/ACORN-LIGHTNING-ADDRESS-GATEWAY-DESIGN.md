@@ -7,7 +7,7 @@ and does not describe functionality that is currently complete in Acorn.
 
 ## Summary
 
-An Acorn should be able to register its component identity with a Lightning
+An Acorn should be able to register its component public key with a Lightning
 address provider without surrendering its private key or moving its durable
 wallet state into the provider's application.
 
@@ -34,12 +34,12 @@ normal protocol boundary.
 The design should:
 
 - give an Acorn conventional Lightning reachability while it is offline;
-- prove control of the registered component identity by challenge and
+- prove control of the registered component key by challenge and
   response;
 - keep the `nsec` entirely outside the provider;
 - avoid requiring the provider to store the recipient's Acorn wallet state;
 - use the existing gift-wrapped kind `7378` transfer and receive path;
-- let the recipient change relays without changing its component identity;
+- let the recipient change relays without changing its component key;
 - make settlement, conversion, publication, and acceptance distinct states;
 - make retries idempotent and safe across process crashes;
 - disclose the provider's temporary custody and delivery obligations; and
@@ -49,21 +49,24 @@ The first version is not intended to create a decentralized Lightning-address
 standard, remove all trust from the provider, or solve portable names across
 unrelated provider domains.
 
-## Identity model
+## Key and address model
 
-An Acorn wallet is a component with its own cryptographic identity. The public
-key in this design identifies the component, not necessarily a person. Control
-of the corresponding private key provides continuity and authority over the
-component's funds, records, registration, and delivery instructions.
+An Acorn wallet is a component with its own cryptographic keypair. The public
+key is the stable protocol identifier used by this design. Control of the
+corresponding private key provides continuity and authority over the
+component's funds, records, registration, and delivery instructions. The key
+is not, by itself, the identity of a person or organization.
 
 Registration proves only that the requester controls the private key for the
 submitted public key and authorizes a precise registration operation. It does
 not establish a civil identity, prove a legal name, or prove control of an
 unrelated email address.
 
-The Lightning address is a provider-assigned route. It may be presented as a
-human-readable address, but the durable authority behind the mapping is the
-Acorn keypair.
+The Lightning address is a provider-assigned route and one possible identity
+signal. NIP-05, a kind `0` profile, credentials, relationships, or other
+external context may provide additional signals. The provider proves only the
+registered mapping and key authorization; each counterparty determines what
+identity meaning to assign to those signals.
 
 ## Actors and trust boundaries
 
@@ -516,7 +519,7 @@ should qualify the relay before any value-bearing gateway test proceeds.
 - What refund mechanism is possible when the original Lightning payer is no
   longer reachable?
 - Can a Lightning address be ported between providers, or is only the Acorn
-  component identity portable?
+  component key and authority portable?
 - Should a provider publish a machine-readable capability document describing
   registration versions, fees, mints, and delivery protocols?
 

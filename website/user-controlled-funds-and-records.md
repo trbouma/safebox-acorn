@@ -1,12 +1,12 @@
 ---
-title: User-Controlled Funds and Records
+title: User-Controlled Keys, Funds and Records
 description: How Acorn uses one component model for transferable funds and private records with different control rules.
 ---
 
-# User-controlled funds and records
+# User-controlled keys, funds and records
 
 Acorn treats funds and private records as different forms of controlled
-protocol state. Both are anchored by the cryptographic identity of an Acorn
+protocol state. Both are anchored by the cryptographic keys of an Acorn
 wallet, protected from application lock-in, and recoverable through compatible
 environments. They differ in what control means and who remains authoritative.
 
@@ -14,21 +14,24 @@ This gives Acorn a broader role than either a payment wallet or a document
 store. It is a common component for objects that a user needs to hold, operate,
 recover, and carry between applications.
 
-## Identity supplies continuity and authority
+## Keys supply continuity and authority
 
-An Acorn wallet has its own user-controlled cryptographic identity. This is the
-identity of the component, not the identity of the person operating it.
+An Acorn wallet has its own user-controlled cryptographic keypair. The keys
+provide continuity and authority; they are not the identity of the component or
+the person operating it.
 
 The wallet keypair provides:
 
 - **continuity**, so compatible environments can recover and continue the same
-  component identity; and
+  key authority and protocol state; and
 - **authority**, so the component can sign, decrypt, update, present, transfer,
   or spend controlled objects according to their rules.
 
-The identity may be linked to a person or organization through separate names,
-credentials, attestations, or legal claims. Those associations are not implied
-by possession of the key alone.
+Another party may associate the public key with a person or organization
+through NIP-05, a kind `0` profile, a Lightning address, credentials,
+attestations, relationships, prior interactions, or legal claims. Those
+associations are external interpretations and are not implied by possession of
+the key alone.
 
 ## The controllable-record model
 
@@ -77,7 +80,7 @@ fresh spendable state through the mint. The mint provides anti-double-spend
 validation, while Acorn provides private delivery, wallet control, durable
 state, recovery, and application interoperability.
 
-Changing the application does not require changing the wallet identity.
+Changing the application does not require changing the wallet keys.
 Changing mints is a different matter: proofs remain obligations of the mint
 that issued them.
 
@@ -105,7 +108,7 @@ holder control and continuity; it does not manufacture truth or legal effect.
 Funds and records share a common foundation:
 
 ```text
-component identity
+cryptographic keys and authority
 encrypted relay-backed state
 private delivery
 signed events
@@ -143,4 +146,3 @@ depend exclusively on one application interface.
 - [Record Encryption Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RECORD-ENCRYPTION-SPEC.md)
 - [Ecash Transfer Design](https://github.com/trbouma/safebox-acorn/blob/main/docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Mint Configuration Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/MINT-CONFIGURATION-SPEC.md)
-

@@ -53,7 +53,7 @@ promotion         -> move home_relay to a verified replica
 
 The analogy is imperfect but helpful. Acorn's replication unit is a signed Nostr
 event, not a filesystem block. The important invariant is that signed events can
-be copied without rewriting their identity.
+be copied without rewriting their event IDs, signatures, or authorship.
 
 ## Swarm-style encrypted replicas
 
@@ -83,7 +83,7 @@ In Acorn terms:
 primary safe       -> home_relay
 mirror safe        -> replicated relay
 swarm              -> trusted relay pool
-tenant             -> wallet identity and encrypted record namespace
+tenant             -> wallet key authority and encrypted record namespace
 encrypted mirror   -> copied signed encrypted Nostr events
 recovery context   -> home_relay + seed phrase + nsec + runbook
 ```
@@ -95,7 +95,7 @@ only route back to a user's records, wallet metadata, and recovery context.
 
 The useful unit is an isolated encrypted tenant. In Acorn, this means:
 
-- one wallet identity;
+- one wallet keypair and authority context;
 - one encrypted record namespace;
 - one recovery context;
 - one signed event set;
@@ -115,7 +115,7 @@ execution relationship  -> user-authorized component
 ```
 
 On a relay, an Acorn instance is best understood as an encrypted tenant: a
-signed event set associated with one wallet identity and record namespace. The
+signed event set associated with one wallet keypair and record namespace. The
 relay hosts availability for the tenant. It does not become the owner of the
 tenant's contents, keys, funds, or record-control decisions.
 
@@ -152,7 +152,7 @@ This distinction matters:
 An Acorn tenant can be replicated across relays while remaining a client of one
 or more mints. Relay migration changes where encrypted state is available. Mint
 choice changes where value proofs are issued and redeemed. Neither should
-change the user's application-level identity or private record namespace.
+change the user's external identity claims or private record namespace.
 
 ### Reciprocal resilience
 

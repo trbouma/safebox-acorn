@@ -2,9 +2,9 @@
 
 ## Purpose
 
-Acorn is a protocol-first component for user-controlled identity, funds, and
-records. It handles Nostr private keys, recovery phrases, encrypted private
-records, Cashu bearer proofs, and Lightning payment state. A defect can cause
+Acorn is a protocol-first component for safeguarding user-controlled keys,
+funds, and records. It handles Nostr private keys, recovery phrases, encrypted
+private records, Cashu bearer proofs, and Lightning payment state. A defect can cause
 loss of confidentiality, loss of access, incorrect payment reporting, or loss
 of funds.
 
@@ -62,11 +62,14 @@ The principal protected assets are:
 - transaction history, messages, and private operational context; and
 - continuity of access to relay-backed wallet and record state.
 
-The Acorn keypair is the identity of the component, not necessarily the civil
-or social identity of a person. It provides continuity and signing authority
-over the component's funds and records. Applications may associate that
-component identity with a person, organization, device, or service, but those
-claims are outside the keypair itself.
+The Acorn keypair is not a person's identity, nor does Acorn need to describe
+it as the identity of the component. It provides cryptographic continuity and
+authority over funds and records. A public key is a stable protocol identifier
+for that authority, but identity is interpreted outside Acorn through context
+such as NIP-05 names, kind `0` profiles, Lightning addresses, credentials,
+relationships, and what another party recognizes or believes about the
+controller. Those associations are claims and judgments, not properties
+proven by possession of the key.
 
 ## Trust model
 
@@ -276,7 +279,7 @@ Open Quantum Safe support is isolated behind the optional `post-quantum`
 package extra. Ordinary wallet, record, relay, mint, and ecash operations do
 not require or load it.
 
-The optional `PQEvent` code is experimental. Acorn's normal Nostr identity,
+The optional `PQEvent` code is experimental. Acorn's normal Nostr key handling,
 NIP-44 record encryption, and Cashu interoperability continue to use classical
 cryptography. Acorn must not currently be described as quantum-safe.
 

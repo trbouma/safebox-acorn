@@ -24,11 +24,11 @@ Wallets initialized from an existing `nsec` do not have an Acorn-generated
 offline mnemonic. Anyone with either valid secret can control the wallet if
 they can access the wallet's relay-backed data.
 
-Restoring the keypair restores the protocol identity of the Acorn component or
-wallet lineage. It does not restore or prove the civil, legal, or social
-identity of a person. The keypair supplies continuity and signing authority
-over associated funds and records; human identity assertions remain separate
-claims.
+Restoring the keypair restores the cryptographic continuity and authority of
+the Acorn component or wallet lineage. It does not restore or prove the civil,
+legal, or social identity of a person. Human identity is interpreted outside
+Acorn from claims and context such as NIP-05, kind `0` profiles, Lightning
+addresses, credentials, relationships, and legal records.
 
 ## Recovery material
 

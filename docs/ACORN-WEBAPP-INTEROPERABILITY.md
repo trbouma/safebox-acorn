@@ -11,7 +11,7 @@ relay-backed wallet state.
 ## What this validates
 
 This scenario validates that Acorn state is not trapped inside one interface.
-The CLI and web app should share the same protocol-level wallet identity,
+The CLI and web app should share the same wallet keys and protocol lineage,
 relay-backed records, Cashu proof state, and transaction history.
 
 The source wallet should be treated as the funding and recovery anchor. It
@@ -278,9 +278,9 @@ Optional fields such as `witness` should appear only when they are actually
 required by a spending condition. Wallet-local fields must not be sent to mint
 APIs.
 
-### Receive identity must match storage identity
+### Receive key must match storage authority
 
-The tests also exposed a subtle identity mismatch. A gift-wrapped ecash transfer
+The tests also exposed a subtle key mismatch. A gift-wrapped ecash transfer
 is addressed to a receive key, but accepted proofs are stored by the wallet that
 runs `sweep_ecash_transfers()`. The receive key and the storage wallet must be
 aligned unless the caller is deliberately using a transient receive key and
@@ -342,7 +342,7 @@ can live on replaceable Nostr infrastructure, while the mint validates that
 Cashu proofs can move through independently operated value infrastructure.
 
 Together, those tests show that Acorn is not merely abstracting Safebox's
-current backend. It is carrying user-controlled identity, encrypted records,
+current backend. It is carrying user-controlled keys, encrypted records,
 wallet proofs, recovery context, and transaction history across independently
 operated protocol services.
 

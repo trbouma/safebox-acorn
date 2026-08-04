@@ -33,6 +33,10 @@ The project has working implementations of:
 This evidence makes Acorn a credible hardened-alpha foundation. It does not
 remove the need for release discipline around failure recovery and value safety.
 
+The practical product scope is the safekeeping of user-controlled keys, funds,
+and records. Keys provide cryptographic authority and continuity; identity
+claims and their interpretation remain outside the component.
+
 ## Current hardening priorities
 
 The most important work is not adding more commands. It is making interrupted

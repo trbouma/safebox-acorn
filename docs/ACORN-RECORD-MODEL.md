@@ -1,16 +1,17 @@
 # Acorn Record Model
 
 Acorn implements a user-controlled record model for funds and private records,
-anchored by user-controlled identity. The core idea is that user-controlled
+anchored by user-controlled keys. The core idea is that user-controlled
 wallets can hold, receive, issue, present, and replicate encrypted records over
 Nostr relay infrastructure.
 
-Here, identity means the cryptographic identity of the Acorn component or
-wallet, not the person using it. A public/private keypair provides continuity
-across compatible environments and authority over the funds and records
-controlled through that identity. Human identity claims, credentials, and
-legal rights may be represented by records, but they are not implied by
-possession of the keypair alone.
+A public/private keypair provides continuity across compatible environments
+and authority over the funds and records controlled through it. The keypair is
+not identity. Human or organizational identity is interpreted outside Acorn
+from claims and context that may include a NIP-05 name, kind `0` profile,
+Lightning address, credential, relationship, legal record, or prior
+interaction. Possession of the keypair alone proves control of the key, not who
+the controller is.
 
 This model has two major record classes:
 
@@ -31,12 +32,13 @@ present, transfer, spend, revoke, or recover it.
 This is why Acorn's primary description is:
 
 ```text
-Acorn is a protocol-first component for user-controlled identity, funds and records.
+Acorn is a protocol-first component for safeguarding user-controlled keys,
+funds and records.
 ```
 
 In this model, "user-controlled" is not just a privacy preference. It is a
-record property. Identity supplies the continuity and authority through which
-the user controls funds and records. A record is more useful and resilient
+record property. Keys supply the cryptographic continuity and authority through
+which the user controls funds and records. A record is more useful and resilient
 when the user can preserve that control across applications, relays, mints,
 devices, and deployment operators.
 
@@ -50,7 +52,7 @@ Control can mean different things for different record classes:
 
 This framing helps keep Acorn small and reusable. Acorn does not need to own
 every possible domain schema. It needs to provide the mechanics for
-user-controlled records: cryptographic identity, encrypted relay-backed
+user-controlled records: cryptographic keys, encrypted relay-backed
 storage, transfer/receive flows, proof refresh, transaction history, recovery,
 and replication.
 
@@ -208,7 +210,7 @@ retrieved or presented?
 
 Both record classes need the same foundation:
 
-- cryptographic identity;
+- cryptographic keys and authority;
 - encrypted relay-backed storage;
 - user-controlled keys;
 - recovery material;

@@ -514,15 +514,15 @@ def info(ctx, json_output):
      / ___ |/ /__/ /_/ / /  / / / /    
     /_/  |_|\___/\____/_/  /_/ /_/     
 
-      User-Controlled Funds and Records
+      Safeguarding Keys, Funds and Records
     """.rstrip())
     click.echo()
-    click.echo("A protocol-first component for user-controlled funds, records, and recovery.")
+    click.echo("A protocol-first component for safeguarding user-controlled keys, funds, and records.")
     click.echo("Reciprocal resilience without shared secrets.")
     click.echo()
     click.echo(WELCOME_MSG.strip())
     click.echo()
-    click.echo("Identity")
+    click.echo("Keys")
     click.echo(f"  npub:       {acorn_obj.pubkey_bech32}")
     click.echo(f"  pubkey:     {acorn_obj.pubkey_hex}")
     click.echo()
