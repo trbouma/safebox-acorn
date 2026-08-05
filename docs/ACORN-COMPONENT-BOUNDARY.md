@@ -159,6 +159,14 @@ The following belong in the Safebox application, not Acorn:
 - appliance, jail, or deployment orchestration;
 - web-specific admin or support workflows.
 
+Safebox Web currently applies this separation through a server-rendered
+hypermedia interface. The browser follows links and submits forms; FastAPI owns
+HTTP validation, sessions, CSRF, and representations; Acorn owns key, fund,
+record, mint, and relay behavior. This is an application of the component
+boundary, not a requirement that every Acorn client use FastAPI or HTML. See
+[Safebox App Boundary](SAFEBOX-APP-BOUNDARY.md) for the fuller allocation of
+browser, application, component, and infrastructure responsibilities.
+
 ### MS02 / market / digital trade side project
 
 The MS02 market and digital trade experiment is intentionally outside Acorn.

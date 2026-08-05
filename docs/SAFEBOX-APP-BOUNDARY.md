@@ -22,6 +22,65 @@ Acorn should stay small, reusable, testable, and protocol-first. Safebox should
 own user experience, product workflows, web sessions, deployment defaults, and
 support surfaces.
 
+## Boundaries that guide Safebox Web
+
+The repository split is only the first boundary. Safebox Web development is
+guided by four related boundaries:
+
+| Boundary | Owns | Must not become |
+| --- | --- | --- |
+| **Browser / hypermedia** | Following links, submitting forms, presenting complete HTML, and optional progress feedback | A second wallet runtime, workflow engine, or browser-side store of Acorn state |
+| **Safebox Web application** | HTTP routes, CSRF, encrypted sessions, input validation, product language, HTML representations, NIP-05 service, and durable provider jobs | A reimplementation of keys, proofs, record encryption, relay semantics, or mint behavior |
+| **Acorn component** | Key operations, relay-backed wallet state, private-record encryption, proof handling, mint operations, transfers, recovery, and protocol invariants | A web framework, product workflow, public service directory, or deployment platform |
+| **Infrastructure and operators** | TLS termination, reverse-proxy assertions, process execution, databases, relay availability, mint service, backup, and monitoring | An invisible or universal trust assumption |
+
+This produces a deliberate request path:
+
+```text
+browser link or form
+        -> Safebox Web validates the HTTP request and reconstructs Acorn
+        -> Acorn performs the wallet, fund, record, mint, or relay operation
+        -> Safebox Web renders complete HTML or redirects to a resource
+        -> browser presents the result
+```
+
+The browser is a hypermedia client, not a distributed copy of the application.
+Safebox Web should not require browser-side JavaScript to retrieve records,
+calculate balances, coordinate payments, or decide workflow outcomes. Small
+scripts may progressively enhance presentation—for example, displaying a wait
+message and disabling a submitted button—only when ordinary links and forms
+remain fully functional without them.
+
+This boundary is also a security control. Keeping the browser thin reduces the
+number of places that can hold private keys, proofs, decrypted records, and
+ambiguous transaction state. It does not make the web operator blind: Safebox
+Web still decrypts the HTTP-only session cookie and holds the operational
+`nsec` and plaintext request data in server memory while invoking Acorn. The
+execution-provider trust described below therefore remains explicit.
+
+Application-owned services are not forced into Acorn merely because they use
+Acorn. A NIP-05 directory, LNURL endpoint, provider-payment queue, and singleton
+service wallet are Safebox service concerns. They should communicate with
+Acorn through its public component API and durable application boundaries.
+Conversely, private-record encryption, proof refresh, transaction journalling,
+and relay readback verification stay in Acorn even when initiated by an HTML
+form.
+
+### Boundary test for web features
+
+For each Safebox Web feature, ask:
+
+1. Can the browser complete it through links and forms without JavaScript?
+2. Does FastAPI own HTTP validation, sessions, CSRF, and representation?
+3. Does Acorn remain authoritative for keys, funds, records, and protocol
+   mutations?
+4. Is durable product or provider state stored in the application rather than
+   hidden in a browser or Acorn internals?
+5. Are operator, proxy, relay, and mint trust assumptions visible?
+
+A feature that crosses one of these boundaries should trigger an explicit
+design review rather than an incidental implementation shortcut.
+
 ## Safebox as a trusted operator
 
 The trusted operator is whoever provides the execution environment or running
@@ -227,3 +286,6 @@ on session handling and user experience.
 The detailed contract, security boundaries, browser-origin lesson, residual
 risks, and resulting Acorn API recommendations are documented in
 [Stateless Web Integration for Acorn](STATELESS-WEB-INTEGRATION.md).
+
+The corresponding implementation contract in the application repository is
+[Safebox Web Hypermedia Architecture](https://github.com/trbouma/safebox-web/blob/main/docs/HYPERMEDIA-ARCHITECTURE.md).
