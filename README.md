@@ -14,6 +14,11 @@ provides:
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
 
+## Policy and rationale
+
+- [Beyond Digital Identity, Credentials and Wallets: A policy vocabulary for
+  user-controlled keys, funds and records](./docs/POLICY-BRIEF-KEYS-FUNDS-RECORDS.md)
+
 ## Specifications
 
 - [Acorn Product North Star](./docs/ACORN-PRODUCT-NORTH-STAR.md)

@@ -138,6 +138,7 @@ It means the user has a practical continuity and authority path that does not
 depend exclusively on one application interface.
 
 [Explore the user-controlled architecture](user-controlled-architecture.md){ .md-button .md-button--primary }
+[See the policy vocabulary](better-policy-vocabulary.md){ .md-button }
 [Return to How Acorn Works](how-acorn-works.md){ .md-button }
 
 ## Reference basis
