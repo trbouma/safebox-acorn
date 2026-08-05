@@ -337,6 +337,12 @@ The `--direct` option is for debugging and legacy compatibility. It publishes a
 sender-authored direct kind `7378` event instead of a default NIP-59 kind `1059`
 gift wrap.
 
+`--expires-in <seconds>` adds an optional NIP-40 `expiration` tag to the
+relay-visible event. The value is converted to an absolute Unix timestamp
+before the event is signed. Supporting relays should stop serving expired
+events and should delete them, but relay enforcement and physical erasure are
+not guaranteed.
+
 `acorn receive-ecash` should receive:
 
 - standard kind `1059` gift wraps containing inner kind `7378` transfers;

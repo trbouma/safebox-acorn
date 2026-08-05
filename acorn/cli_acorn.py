@@ -1924,8 +1924,9 @@ def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_outp
 @click.option('--relay', '-r', default=None, help='relay to publish the transfer to; defaults to home relay')
 @click.option('--comment', '-c', default='ecash transfer', help='transfer comment')
 @click.option('--direct', is_flag=True, help='Publish direct sender-authored NIP-44 event instead of default gift-wrapped event')
+@click.option('--expires-in', type=click.IntRange(min=1), default=None, help='Add a NIP-40 expiration tag this many seconds from now')
 @click.option('--json', "json_output", is_flag=True, help="Emit JSON output.")
-def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str, direct: bool, json_output: bool):
+def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str, direct: bool, expires_in: int | None, json_output: bool):
     transfer_relay = _normalize_relay(relay) if relay else None
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     try:
@@ -1937,6 +1938,7 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
                 relay=transfer_relay,
                 comment=comment,
                 direct=direct,
+                expiration=int(time()) + expires_in if expires_in else None,
             )
         )
     except Exception as exc:
@@ -1960,6 +1962,8 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
         click.echo("Relay source: recipient NIP-05")
     click.echo(f"Recipient: {result['recipient_pubkey']}")
     click.echo(f"Amount: {result['amount']} {result['unit']}")
+    if result.get("expiration"):
+        click.echo(f"Expires: {result['expiration']} (NIP-40; relay enforcement varies)")
     if not result.get("deletable_by_sender"):
         click.echo("Deletion: outer event uses a transient key and is not sender-deletable unless that key is retained.")
 

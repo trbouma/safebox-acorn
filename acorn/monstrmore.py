@@ -72,7 +72,13 @@ class KindOtherGiftWrap:
         await self._signer.sign_event(ret)
         return ret
 
-    async def wrap(self, evt: Event, to_pub_k: Union[Keys, str], pow: int = None) -> tuple[Event, Keys]:
+    async def wrap(
+        self,
+        evt: Event,
+        to_pub_k: Union[Keys, str],
+        pow: int = None,
+        expiration: int | None = None,
+    ) -> tuple[Event, Keys]:
         if isinstance(to_pub_k, Keys):
             to_pub_k = to_pub_k.public_key_hex()
 
@@ -82,14 +88,19 @@ class KindOtherGiftWrap:
         rnd_k = Keys()
         rnd_sign = BasicKeySigner(rnd_k)
 
+        outer_tags = [['p', to_pub_k]]
+        if expiration is not None:
+            expiration = int(expiration)
+            if expiration <= 0:
+                raise ValueError("expiration must be a positive Unix timestamp")
+            outer_tags.append(['expiration', str(expiration)])
+
         ret = Event(kind=self.KIND_OTHER_GIFT_WRAP,
                     pub_key=rnd_k.public_key_hex(),
                     created_at=self.get_jittered_created_ticks(),
                     content=await rnd_sign.nip44_encrypt(plain_text=json.dumps(sealed_evt.data()),
                                                          to_pub_k=to_pub_k),
-                    tags=[
-                        ['p', to_pub_k]
-                    ])
+                    tags=outer_tags)
 
         if pow is not None:
             ret.add_pow(pow)

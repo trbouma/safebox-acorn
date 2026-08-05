@@ -421,6 +421,20 @@ is authored by a transient outer key. Unless the sender retains that transient
 key, the sender cannot later author a valid deletion request for that outer
 event. This is the privacy tradeoff of gift wrapping.
 
+Future-dated gift wraps may include a NIP-40 tag on the signed outer event:
+
+```json
+["expiration", "<Unix timestamp in seconds>"]
+```
+
+Acorn exposes this as the optional `expiration` argument to
+`send_ecash_transfer()` and as `acorn ecash-transfer --expires-in <seconds>`.
+A supporting relay should stop serving the event after that time and should
+delete it. NIP-40 remains advisory: a relay may retain expired data, a relay
+that does not advertise NIP-40 support should not be assumed to enforce it,
+and third parties may already have copied the encrypted event. Expiration is a
+retention instruction, not a confidentiality or secure-erasure mechanism.
+
 Deletion is performed with a standard NIP-09 deletion request, kind `5`, that
 references the authored direct kind `7378` event ids with `e` tags and includes
 a `k=7378` tag.

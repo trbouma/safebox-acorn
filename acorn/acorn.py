@@ -3517,6 +3517,7 @@ class Acorn:
         comment: str = "ecash transfer",
         nonce: str | None = None,
         direct: bool = False,
+        expiration: int | None = None,
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted relay event.
 
@@ -3527,6 +3528,10 @@ class Acorn:
 
         if int(amount) <= 0:
             raise ValueError("amount must be positive")
+        if expiration is not None:
+            expiration = int(expiration)
+            if expiration <= int(time()):
+                raise ValueError("expiration must be a future Unix timestamp")
 
         recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(recipient)
         transfer_relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
@@ -3561,6 +3566,8 @@ class Acorn:
                     ["unit", "sat"],
                     ["nonce", nonce],
                 ]
+                if expiration is not None:
+                    tags.append(["expiration", str(expiration)])
                 n_msg = Event(
                     kind=ECASH_TRANSFER_KIND,
                     content=encrypted_payload,
@@ -3585,7 +3592,11 @@ class Acorn:
                         ["v", "1"],
                     ],
                 )
-                n_msg, transient_key = await my_gift.wrap(inner_evt, to_pub_k=recipient_pubkey)
+                n_msg, transient_key = await my_gift.wrap(
+                    inner_evt,
+                    to_pub_k=recipient_pubkey,
+                    expiration=expiration,
+                )
                 transient_pubkey = transient_key.public_key_hex()
             c.publish(n_msg)
             await asyncio.sleep(0.2)
@@ -3602,6 +3613,7 @@ class Acorn:
             "mode": "direct" if direct else "gift-wrapped",
             "transient_pubkey": transient_pubkey,
             "deletable_by_sender": bool(direct),
+            "expiration": expiration,
             "amount": int(amount),
             "unit": "sat",
             "mint": self.home_mint,
