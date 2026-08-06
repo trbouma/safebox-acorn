@@ -3,6 +3,8 @@ import pytest
 from acorn.record_protection import (
     generate_record_protection_key,
     record_protection_key_from_entropy,
+    record_protection_key_from_recovery_phrase,
+    record_protection_recovery_phrase,
     validate_record_protection_key,
 )
 
@@ -44,6 +46,40 @@ def test_external_record_protection_entropy_is_strictly_validated(entropy, messa
 
 def test_record_protection_key_validation_canonicalizes_hex():
     assert validate_record_protection_key("AB" * 32) == "ab" * 32
+
+
+def test_record_protection_recovery_phrase_round_trips_exact_key():
+    record_protection_key = "42" * 32
+
+    phrase = record_protection_recovery_phrase(record_protection_key)
+
+    assert len(phrase.split()) == 24
+    assert (
+        record_protection_key_from_recovery_phrase(phrase)
+        == record_protection_key
+    )
+
+
+def test_record_protection_recovery_phrase_normalizes_spacing():
+    record_protection_key = "24" * 32
+    phrase = record_protection_recovery_phrase(record_protection_key)
+
+    assert (
+        record_protection_key_from_recovery_phrase(f"  {phrase.replace(' ', '  ')}  ")
+        == record_protection_key
+    )
+
+
+@pytest.mark.parametrize(
+    "phrase, message",
+    [
+        ("abandon " * 11 + "about", "exactly 24 words"),
+        ("abandon " * 23 + "abandon", "not valid"),
+    ],
+)
+def test_invalid_record_protection_recovery_phrases_are_rejected(phrase, message):
+    with pytest.raises(ValueError, match=message):
+        record_protection_key_from_recovery_phrase(phrase)
 
 
 @pytest.mark.parametrize("value", ["", "00" * 31, "00" * 33, "zz" * 32])

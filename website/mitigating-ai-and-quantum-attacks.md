@@ -107,8 +107,11 @@ Record Protection Key (RPK). The RPK would wrap record keys inside the ordinary
 NIP-44 envelope, so later compromise of the Acorn `nsec` alone would not reveal
 protected records. Acorn now generates RPK material from operating-system
 randomness or derives it from separately supplied 256-bit entropy using a
-domain-separated HKDF. Record encryption, backup ceremony, migration, and
-recovery remain future work and require test vectors and review.
+domain-separated HKDF. Acorn can encode the exact RPK as a separately labelled,
+checksummed 24-word recovery phrase, and Safebox Web implements an initial
+backup and reconnect ceremony. Record encryption and migration remain future
+work, and the complete profile still requires test vectors and independent
+review.
 
 [Read the Record Encryption Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RECORD-ENCRYPTION-SPEC.md){ .md-button }
 [Read the Protected Record Profile Design](https://github.com/trbouma/safebox-acorn/blob/main/docs/PROTECTED-RECORD-PROFILE-DESIGN.md){ .md-button }

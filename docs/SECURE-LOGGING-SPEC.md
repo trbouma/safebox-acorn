@@ -15,7 +15,8 @@ safe merely by assigning it a lower log level.
 
 Acorn must never log:
 
-- `nsec` values, raw private keys, external entropy, or seed phrases;
+- `nsec` values, raw private keys, RPKs, protected-record recovery phrases,
+  external entropy, or wallet seed phrases;
 - Cashu tokens, complete `Proof` objects, proof secrets, blinding factors, or
   full spend/keep proof collections;
 - complete mint request bodies or response objects that may contain quotes,

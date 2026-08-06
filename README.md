@@ -23,15 +23,21 @@ entropy:
 from acorn import (
     generate_record_protection_key,
     record_protection_key_from_entropy,
+    record_protection_key_from_recovery_phrase,
+    record_protection_recovery_phrase,
 )
 
 rpk = generate_record_protection_key()
 external_rpk = record_protection_key_from_entropy("00" * 32)
+recovery_phrase = record_protection_recovery_phrase(rpk)
+recovered_rpk = record_protection_key_from_recovery_phrase(recovery_phrase)
 ```
 
-These APIs provide key material only. Protected-record encryption and the
-user-facing RPK recovery ceremony remain under design; applications must not
-make records dependent on an RPK until those parts are implemented.
+The recovery phrase is a checksummed 24-word encoding of the exact RPK. It is
+separate from the Acorn wallet mnemonic and never enters the wallet's SLIP-10
+derivation path. Protected-record encryption remains under design;
+applications must not make records dependent on an RPK until that profile is
+implemented and reviewed.
 
 ## Policy and rationale
 

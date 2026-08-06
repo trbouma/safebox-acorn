@@ -5,10 +5,12 @@
 **Profile proposed; key-material scaffold implemented.**
 
 This document describes an optional high-assurance record profile for Acorn.
-Acorn now implements generation, external-entropy derivation, and validation
-of the independent RPK. Protected-record encryption is not implemented. The
-record format, recovery encoding, encryption API, and migration procedure still
-require test vectors and security review before implementation.
+Acorn now implements generation, external-entropy derivation, validation, and
+24-word recovery encoding of the independent RPK. Safebox Web implements an
+initial display, confirmation, session, redisplay, and reconnect ceremony.
+Protected-record encryption is not implemented. The record format, encryption
+API, migration procedure, and complete interoperability vectors still require
+security review before implementation.
 
 ## Summary
 
@@ -363,23 +365,23 @@ The initial implementation exposes these Acorn-owned primitives:
 from acorn import (
     generate_record_protection_key,
     record_protection_key_from_entropy,
+    record_protection_key_from_recovery_phrase,
+    record_protection_recovery_phrase,
     validate_record_protection_key,
 )
 ```
 
 Both creation paths return a canonical 64-character lowercase hexadecimal
-working key. This representation is an internal API and session transport
-format; it is not the final user-facing recovery artifact. The protected-record
-encryption profile remains disabled until its format and recovery ceremony are
-implemented and tested.
+working key. Acorn encodes the exact 32 RPK bytes as a checksummed 24-word BIP39
+phrase. Recovery decodes those words directly back to the RPK; it does not
+derive a wallet seed, enter the Acorn wallet's SLIP-10 path, or reconstruct the
+upstream entropy from which the RPK may have been derived.
 
-The recovery artifact should provide versioning and checksum protection. One
-candidate is a separately labelled 24-word phrase encoding the original 256
-bits plus checksum. If BIP39 encoding is used, the words represent the RPK
-entropy directly; they must not be passed through the Acorn wallet's SLIP-10
-derivation path or described as the wallet mnemonic. A checksummed textual or
-QR representation may also be provided after usability and transcription
-testing.
+This use of the BIP39 word list is a recovery encoding, not a second wallet
+mnemonic. The user-facing phrase must always be separately labelled. The raw
+hexadecimal RPK remains an internal API and session transport format. A future
+versioned textual or QR wrapper may add an explicit Acorn profile identifier
+after usability and transcription testing.
 
 The final user-facing terminology should be unmistakable:
 
@@ -396,11 +398,13 @@ Complete recovery of protected records requires:
 2. the home relay or sufficient replicated relay information; and
 3. the independent RPK recovery artifact.
 
-The RPK must be accepted through a hidden, confirmation-aware input channel.
+The protected-record phrase or external entropy must be accepted through a
+hidden, confirmation-aware input channel.
 It must not be accepted as a command-line argument, URL parameter, ordinary
 environment variable, or logged request field.
 
-Recovery should verify the key against an existing protected record or a
+Phrase decoding verifies the BIP39 checksum and exact 24-word length. Recovery
+should then verify the key against an existing protected record or a
 non-secret key identifier before declaring success. If no protected records
 exist, Acorn can validate only the artifact's syntax and checksum. It must not
 claim that an unverified RPK is correct.
@@ -415,8 +419,12 @@ Acorn should accept the RPK as an explicit transient API dependency and should
 not know whether it came from a cookie, hidden prompt, hardware device, or
 another trusted secret broker.
 
-Safebox Web may include the RPK in its authenticated encrypted session cookie
-after the user supplies it. The cookie copy must be:
+Safebox Web includes the RPK and a backup-confirmed flag in its authenticated
+encrypted session cookie after creation or recovery. It displays the recovery
+phrase at creation, requires explicit backup confirmation, supports
+confirmation-gated redisplay from an authenticated session, and accepts either
+the phrase or original external entropy during reconnect. The cookie copy must
+be:
 
 - protected by the application's authenticated session encryption;
 - `Secure`, `HttpOnly`, and appropriately `SameSite` scoped;
@@ -624,23 +632,24 @@ Implementation must not begin with only a round-trip test. The profile requires:
 - review of cryptographic construction and user recovery behavior before a
   stable release claim.
 
-The project must continue to describe the profile as proposed until the format,
-test vectors, implementation, recovery ceremony, and compatibility behavior
-have all passed review.
+The project must continue to describe the encryption profile as proposed until
+the format, test vectors, protected-record implementation, complete recovery
+behavior, and compatibility behavior have all passed review. The implemented
+RPK phrase and Safebox Web ceremony are an initial foundation, not approval of
+the remaining profile.
 
 ## Open design decisions
 
-1. Final name and user-facing terminology for the RPK.
-2. Recovery encoding: 24-word phrase, checksummed textual key, QR form, or a
-   carefully specified combination.
-3. Exact KDF and domain-separation labels for wrapping and lookup keys.
-4. AES Key Wrap versus AES Key Wrap with Padding for the version `1` profile.
-5. Canonical binary and JSON encodings.
-6. Whether a non-secret key identifier is required and how it is derived.
-7. Exact protected-label normalization and event-kind strategy.
-8. Whether protected records can be listed without attempting to decrypt every
+1. Whether the 24-word recovery phrase should later gain an additional
+   versioned Acorn textual or QR wrapper.
+2. Exact KDF and domain-separation labels for wrapping and lookup keys.
+3. AES Key Wrap versus AES Key Wrap with Padding for the version `1` profile.
+4. Canonical binary and JSON encodings.
+5. Whether a non-secret key identifier is required and how it is derived.
+6. Exact protected-label normalization and event-kind strategy.
+7. Whether protected records can be listed without attempting to decrypt every
    candidate event.
-9. RPK caching duration for CLI, web, device, and hardware integrations.
+8. RPK caching duration for CLI, web, device, and hardware integrations.
 10. Rotation, multiple-protector, escrow, and organizational recovery policy.
 11. Whether independent per-blob Blossom authorization is mandatory or an
     optional hardened deployment profile.

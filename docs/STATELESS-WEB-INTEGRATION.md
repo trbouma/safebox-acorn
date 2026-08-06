@@ -10,7 +10,7 @@ Web prototype demonstrates a narrow pattern:
 user recovery input
         |
         v
-encrypted browser cookie: nsec + bootstrap relay
+encrypted browser cookie: nsec + bootstrap relay + optional RPK
         |
         v
 request-scoped Acorn component
@@ -37,8 +37,9 @@ the web tier to scale independently from the single proof-state owner.
 This pattern is **stateless at the web application persistence layer**. It is
 not trustless and it is not a claim that the server cannot access keys. The
 running code decrypts the cookie and necessarily holds the operational `nsec`,
-decrypted records, and proofs in process memory while serving a request. The
-operator of that execution environment remains a trusted provider.
+optional Record Protection Key (RPK), decrypted records, and proofs in process
+memory while serving a request. The operator of that execution environment
+remains a trusted provider.
 
 The initial reference implementation is maintained separately in
 [trbouma/safebox-web](https://github.com/trbouma/safebox-web). This document
@@ -52,6 +53,8 @@ The integration should:
 - preserve Acorn as the source of wallet and record behavior;
 - avoid a server-side wallet database or session table;
 - let a user connect an existing Acorn using an `nsec` or offline mnemonic;
+- let a user separately restore an RPK using its protected-record recovery
+  phrase or original external entropy;
 - keep the selected bootstrap relay explicit;
 - reconstruct Acorn through the web framework's dependency boundary;
 - support a small read-only vertical slice before adding mutation;
@@ -70,7 +73,7 @@ The pattern makes Acorn's separation model concrete:
 
 | Layer | Location | Trust and lifecycle |
 | --- | --- | --- |
-| Operational key | Encrypted browser cookie; plaintext only in request memory | User supplies or derives it; the web operator can access it while code runs. |
+| Operational keys | Encrypted browser cookie; plaintext only in request memory | User supplies or derives the `nsec` and optional RPK; the web operator can access both while code runs. |
 | Executing code | Safebox Web process | Trusted to decrypt the cookie, construct Acorn, and avoid leaking secrets. |
 | Durable data | User-selected bootstrap relay | Encrypted and signed by Acorn; the relay provides availability but need not see plaintext. |
 | Funds | Cashu mint, represented by encrypted relay-backed proofs | Mint remains an independent trust domain; merely displaying balance need not contact it. |
@@ -121,6 +124,18 @@ or:
 offline mnemonic + bootstrap relay
 ```
 
+The user may additionally provide one independent protected-record input:
+
+```text
+protected-record recovery phrase
+```
+
+or:
+
+```text
+external 256-bit record-protection entropy
+```
+
 An offline mnemonic is validated as BIP39 and passed through Acorn's documented
 SLIP-10 secp256k1 derivation contract. The resulting `nsec` becomes the
 operational secret. The mnemonic must be discarded after derivation and must
@@ -134,6 +149,13 @@ The bootstrap relay is normalized before it enters the cookie. A missing
 scheme becomes `wss://`. Plain `ws://` should be accepted only for an explicitly
 local loopback relay.
 
+The protected-record phrase is a checksummed 24-word direct encoding of the
+exact 32-byte RPK. It is not the wallet mnemonic and must never enter the
+wallet's SLIP-10 derivation path. External record-protection entropy instead
+passes through Acorn's domain-separated HKDF. Both paths produce the RPK that
+becomes an optional working secret in the session cookie. The recovery input
+itself is discarded after conversion.
+
 ## Encrypted browser session
 
 The minimal session payload is:
@@ -142,14 +164,19 @@ The minimal session payload is:
 {
   "version": 1,
   "nsec": "nsec1...",
-  "bootstrap_relay": "wss://relay.example.com"
+  "bootstrap_relay": "wss://relay.example.com",
+  "record_protection_key": "<optional 64-character secret>",
+  "record_protection_backup_confirmed": false
 }
 ```
 
 The payload must be encrypted and authenticated, not merely signed or
-Base64-encoded. The reference implementation uses a Fernet token and enforces
-a bounded token age. Equivalent implementations may use another reviewed
-authenticated-encryption construction.
+Base64-encoded. The reference implementation derives an AES-256 session key
+from the server-held cookie key with HKDF-SHA256 and seals each payload using
+AES-256-GCM with a fresh 96-bit nonce. It enforces an absolute bounded token
+age. Legacy Fernet cookies remain readable only during their normal expiry
+window. Equivalent implementations may use another reviewed
+authenticated-encryption construction with explicit versioning and migration.
 
 Production cookies should use:
 
@@ -165,10 +192,37 @@ The server-held cookie key must be stable across workers and restarts. Changing
 it invalidates every existing session. The first implementation has no key
 rotation or revocation mechanism; both remain release work.
 
-Cookie encryption does not protect an `nsec` from malicious or compromised web
-code. Anyone who obtains both the encryption key and a session cookie can
-recover the `nsec`. A stolen decrypted session remains usable until expiry or
-cookie destruction because there is no server-side revocation state.
+Cookie encryption does not protect an `nsec` or RPK from malicious or
+compromised web code. Anyone who obtains both the encryption key and a session
+cookie can recover every secret it contains. Keeping the `nsec` and RPK in one
+cookie provides independent offline recovery factors but no runtime isolation.
+A stolen decrypted session remains usable until expiry or cookie destruction
+because there is no server-side revocation state.
+
+## Protected-record backup ceremony
+
+At new-Acorn creation, Acorn generates or derives the RPK and converts the
+exact RPK bytes into a separately labelled, checksummed 24-word phrase.
+Safebox Web displays it once beside, but visibly distinct from, the wallet
+recovery material. A confirmed POST records
+`record_protection_backup_confirmed=true` in the newly encrypted cookie.
+
+An authenticated user can later request redisplay. The initial GET presents
+only a warning. A CSRF-protected, explicitly confirmed POST produces the phrase
+with `Cache-Control: no-store`; a second confirmation records that it was saved.
+The phrase is absent from URLs, JavaScript, `/api/session`, logs, and the
+application database.
+
+Reconnect accepts either the protected-record phrase or the original external
+record-protection entropy through masked form fields. The two inputs are
+mutually exclusive. Successful conversion stores only the working RPK and
+marks the supplied backup as confirmed.
+
+This ceremony makes the RPK recoverable without server-side storage, but it is
+not yet authority to create protected records. No current record depends on
+the RPK. Protected-record creation must remain disabled until the encryption
+profile, migration rules, compatibility vectors, and recovery UX have been
+implemented, tested, and reviewed.
 
 ## Request-scoped dependency model
 

@@ -11,6 +11,7 @@ import secrets
 
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from mnemonic import Mnemonic
 
 
 RECORD_PROTECTION_KEY_BYTES = 32
@@ -78,3 +79,31 @@ def validate_record_protection_key(value: str) -> str:
     if not _HEX_256.fullmatch(normalized):
         raise ValueError("record protection key must contain only hexadecimal characters")
     return normalized.lower()
+
+
+def record_protection_recovery_phrase(record_protection_key: str) -> str:
+    """Encode an RPK directly as a checksummed 24-word recovery phrase.
+
+    This is a reversible encoding of the exact 32-byte RPK. It does not use the
+    wallet's BIP39-to-SLIP-10 private-key derivation path.
+    """
+
+    canonical_key = validate_record_protection_key(record_protection_key)
+    return Mnemonic("english").to_mnemonic(bytes.fromhex(canonical_key))
+
+
+def record_protection_key_from_recovery_phrase(recovery_phrase: str) -> str:
+    """Recover the exact RPK encoded by a protected-record recovery phrase."""
+
+    phrase = " ".join(str(recovery_phrase).strip().split())
+    if len(phrase.split()) != 24:
+        raise ValueError(
+            "protected-record recovery phrase must contain exactly 24 words"
+        )
+    mnemonic = Mnemonic("english")
+    if not mnemonic.check(phrase):
+        raise ValueError("protected-record recovery phrase is not valid")
+    key_bytes = mnemonic.to_entropy(phrase)
+    if len(key_bytes) != RECORD_PROTECTION_KEY_BYTES:
+        raise ValueError("protected-record recovery phrase must encode 32 bytes")
+    return validate_record_protection_key(key_bytes.hex())

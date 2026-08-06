@@ -35,6 +35,8 @@ person. Identity claims and interpretations remain outside the keypair.
 Current safeguards include:
 
 - hidden secret entry instead of recovery material in command arguments;
+- independent RPK generation or domain-separated derivation from external
+  256-bit entropy, with an exact 24-word checksummed recovery encoding;
 - owner-only configuration and secret-file permissions;
 - atomic, locked configuration updates;
 - NIP-44 encryption for private record metadata;
@@ -92,6 +94,12 @@ The current risks include:
   endpoint correlation; and
 - ordinary Acorn operations use classical cryptography and must not currently
   be described as quantum-safe.
+
+The RPK and its recovery encoding are foundations for a proposed
+protected-record profile. No current record is encrypted with the RPK. Safebox
+Web implements an initial phrase display, backup-confirmation, authenticated
+redisplay, and reconnect ceremony, but that workflow and the future encryption
+profile have not received independent review.
 
 The complete residual-risk register, deployment guidance, disclosure process,
 and security non-claims are maintained in the repository.

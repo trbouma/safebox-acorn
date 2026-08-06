@@ -4,6 +4,8 @@ __all__ = [
     "Acorn",
     "generate_record_protection_key",
     "record_protection_key_from_entropy",
+    "record_protection_key_from_recovery_phrase",
+    "record_protection_recovery_phrase",
     "validate_record_protection_key",
 ]
 
@@ -16,6 +18,8 @@ def __getattr__(name):
     if name in {
         "generate_record_protection_key",
         "record_protection_key_from_entropy",
+        "record_protection_key_from_recovery_phrase",
+        "record_protection_recovery_phrase",
         "validate_record_protection_key",
     }:
         from acorn import record_protection

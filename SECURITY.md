@@ -129,13 +129,16 @@ or process isolation boundary is used.
   be derived from a password or another guessable value. Safebox Web rejects
   exact reuse of the wallet entropy in its creation flow, but cannot detect
   every correlated or weak external source.
-- RPK validation returns a canonical 32-byte working-key representation. The
-  representation is an internal API and session transport format, not a final
-  recovery artifact.
+- RPK validation returns a canonical 32-byte working-key representation. Acorn
+  can encode the exact working key as a checksummed, separately labelled
+  24-word phrase and decode that phrase directly back to the RPK. It does not
+  use the wallet's BIP39-to-SLIP-10 derivation path.
 
-The RPK functions are only a key-material scaffold. Acorn does not currently
-encrypt records with the RPK, persist it in ordinary configuration, or provide
-a completed RPK backup and recovery ceremony. A consuming application that
+The RPK functions and recovery encoding remain a scaffold for the future
+protected-record profile. Acorn does not currently encrypt records with the
+RPK or persist it in ordinary configuration. Safebox Web implements an initial
+creation, backup-confirmation, authenticated redisplay, and reconnect ceremony,
+but it has not yet been independently reviewed. A consuming application that
 holds the working RPK in an encrypted session still exposes it to that
 application's execution environment while processing requests.
 
@@ -232,8 +235,10 @@ but it would add a separate, unrecoverable backup obligation for the user.
 Acorn now provides the narrow key-material scaffold: it can generate an RPK
 from operating-system randomness, deterministically derive one from explicitly
 supplied 256-bit entropy using a domain-separated HKDF, and validate its working
-representation. No current record is encrypted with that key; the protected
-record profile and recovery ceremony remain unimplemented.
+representation. Acorn also provides a checksummed 24-word direct encoding of
+the RPK, and Safebox Web exercises an initial backup and reconnect ceremony. No
+current record is encrypted with that key; the protected-record encryption
+profile remains unimplemented.
 
 Its primary purpose is harvest-now-decrypt-later resistance: retained NIP-44
 events may become readable after a future `nsec` or secp256k1 compromise, while
@@ -353,7 +358,8 @@ and [Relay Suitability Ledger](docs/RELAY-SUITABILITY-LEDGER.md).
 
 Logs are treated as untrusted disclosure channels. Acorn avoids logging:
 
-- private keys, seed phrases, and entropy;
+- private keys, wallet seed phrases, RPKs, protected-record recovery phrases,
+  and entropy;
 - Cashu proofs, proof secrets, tokens, and blinding material;
 - Lightning invoices, preimages, and complete mint request bodies;
 - decrypted records, private labels, message plaintext, and complete events;
@@ -440,7 +446,7 @@ formal audited severity score.
 | Runtime key exposure | Python objects and process memory contain keys, proofs, and plaintext while in use. Memory is not reliably zeroized. | Minimize lifetime and logging; keep execution hosts trusted; pursue constrained signing or hardware-backed key custody. |
 | Recovery export | A confirmed recovery display can still be captured by terminals, screenshots, shell recording, clipboard tools, remote sessions, or observers. | Keep export explicit; warn users; prefer offline backup and trusted local terminals. |
 | Key loss | Loss of both the recovery secret and usable backup means permanent loss of control. | Make recovery material available at initialization; document backup and recovery drills; support relay replication for state availability. |
-| RPK lifecycle | The RPK key-material scaffold exists, but protected-record encryption and the independent backup and recovery ceremony do not. A session-only RPK can disappear when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Do not enable protected-record creation until the format, recovery artifact, backup confirmation, rotation, migration, and test vectors are implemented and reviewed. Treat application session storage only as an expiring working copy. |
+| RPK lifecycle | The RPK scaffold and 24-word recovery encoding exist, and Safebox Web implements an initial backup and reconnect ceremony. The ceremony is not independently reviewed. A session-only RPK disappears when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Require the separately stored recovery phrase before relying on the key. Do not enable protected-record creation until the encryption format, rotation, migration, compatibility vectors, and recovery UX are implemented, tested, and reviewed. Treat application session storage only as an expiring working copy. |
 | Host/operator compromise | Whoever controls the running code can potentially alter behavior or observe secrets and plaintext. | Make the trust boundary explicit; pin and verify releases; isolate deployments; work toward hardware-backed authority boundaries. |
 | Relay metadata | Relays can observe event kinds, timestamps, sizes, authors for non-gift-wrapped events, lookup patterns, network addresses, and replication relationships. | Encrypt content and labels; use gift wrapping for transfers; avoid claims of metadata anonymity; consider network privacy tools and relay diversity. |
 | Relay availability and correctness | A relay can censor, omit, delay, reorder, retain, or return a partial view of events. Replicas can diverge. | Readback verification, suitability tests, replication, migration, health checks, and future relay-pool reconciliation. |
