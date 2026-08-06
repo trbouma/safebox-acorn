@@ -5,7 +5,8 @@ description: Acorn's current safeguards, trust boundaries, security status, and 
 
 # Security
 
-Acorn handles Nostr private keys, recovery phrases, encrypted records, Cashu
+Acorn handles Nostr private keys, Safebox Acorn mnemonics, Protected record
+mnemonics, encrypted records, Cashu
 bearer proofs, and Lightning payment state. A defect can expose private data,
 interrupt recovery, misreport a payment, or cause loss of funds. Security is
 therefore treated as an explicit product and protocol responsibility.
@@ -20,7 +21,7 @@ therefore treated as an explicit product and protocol responsibility.
 
 Acorn is designed to protect:
 
-- the component's private key and recovery phrase;
+- the component's private key and Safebox Acorn mnemonic;
 - spendable ecash proofs and payment capabilities;
 - private record labels, contents, attachments, and encryption material;
 - wallet configuration and transaction history; and
@@ -36,7 +37,7 @@ Current safeguards include:
 
 - hidden secret entry instead of recovery material in command arguments;
 - independent RPK generation or domain-separated derivation from external
-  256-bit entropy, with an exact 24-word checksummed recovery encoding;
+  256-bit entropy, with an exact 24-word checksummed Protected record mnemonic;
 - owner-only configuration and secret-file permissions;
 - atomic, locked configuration updates;
 - NIP-44 encryption for private record metadata;

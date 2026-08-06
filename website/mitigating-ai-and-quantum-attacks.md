@@ -108,7 +108,7 @@ NIP-44 envelope, so later compromise of the Acorn `nsec` alone would not reveal
 protected records. Acorn now generates RPK material from operating-system
 randomness or derives it from separately supplied 256-bit entropy using a
 domain-separated HKDF. Acorn can encode the exact RPK as a separately labelled,
-checksummed 24-word recovery phrase, and Safebox Web implements an initial
+checksummed 24-word Protected record mnemonic, and Safebox Web implements an initial
 backup and reconnect ceremony. Record encryption and migration remain future
 work, and the complete profile still requires test vectors and independent
 review.

@@ -352,8 +352,8 @@ When enabled:
 2. Acorn derives the RPK with HKDF-SHA256 and the domain-separation context
    `safebox-acorn/record-protection-key/v1`. The input entropy is never reused
    directly as the RPK.
-3. Acorn presents an independently labelled RPK recovery artifact.
-4. The user is told that it is separate from the wallet mnemonic and cannot be
+3. Acorn presents the independently labelled **Protected record mnemonic**.
+4. The user is told that it is separate from the **Safebox Acorn mnemonic** and cannot be
    reconstructed from the `nsec`.
 5. The user confirms that the recovery artifact has been copied before Acorn
    permits creation of protected records.
@@ -373,12 +373,12 @@ from acorn import (
 
 Both creation paths return a canonical 64-character lowercase hexadecimal
 working key. Acorn encodes the exact 32 RPK bytes as a checksummed 24-word BIP39
-phrase. Recovery decodes those words directly back to the RPK; it does not
+mnemonic. Recovery decodes those words directly back to the RPK; it does not
 derive a wallet seed, enter the Acorn wallet's SLIP-10 path, or reconstruct the
 upstream entropy from which the RPK may have been derived.
 
-This use of the BIP39 word list is a recovery encoding, not a second wallet
-mnemonic. The user-facing phrase must always be separately labelled. The raw
+This use of the BIP39 word list is a recovery encoding, not another copy of the
+Safebox Acorn mnemonic. The user-facing mnemonics must always be separately labelled. The raw
 hexadecimal RPK remains an internal API and session transport format. A future
 versioned textual or QR wrapper may add an explicit Acorn profile identifier
 after usability and transcription testing.
@@ -386,19 +386,19 @@ after usability and transcription testing.
 The final user-facing terminology should be unmistakable:
 
 ```text
-Acorn wallet recovery phrase       -> recovers the Acorn signing key
-Protected-record recovery phrase   -> recovers the independent RPK
+Safebox Acorn mnemonic    -> recovers the Acorn signing key
+Protected record mnemonic -> recovers the independent RPK
 ```
 
 ## Recovery
 
 Complete recovery of protected records requires:
 
-1. the Acorn `nsec` or its valid offline mnemonic;
+1. the Acorn `nsec` or its valid Safebox Acorn mnemonic;
 2. the home relay or sufficient replicated relay information; and
 3. the independent RPK recovery artifact.
 
-The protected-record phrase or external entropy must be accepted through a
+The Protected record mnemonic or external entropy must be accepted through a
 hidden, confirmation-aware input channel.
 It must not be accepted as a command-line argument, URL parameter, ordinary
 environment variable, or logged request field.
@@ -420,8 +420,8 @@ not know whether it came from a cookie, hidden prompt, hardware device, or
 another trusted secret broker.
 
 Safebox Web includes the RPK and a backup-confirmed flag in its authenticated
-encrypted session cookie after creation or recovery. It displays the recovery
-phrase at creation, requires explicit backup confirmation, supports
+encrypted session cookie after creation or recovery. It displays the Protected
+record mnemonic at creation, requires explicit backup confirmation, supports
 confirmation-gated redisplay from an authenticated session, and accepts either
 the phrase or original external entropy during reconnect. The cookie copy must
 be:
@@ -640,7 +640,7 @@ the remaining profile.
 
 ## Open design decisions
 
-1. Whether the 24-word recovery phrase should later gain an additional
+1. Whether the 24-word Protected record mnemonic should later gain an additional
    versioned Acorn textual or QR wrapper.
 2. Exact KDF and domain-separation labels for wrapping and lookup keys.
 3. AES Key Wrap versus AES Key Wrap with Padding for the version `1` profile.

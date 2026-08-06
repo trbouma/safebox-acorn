@@ -3,7 +3,8 @@
 ## Purpose
 
 Acorn is a protocol-first component for safeguarding user-controlled keys,
-funds, and records. It handles Nostr private keys, recovery phrases, encrypted
+funds, and records. It handles Nostr private keys, Safebox Acorn mnemonics,
+Protected record mnemonics, encrypted
 private records, Cashu bearer proofs, and Lightning payment state. A defect can cause
 loss of confidentiality, loss of access, incorrect payment reporting, or loss
 of funds.
@@ -57,7 +58,7 @@ or explicitly documented with an operational mitigation.
 
 The principal protected assets are:
 
-- the Acorn component's Nostr private key (`nsec`) and recovery phrase;
+- the Acorn component's Nostr private key (`nsec`) and Safebox Acorn mnemonic;
 - independently generated record-protection entropy and Record Protection Key
   (RPK) material when a consuming application enables the scaffold;
 - Cashu proofs, tokens, blinding material, and payment capabilities;
@@ -104,14 +105,14 @@ or process isolation boundary is used.
 
 - New wallets generate key material through the cryptographic randomness used
   by the underlying key libraries.
-- Acorn-generated wallets have a BIP39 offline mnemonic that derives the
+- Acorn-generated wallets have a BIP39 Safebox Acorn mnemonic that derives the
   wallet key through the documented SLIP-10 secp256k1 path.
 - `acorn init --entropy` accepts exactly 256 bits of externally generated
   entropy through a hidden, confirmed prompt and produces a 24-word BIP39
   phrase.
 - Imported `nsec` wallets do not claim to have a recoverable seed phrase. The
   imported key itself must be backed up.
-- The target policy hands the offline mnemonic to the operator once at
+- The target policy hands the Safebox Acorn mnemonic to the operator once at
   initialization and does not retain it in configuration or relay-backed
   state. Existing wallets may still contain an encrypted retained phrase;
   removing it safely is a documented pre-release migration requirement.
@@ -130,8 +131,8 @@ or process isolation boundary is used.
   exact reuse of the wallet entropy in its creation flow, but cannot detect
   every correlated or weak external source.
 - RPK validation returns a canonical 32-byte working-key representation. Acorn
-  can encode the exact working key as a checksummed, separately labelled
-  24-word phrase and decode that phrase directly back to the RPK. It does not
+  can encode the exact working key as the checksummed, separately labelled
+  24-word **Protected record mnemonic** and decode it directly back to the RPK. It does not
   use the wallet's BIP39-to-SLIP-10 derivation path.
 
 The RPK functions and recovery encoding remain a scaffold for the future
@@ -358,7 +359,7 @@ and [Relay Suitability Ledger](docs/RELAY-SUITABILITY-LEDGER.md).
 
 Logs are treated as untrusted disclosure channels. Acorn avoids logging:
 
-- private keys, wallet seed phrases, RPKs, protected-record recovery phrases,
+- private keys, Safebox Acorn mnemonics, RPKs, Protected record mnemonics,
   and entropy;
 - Cashu proofs, proof secrets, tokens, and blinding material;
 - Lightning invoices, preimages, and complete mint request bodies;
@@ -445,8 +446,9 @@ formal audited severity score.
 | Local key storage | `config.yml` contains the `nsec` in plaintext. File permissions do not protect against the user account, root, malware, backups, or disk acquisition. | Enforce `0600`/`0700`; minimize config; recommend encrypted disks and protected backups; design future OS keychain or HSM integration. |
 | Runtime key exposure | Python objects and process memory contain keys, proofs, and plaintext while in use. Memory is not reliably zeroized. | Minimize lifetime and logging; keep execution hosts trusted; pursue constrained signing or hardware-backed key custody. |
 | Recovery export | A confirmed recovery display can still be captured by terminals, screenshots, shell recording, clipboard tools, remote sessions, or observers. | Keep export explicit; warn users; prefer offline backup and trusted local terminals. |
+| Combined safekeeping message | The mobile-friendly Safebox Acorn safekeeping message deliberately places the Safebox Acorn mnemonic and Protected record mnemonic together for reliable backup and transfer to a password-manager vault. Anyone who obtains that one message gains both the signing-key recovery path and the RPK, so the backup no longer provides independent custody of the two factors. Clipboard managers and device synchronization may create additional copies. | Label the message as highly sensitive; require explicit backup confirmation; use `Cache-Control: no-store`; keep it out of logs, URLs, databases, and JavaScript state; warn before clipboard use and clear the clipboard afterward. High-assurance users should maintain separately protected copies or distinct storage locations in addition to any combined convenience backup. |
 | Key loss | Loss of both the recovery secret and usable backup means permanent loss of control. | Make recovery material available at initialization; document backup and recovery drills; support relay replication for state availability. |
-| RPK lifecycle | The RPK scaffold and 24-word recovery encoding exist, and Safebox Web implements an initial backup and reconnect ceremony. The ceremony is not independently reviewed. A session-only RPK disappears when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Require the separately stored recovery phrase before relying on the key. Do not enable protected-record creation until the encryption format, rotation, migration, compatibility vectors, and recovery UX are implemented, tested, and reviewed. Treat application session storage only as an expiring working copy. |
+| RPK lifecycle | The RPK scaffold and 24-word Protected record mnemonic exist, and Safebox Web implements an initial backup and reconnect ceremony. The ceremony is not independently reviewed. A session-only RPK disappears when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Require the separately stored Protected record mnemonic before relying on the key. Do not enable protected-record creation until the encryption format, rotation, migration, compatibility vectors, and recovery UX are implemented, tested, and reviewed. Treat application session storage only as an expiring working copy. |
 | Host/operator compromise | Whoever controls the running code can potentially alter behavior or observe secrets and plaintext. | Make the trust boundary explicit; pin and verify releases; isolate deployments; work toward hardware-backed authority boundaries. |
 | Relay metadata | Relays can observe event kinds, timestamps, sizes, authors for non-gift-wrapped events, lookup patterns, network addresses, and replication relationships. | Encrypt content and labels; use gift wrapping for transfers; avoid claims of metadata anonymity; consider network privacy tools and relay diversity. |
 | Relay availability and correctness | A relay can censor, omit, delay, reorder, retain, or return a partial view of events. Replicas can diverge. | Readback verification, suitability tests, replication, migration, health checks, and future relay-pool reconciliation. |

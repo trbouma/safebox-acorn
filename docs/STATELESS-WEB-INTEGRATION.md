@@ -52,9 +52,9 @@ The integration should:
 
 - preserve Acorn as the source of wallet and record behavior;
 - avoid a server-side wallet database or session table;
-- let a user connect an existing Acorn using an `nsec` or offline mnemonic;
-- let a user separately restore an RPK using its protected-record recovery
-  phrase or original external entropy;
+- let a user connect an existing Acorn using an `nsec` or Safebox Acorn mnemonic;
+- let a user separately restore an RPK using its Protected record mnemonic or
+  original external entropy;
 - keep the selected bootstrap relay explicit;
 - reconstruct Acorn through the web framework's dependency boundary;
 - support a small read-only vertical slice before adding mutation;
@@ -121,13 +121,13 @@ nsec + bootstrap relay
 or:
 
 ```text
-offline mnemonic + bootstrap relay
+Safebox Acorn mnemonic + bootstrap relay
 ```
 
 The user may additionally provide one independent protected-record input:
 
 ```text
-protected-record recovery phrase
+Protected record mnemonic
 ```
 
 or:
@@ -136,7 +136,7 @@ or:
 external 256-bit record-protection entropy
 ```
 
-An offline mnemonic is validated as BIP39 and passed through Acorn's documented
+The Safebox Acorn mnemonic is validated as BIP39 and passed through Acorn's documented
 SLIP-10 secp256k1 derivation contract. The resulting `nsec` becomes the
 operational secret. The mnemonic must be discarded after derivation and must
 not be placed in the cookie, application configuration, logs, or relay-backed
@@ -149,8 +149,8 @@ The bootstrap relay is normalized before it enters the cookie. A missing
 scheme becomes `wss://`. Plain `ws://` should be accepted only for an explicitly
 local loopback relay.
 
-The protected-record phrase is a checksummed 24-word direct encoding of the
-exact 32-byte RPK. It is not the wallet mnemonic and must never enter the
+The Protected record mnemonic is a checksummed 24-word direct encoding of the
+exact 32-byte RPK. It is not the Safebox Acorn mnemonic and must never enter the
 wallet's SLIP-10 derivation path. External record-protection entropy instead
 passes through Acorn's domain-separated HKDF. Both paths produce the RPK that
 becomes an optional working secret in the session cookie. The recovery input
@@ -202,18 +202,35 @@ because there is no server-side revocation state.
 ## Protected-record backup ceremony
 
 At new-Acorn creation, Acorn generates or derives the RPK and converts the
-exact RPK bytes into a separately labelled, checksummed 24-word phrase.
-Safebox Web displays it once beside, but visibly distinct from, the wallet
-recovery material. A confirmed POST records
+exact RPK bytes into the separately labelled, checksummed 24-word Protected
+record mnemonic. Safebox Web displays it once beside, but visibly distinct
+from, the Safebox Acorn mnemonic. A confirmed POST records
 `record_protection_backup_confirmed=true` in the newly encrypted cookie.
 
+The reference interface also constructs one mobile-friendly **Safebox Acorn
+safekeeping message** containing:
+
+- the Safebox Acorn mnemonic;
+- the Protected record mnemonic;
+- the bootstrap relay;
+- the home mint; and
+- the component public key for reference.
+
+The message is server-rendered in a read-only, manually selectable field. A
+small same-origin progressive enhancement may copy the complete message to the
+clipboard, but recovery does not depend on JavaScript. The interface warns that
+clipboard managers, synchronized devices, remote sessions, and other
+applications may retain the copied secrets. Users should move the message only
+to an intended protected location, such as an offline backup or trusted
+password-manager vault, and then clear the clipboard.
+
 An authenticated user can later request redisplay. The initial GET presents
-only a warning. A CSRF-protected, explicitly confirmed POST produces the phrase
+only a warning. A CSRF-protected, explicitly confirmed POST produces the mnemonic
 with `Cache-Control: no-store`; a second confirmation records that it was saved.
-The phrase is absent from URLs, JavaScript, `/api/session`, logs, and the
+The mnemonic is absent from URLs, JavaScript, `/api/session`, logs, and the
 application database.
 
-Reconnect accepts either the protected-record phrase or the original external
+Reconnect accepts either the Protected record mnemonic or the original external
 record-protection entropy through masked form fields. The two inputs are
 mutually exclusive. Successful conversion stores only the working RPK and
 marks the supplied backup as confirmed.
@@ -253,7 +270,7 @@ or mint.
 
 The proven first slice consists of:
 
-1. connect with an `nsec` or offline mnemonic;
+1. connect with an `nsec` or Safebox Acorn mnemonic;
 2. reconstruct the component's key authority;
 3. load wallet state from the bootstrap relay;
 4. display balance;

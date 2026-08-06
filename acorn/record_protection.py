@@ -97,13 +97,11 @@ def record_protection_key_from_recovery_phrase(recovery_phrase: str) -> str:
 
     phrase = " ".join(str(recovery_phrase).strip().split())
     if len(phrase.split()) != 24:
-        raise ValueError(
-            "protected-record recovery phrase must contain exactly 24 words"
-        )
+        raise ValueError("Protected record mnemonic must contain exactly 24 words")
     mnemonic = Mnemonic("english")
     if not mnemonic.check(phrase):
-        raise ValueError("protected-record recovery phrase is not valid")
+        raise ValueError("Protected record mnemonic is not valid")
     key_bytes = mnemonic.to_entropy(phrase)
     if len(key_bytes) != RECORD_PROTECTION_KEY_BYTES:
-        raise ValueError("protected-record recovery phrase must encode 32 bytes")
+        raise ValueError("Protected record mnemonic must encode 32 bytes")
     return validate_record_protection_key(key_bytes.hex())

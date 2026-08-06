@@ -33,9 +33,9 @@ recovery_phrase = record_protection_recovery_phrase(rpk)
 recovered_rpk = record_protection_key_from_recovery_phrase(recovery_phrase)
 ```
 
-The recovery phrase is a checksummed 24-word encoding of the exact RPK. It is
-separate from the Acorn wallet mnemonic and never enters the wallet's SLIP-10
-derivation path. Protected-record encryption remains under design;
+The **Protected record mnemonic** is a checksummed 24-word encoding of the
+exact RPK. It is separate from the **Safebox Acorn mnemonic** and never enters
+the wallet's SLIP-10 derivation path. Protected-record encryption remains under design;
 applications must not make records dependent on an RPK until that profile is
 implemented and reviewed.
 
