@@ -334,6 +334,182 @@ no `encryptparms` remain a narrowly scoped compatibility path for genuinely
 legacy unencrypted blobs; server-reported MIME type never downgrades an
 encrypted record into that path.
 
+## Blob security design
+
+### Envelope model
+
+Blob protection is a two-envelope construction. The large binary object and
+the small key-bearing metadata record are deliberately stored separately.
+
+```text
+plaintext blob
+    |
+    | fresh random 256-bit key + fresh 96-bit nonce
+    v
+AES-256-GCM ciphertext --------------------------> Blossom server
+    |                                               stores ciphertext only
+    | SHA-256(ciphertext)
+    v
+blob reference + media type + hashes + AES key + nonce
+    |
+    | NIP-44 self-encryption to Acorn public key
+    v
+signed kind 37375 event -------------------------> Nostr relay
+    author pubkey + timestamp + private lookup tag remain visible
+```
+
+The AES key is not derived from the `nsec`, label, plaintext, or blob hash. A
+new random key is generated for every blob. Compromise of one blob key should
+therefore expose only that blob unless a wider key or execution-environment
+compromise has also occurred.
+
+The construction does not use AES-GCM additional authenticated data. Binding
+between the ciphertext and its record is instead provided by the ciphertext
+hash stored inside the authenticated NIP-44 record. The encrypted record also
+protects the plaintext hash, media type, blob reference, key, and nonce as one
+metadata object.
+
+### Assets, keys, and storage locations
+
+| Asset | Location at rest | Protection | Expected exposure |
+| --- | --- | --- | --- |
+| Plaintext blob | Not intentionally retained by Acorn after the operation | Exists transiently in caller and process memory | Trusted caller and execution environment |
+| Blob ciphertext | Blossom-compatible server | AES-256-GCM | Server and anyone able to retrieve the content-addressed object |
+| Per-blob AES key | NIP-44-encrypted record metadata | NIP-44 under the Acorn key | Acorn key holder and trusted execution environment |
+| AES nonce | NIP-44-encrypted record metadata | NIP-44; not independently secret | Acorn key holder and trusted execution environment |
+| Ciphertext hash | Record metadata and content-addressed blob path | Integrity value, not a secret | May be visible to the Blossom operator and through object URLs |
+| Plaintext hash | NIP-44-encrypted record metadata | NIP-44 | Acorn key holder and trusted execution environment |
+| Record label and payload | NIP-44-encrypted event content | NIP-44 | Acorn key holder and trusted execution environment |
+| Acorn `nsec` | Local configuration or caller-provided secret boundary | Host permissions and operator controls | Must never be disclosed to relays, Blossom, logs, or browser storage |
+| Acorn public key | Nostr event author and Blossom authorization context | Public identifier | Relays, services, and observers |
+
+The AES nonce must be unique for a given AES key. Acorn currently generates a
+fresh key and nonce for every blob, so nonce reuse across blobs does not imply
+reuse under the same key. Future optimization must not introduce key reuse
+without a reviewed nonce-allocation design.
+
+### Trust and observation boundaries
+
+| Observer or compromise | What it can learn or do |
+| --- | --- |
+| Blossom operator alone | Observe ciphertext, size, hash, timing, authorization, requests, and source network metadata; refuse, retain, replace, or delete the object; not directly decrypt it |
+| Relay operator alone | Observe author public key, kind, timestamp, signature, deterministic lookup tag, ciphertext size, and query patterns; not directly read record metadata or the blob key |
+| Colluding relay and Blossom operators | Correlate authors, upload timing, object access, event publication, sizes, and authorization metadata; still require the Acorn secret or a cryptographic break to decrypt content |
+| Network observer | Observe endpoints, timing, sizes, and connection metadata not hidden by TLS, VPN, Tor, or other deployment controls |
+| Compromised Acorn execution environment | Observe the `nsec`, record plaintext, blob plaintext, and per-blob keys while in use; fully bypass the storage-layer confidentiality boundary |
+| Compromised `nsec` | Decrypt retained NIP-44 records, recover per-blob keys, derive private lookup tags, sign events, and decrypt any associated retained blobs |
+| Future quantum-capable attacker | Potentially derive the secp256k1 private key from the public key, then follow the compromised-`nsec` path; AES-256 ciphertext without its key retains a strong quantum-resistant margin under currently known attacks |
+
+Human identity is not required for these attacks. The author field identifies
+an Acorn component key. External assertions such as NIP-05, kind `0` metadata,
+Lightning addresses, server accounts, or operator knowledge may associate that
+key with a person, but that association is separate from cryptographic access.
+
+### Attacker paths
+
+An attacker holding only a Blossom ciphertext must still obtain its random AES
+key. The normal key-recovery path for an attacker is:
+
+1. obtain or retain the encrypted blob;
+2. identify or collect record events authored by the relevant Acorn public key;
+3. obtain the Acorn `nsec`, compromise its execution environment, or defeat the
+   secp256k1/NIP-44 envelope;
+4. decrypt retained record events and match the protected blob reference or
+   ciphertext hash;
+5. recover the AES key and nonce; and
+6. authenticate and decrypt the blob.
+
+The attacker need not correlate the exact event before compromising the Acorn
+key. They can collect all events for a public key and decrypt and classify them
+afterward. This is the relevant harvest-now-decrypt-later scenario for
+long-lived records.
+
+Other practical paths are usually simpler than cryptanalysis: stealing local
+configuration, compromising the web or CLI execution host, capturing secrets
+from an unsafe integration, exploiting dependencies, or obtaining plaintext
+from an endpoint while the authorized application is rendering it.
+
+### Required security invariants
+
+Implementations conforming to the current encrypted-blob profile must preserve
+all of the following:
+
+1. Generate a new unpredictable 32-byte AES key for every blob.
+2. Generate a fresh 12-byte nonce with a cryptographically secure random source.
+3. Never upload plaintext blob bytes to the configured blob server.
+4. Store the key and nonce only inside authenticated encrypted record metadata.
+5. Treat record metadata, not an unauthenticated server MIME response, as the
+   authority for whether decryption is required.
+6. Verify `blobsha256` before decryption, authenticate the GCM ciphertext, and
+   verify `origsha256` after decryption.
+7. Return no plaintext after any hash, algorithm, key-length, nonce-length, or
+   GCM authentication failure.
+8. Avoid logging plaintext, keys, nonces, decrypted metadata, or secret-bearing
+   exceptions.
+9. Apply explicit upload and response-size limits at application and proxy
+   boundaries.
+10. Treat publication, replacement, deletion, and timeout outcomes as
+    potentially partial until readback or provider results establish otherwise.
+
+The current algorithm identifier is `AES-256-GCM`. Unknown identifiers must
+fail closed. A future profile must use a new explicit version or algorithm
+identifier rather than silently changing the interpretation of existing
+records.
+
+### Lifecycle and failure semantics
+
+Blob storage spans two independently operated systems and cannot provide a
+single atomic transaction. Callers must distinguish these states:
+
+| Operation and failure | Possible durable state | Required interpretation or response |
+| --- | --- | --- |
+| Encryption fails before upload | No external blob or record | Safe to correct the input or implementation and retry |
+| Blossom upload fails | No verified record should be published | Report failure; do not claim the record exists |
+| Upload succeeds and record publication fails | Ciphertext may be orphaned on Blossom | Attempt authenticated blob deletion and report failure |
+| Record publication times out after upload | Publication may have succeeded even if readback failed; cleanup may leave a published record pointing to a missing blob | Report an uncertain outcome; inspect relay state before retrying or replacing |
+| Record read succeeds but blob retrieval fails | Metadata exists but ciphertext is unavailable | Report availability failure; do not alter the record automatically |
+| Ciphertext or metadata verification fails | Object may be corrupt, substituted, truncated, or mismatched | Fail closed and return no plaintext |
+| Blob deletion succeeds but relay deletion fails | Key-bearing record may remain but its object is unavailable | Report partial deletion and resulting loss of availability |
+| Relay deletion is accepted but blob deletion fails | Encrypted ciphertext may remain, and retained relay or backup copies may still contain its key | Report partial deletion; do not claim erasure |
+| Both deletion requests succeed | Providers may still retain mirrors, logs, caches, or backups | Report requested/observed deletion, never guaranteed physical erasure |
+
+Replacement of a blob record is not equivalent to an atomic update. A caller
+must not overwrite the only protected reference to an old blob without first
+choosing and documenting the desired retention, migration, and rollback
+behavior. The initial Safebox Web integration therefore rejects an existing
+label and offers an explicit confirmed deletion operation.
+
+### Verification and test requirements
+
+The deterministic unit suite currently covers:
+
+- AES-256-GCM encrypt/decrypt round trip;
+- ciphertext-hash mismatch;
+- authenticated-ciphertext tampering even when the attacker recomputes the
+  unkeyed ciphertext hash;
+- plaintext-hash mismatch; and
+- rejection of an unknown encryption algorithm.
+
+Before a stable release, coverage should also include:
+
+- fixed, reviewable AES-GCM test vectors containing key, nonce, plaintext,
+  ciphertext, tag, and both hashes;
+- malformed, missing, short, and oversized key and nonce fields;
+- cross-record ciphertext and metadata substitution;
+- bounded upload, download, and decompression/resource behavior;
+- a live Blossom upload, authenticated retrieval, decryption, and deletion
+  lifecycle using disposable data;
+- provider failure before and after relay publication;
+- ambiguous timeout and cleanup failure injection;
+- multiple configured blob servers and partial deletion results;
+- compatibility fixtures for genuine legacy unencrypted records; and
+- confirmation that logs and exception responses contain no blob plaintext,
+  AES keys, `nsec`, or decrypted record metadata.
+
+Test vectors must use synthetic public values created specifically for the
+test suite. Production keys, user records, and real recovery material must
+never be copied into fixtures.
+
 ## Relay-visible metadata
 
 Relay operators can observe:
@@ -413,13 +589,18 @@ without the field parse as version `1`. Future incompatible lookup or
 encryption changes must use a documented migration rather than silently
 changing the existing label hash or ciphertext interpretation.
 
-### Quantum-safe cryptography
+### Post-quantum boundary and migration
 
 The current private record format relies on Nostr-compatible classical key
 material and NIP-44 encryption for record metadata. Blob content is encrypted
 with AES-256-GCM using random symmetric keys.
 
-This should not be described as fully quantum-safe.
+The independently encrypted AES-256-GCM blob ciphertext is appropriately
+described as quantum-resistant under currently known attacks. The complete
+record system must not be described as post-quantum secure because the AES key
+is currently protected by a secp256k1/NIP-44 envelope. See
+[Blob security design](#blob-security-design) for the exact boundary and attack
+path.
 
 Acorn does, however, need a quantum-safe migration path because private records
 and recovery context may be long-lived. A future-compatible posture should
@@ -481,10 +662,13 @@ Current implementation files:
 - `acorn/func_utils.py`
   - `encrypt_bytes`
   - `decrypt_bytes`
+  - `decrypt_and_verify_record_blob`
 - `acorn/models.py`
   - `SafeboxRecord`
   - `EncryptionParms`
   - `EncryptionResult`
+- `tests/unit/test_blob_encryption.py`
+  - encrypted-blob integrity and algorithm-failure regression tests
 
 ## Compatibility notes
 

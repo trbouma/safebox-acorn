@@ -158,7 +158,45 @@ limitation is discussed under residual risks.
 - Encryption profiles and record envelopes are versioned so incompatible
   changes require an explicit migration.
 
-See [Record Encryption Specification](docs/RECORD-ENCRYPTION-SPEC.md).
+See the detailed envelope model, attacker paths, failure semantics, and test
+requirements in the
+[Record Encryption Specification](docs/RECORD-ENCRYPTION-SPEC.md#blob-security-design).
+
+#### Quantum-resistance boundary for encrypted blobs
+
+Each blob is encrypted under an independently generated 256-bit AES key with
+AES-256-GCM and a fresh 96-bit nonce. Only the authenticated ciphertext is sent
+to Blossom. Under currently known attacks, that blob ciphertext in isolation is
+considered quantum-resistant: Grover's algorithm reduces the idealized cost of
+exhaustive AES-256 key search toward a 128-bit security level, which remains a
+strong security margin. NIST recommends AES-256-GCM with a random IV for
+authenticated encryption in post-quantum designs. See the
+[NIST Post-Quantum Cryptography FAQ](https://csrc.nist.gov/Projects/post-quantum-cryptography/faqs).
+
+The AES key and nonce are not stored with the Blossom object. They are stored
+inside the corresponding NIP-44-encrypted private-record event, together with
+the blob reference and integrity metadata. Consequently, obtaining a Blossom
+ciphertext alone is insufficient to decrypt the attachment. An attacker would
+also need to recover the blob key, for example by:
+
+- compromising the Acorn `nsec` or its execution environment;
+- obtaining and decrypting the corresponding private-record event;
+- exploiting an implementation or key-handling defect; or
+- eventually breaking the secp256k1-based protection underlying the current
+  Nostr and NIP-44 envelope.
+
+The attacker does not need to establish the human identity of the controller.
+The Acorn component's public key is enough to identify its authored events, and
+Blossom authorization, timing, access patterns, or operator logs may help
+correlate a ciphertext with an event. A future quantum-capable attacker that
+derives the `nsec` from that public key could decrypt retained NIP-44 records,
+recover their AES keys, and then decrypt the associated blobs.
+
+The precise security claim is therefore limited: **the independently encrypted
+blob ciphertext is quantum-resistant, but Acorn's present NIP-44 key envelope
+and ordinary protocol stack are not yet post-quantum resistant.** Long-lived
+records remain subject to harvest-now-decrypt-later risk until that envelope is
+replaced or augmented by a reviewed post-quantum or hybrid construction.
 
 ### Ecash transfers and proof state
 
@@ -354,7 +392,7 @@ formal audited severity score.
 | Blob storage availability and metadata | A Blossom server can refuse, delay, retain, or delete encrypted objects and can observe ciphertext size, hash, timing, authorization, and access patterns. Encryption does not provide availability or traffic-analysis resistance. | Verify ciphertext and plaintext integrity on retrieval; use bounded uploads; disclose metadata exposure; support multiple or replaceable blob servers and replication before relying on one provider for durable availability. |
 | Network privacy | Acorn does not itself provide Tor, VPN, traffic padding, or protection against endpoint correlation. | Deploy network privacy separately where required; use multiple infrastructure providers carefully; document metadata exposure. |
 | Dependency supply chain | Python packages, native cryptographic libraries, build tools, and their release channels may be compromised or incompatible. | Keep optional dependencies isolated; use lock files, hashes and reproducible artifacts where possible; add CI, SBOM, provenance, and dependency scanning before release. |
-| Cryptographic evolution | secp256k1/Nostr and current NIP-44 formats are not post-quantum. Long-lived ciphertext may face harvest-now-decrypt-later risk. | Maintain versioned formats and cryptographic agility; treat current PQ support as experimental; develop reviewed hybrid profiles and test vectors before claiming protection. |
+| Cryptographic evolution | Blob ciphertext independently protected by AES-256-GCM is quantum-resistant under currently known attacks, but secp256k1/Nostr and the NIP-44 envelope containing each blob key are not post-quantum. A future compromise of that envelope could expose retained blob keys and enable harvest-now-decrypt-later attacks. | Maintain versioned formats and cryptographic agility; preserve independent per-blob keys; treat current PQ support as experimental; develop reviewed hybrid envelope profiles and test vectors before claiming system-level post-quantum protection. |
 | Side channels | Timing, sizes, access patterns, exceptions, and resource use can reveal information even when content is encrypted. | Reduce unnecessary metadata and sensitive logs; no formal side-channel resistance is currently claimed. |
 | Denial of service | Large event sets, hostile relay responses, malformed data, or resource exhaustion may degrade service. | Apply limits and validation where implemented; add fuzzing, bounded-resource tests, and operational monitoring before broad deployment. |
 | Schema and upgrade compatibility | A code or storage-format change could make old state unreadable or cause incorrect interpretation. | Version envelopes; document migrations; add compatibility fixtures and upgrade tests before stable release. |
@@ -433,4 +471,4 @@ Security-relevant changes should update this file when they alter:
 - known residual risks or release gates; or
 - the project's audit and support status.
 
-Last reviewed: 2026-08-03.
+Last reviewed: 2026-08-06.
