@@ -25,6 +25,8 @@ preview or hardened alpha.
 
 The current release plan and remaining gates are documented in
 [Roadmap to Releasability](docs/ROADMAP-TO-RELEASABILITY.md).
+The public-facing policy rationale for emerging threats is summarized in
+[Mitigating AI and Quantum Attacks](website/mitigating-ai-and-quantum-attacks.md).
 
 ## Reporting a vulnerability
 
@@ -56,6 +58,8 @@ or explicitly documented with an operational mitigation.
 The principal protected assets are:
 
 - the Acorn component's Nostr private key (`nsec`) and recovery phrase;
+- independently generated record-protection entropy and Record Protection Key
+  (RPK) material when a consuming application enables the scaffold;
 - Cashu proofs, tokens, blinding material, and payment capabilities;
 - private record labels, contents, attachments, and encryption material;
 - wallet configuration and infrastructure pointers;
@@ -114,9 +118,31 @@ or process isolation boundary is used.
 - `acorn recover` verifies that the derived wallet state is readable from the
   selected home relay before replacing local configuration.
 - Recovery display is explicit and confirmation-gated.
+- Acorn can generate an independent 256-bit RPK from operating-system
+  cryptographic randomness.
+- An application may instead supply exactly 256 bits of separately generated
+  external entropy to Acorn's RPK API. Acorn derives the working key using
+  HKDF-SHA256 and the domain-separation context
+  `safebox-acorn/record-protection-key/v1`; it does not reuse the entropy as the
+  key directly.
+- RPK entropy must be generated independently from wallet entropy and must not
+  be derived from a password or another guessable value. Safebox Web rejects
+  exact reuse of the wallet entropy in its creation flow, but cannot detect
+  every correlated or weak external source.
+- RPK validation returns a canonical 32-byte working-key representation. The
+  representation is an internal API and session transport format, not a final
+  recovery artifact.
+
+The RPK functions are only a key-material scaffold. Acorn does not currently
+encrypt records with the RPK, persist it in ordinary configuration, or provide
+a completed RPK backup and recovery ceremony. A consuming application that
+holds the working RPK in an encrypted session still exposes it to that
+application's execution environment while processing requests.
 
 See [Recovery Specification](docs/RECOVERY-SPEC.md) and
-[External Entropy Initialization](docs/EXTERNAL-ENTROPY-INITIALIZATION.md).
+[External Entropy Initialization](docs/EXTERNAL-ENTROPY-INITIALIZATION.md). The
+separate RPK design is documented in the
+[Protected Record Profile](docs/PROTECTED-RECORD-PROFILE-DESIGN.md).
 
 ### Secret input and output
 
@@ -350,6 +376,30 @@ The optional `PQEvent` code is experimental. Acorn's normal Nostr key handling,
 NIP-44 record encryption, and Cashu interoperability continue to use classical
 cryptography. Acorn must not currently be described as quantum-safe.
 
+### AI-enabled attack scaling
+
+Acorn does not treat artificial intelligence as a new cryptographic primitive
+or claim to be “AI-proof.” AI systems may instead increase the speed, volume,
+and personalization of familiar attacks: secret discovery, dependency and
+endpoint probing, phishing, impersonation, malicious-content generation,
+metadata analysis, and exploitation of operational mistakes.
+
+A valid signature proves control of a key, not the truth of generated content
+or the civil identity of its controller. Material transfers and recovery
+decisions may therefore require independently verified recipient keys,
+challenge-response, trusted prior relationships, or human review outside
+Acorn. Current mitigations include compartmentalized roles, secret-safe
+interfaces and logging, authenticated encryption, explicit confirmations,
+readback checks, deterministic tests, and transparent trust boundaries. These
+controls reduce exposure; they do not prevent social engineering, endpoint
+compromise, or attacks through trusted operators.
+
+The approach is consistent with treating security and resilience as ongoing
+risk-management work rather than a one-time product label. See the public
+[Mitigating AI and Quantum Attacks](website/mitigating-ai-and-quantum-attacks.md)
+brief and the
+[NIST AI Risk Management Framework](https://www.nist.gov/itl/ai-risk-management-framework).
+
 ### Testing
 
 The repository contains deterministic unit tests and opt-in live integration
@@ -390,6 +440,7 @@ formal audited severity score.
 | Runtime key exposure | Python objects and process memory contain keys, proofs, and plaintext while in use. Memory is not reliably zeroized. | Minimize lifetime and logging; keep execution hosts trusted; pursue constrained signing or hardware-backed key custody. |
 | Recovery export | A confirmed recovery display can still be captured by terminals, screenshots, shell recording, clipboard tools, remote sessions, or observers. | Keep export explicit; warn users; prefer offline backup and trusted local terminals. |
 | Key loss | Loss of both the recovery secret and usable backup means permanent loss of control. | Make recovery material available at initialization; document backup and recovery drills; support relay replication for state availability. |
+| RPK lifecycle | The RPK key-material scaffold exists, but protected-record encryption and the independent backup and recovery ceremony do not. A session-only RPK can disappear when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Do not enable protected-record creation until the format, recovery artifact, backup confirmation, rotation, migration, and test vectors are implemented and reviewed. Treat application session storage only as an expiring working copy. |
 | Host/operator compromise | Whoever controls the running code can potentially alter behavior or observe secrets and plaintext. | Make the trust boundary explicit; pin and verify releases; isolate deployments; work toward hardware-backed authority boundaries. |
 | Relay metadata | Relays can observe event kinds, timestamps, sizes, authors for non-gift-wrapped events, lookup patterns, network addresses, and replication relationships. | Encrypt content and labels; use gift wrapping for transfers; avoid claims of metadata anonymity; consider network privacy tools and relay diversity. |
 | Relay availability and correctness | A relay can censor, omit, delay, reorder, retain, or return a partial view of events. Replicas can diverge. | Readback verification, suitability tests, replication, migration, health checks, and future relay-pool reconciliation. |
@@ -416,6 +467,7 @@ formal audited severity score.
 | Blob storage availability and metadata | A Blossom server can refuse, delay, retain, or delete encrypted objects and can observe ciphertext size, hash, timing, authorization, and access patterns. Encryption does not provide availability or traffic-analysis resistance. | Verify ciphertext and plaintext integrity on retrieval; use bounded uploads; disclose metadata exposure; support multiple or replaceable blob servers and replication before relying on one provider for durable availability. |
 | Network privacy | Acorn does not itself provide Tor, VPN, traffic padding, or protection against endpoint correlation. | Deploy network privacy separately where required; use multiple infrastructure providers carefully; document metadata exposure. |
 | Dependency supply chain | Python packages, native cryptographic libraries, build tools, and their release channels may be compromised or incompatible. | Keep optional dependencies isolated; use lock files, hashes and reproducible artifacts where possible; add CI, SBOM, provenance, and dependency scanning before release. |
+| AI-enabled attack scaling | Automated systems can increase the volume and quality of phishing, impersonation, secret discovery, vulnerability probing, metadata analysis, and malicious inputs. A valid key signature does not prove that content is truthful or human-authored. | Keep secrets out of routine interfaces and logs; preserve explicit confirmation for consequential actions; validate and bound untrusted inputs; independently verify high-value recipient keys and claims; monitor dependencies and endpoints; retain human review where context matters. |
 | Cryptographic evolution | Blob ciphertext independently protected by AES-256-GCM is quantum-resistant under currently known attacks, but secp256k1/Nostr and the NIP-44 envelope containing each blob key are not post-quantum. A future compromise of that envelope could expose retained blob keys and enable harvest-now-decrypt-later attacks. | Maintain versioned formats and cryptographic agility; preserve independent per-blob keys; treat current PQ support as experimental; develop reviewed hybrid envelope profiles and test vectors before claiming system-level post-quantum protection. |
 | Side channels | Timing, sizes, access patterns, exceptions, and resource use can reveal information even when content is encrypted. | Reduce unnecessary metadata and sensitive logs; no formal side-channel resistance is currently claimed. |
 | Denial of service | Large event sets, hostile relay responses, malformed data, or resource exhaustion may degrade service. | Apply limits and validation where implemented; add fuzzing, bounded-resource tests, and operational monitoring before broad deployment. |
@@ -477,7 +529,10 @@ Acorn currently does not claim:
 - safe use of large balances or irreplaceable records;
 - complete distributed multi-writer consistency;
 - hardware-backed key isolation or memory zeroization; or
-- post-quantum security for ordinary Acorn operations.
+- post-quantum security for ordinary Acorn operations;
+- protection from AI-assisted phishing, impersonation, malicious inputs, or
+  compromise of a trusted endpoint or operator; or
+- proof that signed content was created by a human or that its claims are true.
 
 The intended direction is user control with explicit, replaceable
 infrastructure—not the elimination of every dependency or trust relationship.
