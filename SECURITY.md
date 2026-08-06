@@ -150,6 +150,11 @@ limitation is discussed under residual risks.
 - Public lookup tags are derived from the private key and label rather than
   publishing plaintext labels.
 - Blob content is encrypted with AES-256-GCM before upload.
+- Encrypted blob retrieval treats protected record metadata as authoritative,
+  verifies the ciphertext hash, authenticates the GCM ciphertext, and verifies
+  the recovered plaintext hash before returning bytes.
+- A blob server's reported MIME type cannot downgrade an encrypted record into
+  the legacy unencrypted retrieval path.
 - Encryption profiles and record envelopes are versioned so incompatible
   changes require an explicit migration.
 
@@ -346,6 +351,7 @@ formal audited severity score.
 | NIP-05 directory trust | A NIP-05 name is resolved through infrastructure controlled by its domain owner, reverse-proxy operator, and application operator. DNS, TLS routing, proxy configuration, code, or database compromise can remap a name or advertise attacker-controlled relays without compromising the original Acorn key. | Treat NIP-05 as a domain assertion rather than proof of human identity or permanent ownership; verify the resolved `npub` independently for material transfers; prefer an already trusted raw public key where recipient certainty is critical. |
 | Reverse-proxy operator | A designated TLS reverse proxy can observe encrypted session cookies, choose the upstream application, replace responses, or route the public domain to a different service. An application-side proxy allowlist authenticates forwarded metadata only; it cannot compel an authorized proxy to reach the intended backend. | Treat the proxy operator and configuration as part of the trusted execution path; restrict administrative access; pin and review configuration; monitor the public endpoint independently; verify high-value NIP-05 mappings or recipient keys through another channel. |
 | Reverse-proxy header spoofing | If an application trusts forwarded headers from arbitrary peers, a direct HTTP caller can claim that its request arrived over HTTPS and influence scheme or client metadata used by security decisions. | Restrict network access with VPN ACLs or a firewall; allow forwarded headers only from the designated immediate proxy; test that direct HTTP fails and trusted forwarded HTTPS succeeds; never confuse binding to `0.0.0.0` with proxy authorization. |
+| Blob storage availability and metadata | A Blossom server can refuse, delay, retain, or delete encrypted objects and can observe ciphertext size, hash, timing, authorization, and access patterns. Encryption does not provide availability or traffic-analysis resistance. | Verify ciphertext and plaintext integrity on retrieval; use bounded uploads; disclose metadata exposure; support multiple or replaceable blob servers and replication before relying on one provider for durable availability. |
 | Network privacy | Acorn does not itself provide Tor, VPN, traffic padding, or protection against endpoint correlation. | Deploy network privacy separately where required; use multiple infrastructure providers carefully; document metadata exposure. |
 | Dependency supply chain | Python packages, native cryptographic libraries, build tools, and their release channels may be compromised or incompatible. | Keep optional dependencies isolated; use lock files, hashes and reproducible artifacts where possible; add CI, SBOM, provenance, and dependency scanning before release. |
 | Cryptographic evolution | secp256k1/Nostr and current NIP-44 formats are not post-quantum. Long-lived ciphertext may face harvest-now-decrypt-later risk. | Maintain versioned formats and cryptographic agility; treat current PQ support as experimental; develop reviewed hybrid profiles and test vectors before claiming protection. |

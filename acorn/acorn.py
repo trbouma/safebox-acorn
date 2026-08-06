@@ -21,6 +21,7 @@ from binascii import unhexlify
 import hashlib
 import signal, sys, string, cbor2, base64,os
 import contextlib
+from cryptography.exceptions import InvalidTag
 
 
 
@@ -37,7 +38,12 @@ from monstr.entities import Entities
 from monstr.client.event_handlers import DeduplicateAcceptor
 
 from acorn.monstrmore import KindOtherGiftWrap, ExtendedNIP44Encrypt
-from acorn.func_utils import npub_to_hex, encrypt_bytes, decrypt_bytes
+from acorn.func_utils import (
+    decrypt_and_verify_record_blob,
+    decrypt_bytes,
+    encrypt_bytes,
+    npub_to_hex,
+)
 
 
 tail = util_funcs.str_tails
@@ -1746,7 +1752,7 @@ class Acorn:
                 for each in events:
                     try:
                         decrypt_content = my_enc.decrypt_event(each)
-                    except (ValueError, TypeError) as exc:
+                    except (InvalidTag, ValueError, TypeError) as exc:
                         self.logger.debug("op=query_ecash_dm status=decrypt_skip")
                         self.logger.debug("op=query_ecash_dm status=decrypt_failed event=%s error=%s", each.id, exc)
                         continue
@@ -3360,7 +3366,7 @@ class Acorn:
             safebox_record: SafeboxRecord = SafeboxRecord(**json.loads(decrypt_content))
             blob_sha256 = safebox_record.blobsha256
             blob_type = safebox_record.blobtype
-            if blob_type:
+            if blob_sha256:
                 blob_retrieve: BlossomBlob | None = None
                 last_blob_error: Exception | None = None
                 for server in blossom_servers:
@@ -3378,17 +3384,27 @@ class Acorn:
                         f"servers: {last_blob_error}"
                     )
                 
-                if blob_retrieve.mime_type == "application/octet-stream":
+                retrieved_bytes = blob_retrieve.get_bytes()
+                if safebox_record.encryptparms is not None:
                     try:
-                        blob_data = decrypt_bytes(
-                            cipherbytes=blob_retrieve.get_bytes(),
-                            key=bytes.fromhex(safebox_record.encryptparms.key),
-                            iv=bytes.fromhex(safebox_record.encryptparms.iv),
+                        blob_data = decrypt_and_verify_record_blob(
+                            cipherbytes=retrieved_bytes,
+                            encryptparms=safebox_record.encryptparms,
+                            blobsha256=blob_sha256,
+                            origsha256=safebox_record.origsha256,
                         )
-                    except (ValueError, TypeError) as e:
-                        self.logger.warning("op=get_record_blobdata status=blob_decrypt_failed kind=%s error=%s", record_kind, e)
+                    except (ValueError, TypeError) as exc:
+                        self.logger.warning(
+                            "op=get_record_blobdata status=blob_integrity_failed kind=%s",
+                            record_kind,
+                        )
+                        raise RuntimeError(
+                            "Encrypted blob integrity verification failed"
+                        ) from exc
                 else:
-                    blob_data = blob_retrieve.get_bytes()
+                    # Compatibility path for records created before Acorn's
+                    # encrypted blob metadata was introduced.
+                    blob_data = retrieved_bytes
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             self.logger.warning("op=get_record_blobdata status=parse_failed kind=%s error=%s", record_kind, exc)
             return None, None

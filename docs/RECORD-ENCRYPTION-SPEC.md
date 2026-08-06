@@ -318,6 +318,22 @@ This metadata is itself inside the NIP-44 encrypted record event. Therefore,
 the blob key and IV are not visible to relays or blob storage providers unless
 they can decrypt the record metadata.
 
+### 5. Retrieve and verify an encrypted blob
+
+The encrypted record metadata, rather than a MIME type supplied by the blob
+server, determines whether decryption is required. Acorn retrieves the object
+by its encrypted-content hash and then:
+
+1. verifies the retrieved ciphertext against `blobsha256`;
+2. requires the declared algorithm to be `AES-256-GCM`;
+3. authenticates and decrypts using the protected key and IV; and
+4. verifies the resulting plaintext against `origsha256`.
+
+Any failure is an integrity error and plaintext is not returned. Records with
+no `encryptparms` remain a narrowly scoped compatibility path for genuinely
+legacy unencrypted blobs; server-reported MIME type never downgrades an
+encrypted record into that path.
+
 ## Relay-visible metadata
 
 Relay operators can observe:

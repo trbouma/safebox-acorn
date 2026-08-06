@@ -326,4 +326,27 @@ def decrypt_bytes(
 
     aesgcm = AESGCM(key)
     plaintext = aesgcm.decrypt(iv, cipherbytes, aad)
-    return plaintext  
+    return plaintext
+
+
+def decrypt_and_verify_record_blob(
+    *,
+    cipherbytes: bytes,
+    encryptparms: EncryptionParms,
+    blobsha256: str,
+    origsha256: str,
+) -> bytes:
+    """Verify and decrypt an AES-256-GCM private-record blob."""
+
+    if encryptparms.alg != "AES-256-GCM":
+        raise ValueError("unsupported encrypted blob algorithm")
+    if hashlib.sha256(cipherbytes).hexdigest() != blobsha256:
+        raise ValueError("encrypted blob ciphertext hash mismatch")
+    plaintext = decrypt_bytes(
+        cipherbytes=cipherbytes,
+        key=bytes.fromhex(encryptparms.key),
+        iv=bytes.fromhex(encryptparms.iv),
+    )
+    if hashlib.sha256(plaintext).hexdigest() != origsha256:
+        raise ValueError("encrypted blob plaintext hash mismatch")
+    return plaintext
