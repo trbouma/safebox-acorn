@@ -405,6 +405,13 @@ an Acorn component key. External assertions such as NIP-05, kind `0` metadata,
 Lightning addresses, server accounts, or operator knowledge may associate that
 key with a person, but that association is separate from cryptographic access.
 
+Current Blossom uploads are authorized with the Acorn key. A
+Blossom-compatible server may expose or authorize an author-based blob listing,
+so the Acorn public key can provide an independent path to identifying a set of
+candidate ciphertext objects even when a protected record would hide the exact
+label-to-blob mapping. The proposed protected-record profile documents optional
+per-blob authorization keys and private-network controls for this boundary.
+
 ### Attacker paths
 
 An attacker holding only a Blossom ciphertext must still obtain its random AES
@@ -642,6 +649,11 @@ Future record formats may add a versioned encryption profile such as:
 
 Any such profile must preserve recoverability and avoid silently breaking older
 clients.
+
+The proposed independent-key approach is specified separately in the
+[Protected Record Profile Design Note](PROTECTED-RECORD-PROFILE-DESIGN.md). It
+introduces a user-backed-up Record Protection Key that wraps per-record keys;
+it remains a proposal and is not implemented by the current record format.
 
 ### Deterministic tag correlation
 

@@ -14,6 +14,25 @@ provides:
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
 
+Acorn also owns the initial record-protection key primitives. Applications can
+request a fresh key from the operating-system cryptographic random source or
+derive one deterministically from separate, externally generated 256-bit
+entropy:
+
+```python
+from acorn import (
+    generate_record_protection_key,
+    record_protection_key_from_entropy,
+)
+
+rpk = generate_record_protection_key()
+external_rpk = record_protection_key_from_entropy("00" * 32)
+```
+
+These APIs provide key material only. Protected-record encryption and the
+user-facing RPK recovery ceremony remain under design; applications must not
+make records dependent on an RPK until those parts are implemented.
+
 ## Policy and rationale
 
 - [Beyond Digital Identity, Credentials and Wallets: A policy vocabulary for
@@ -25,6 +44,7 @@ without requiring the Safebox web application.
 - [Acorn Component Boundary](./docs/ACORN-COMPONENT-BOUNDARY.md)
 - [Acorn Record Model](./docs/ACORN-RECORD-MODEL.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
+- [Protected Record Profile Design](./docs/PROTECTED-RECORD-PROFILE-DESIGN.md)
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)
 - [Mint Configuration Specification](./docs/MINT-CONFIGURATION-SPEC.md)

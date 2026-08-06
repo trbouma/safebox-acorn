@@ -47,6 +47,7 @@ nav:
   - Use Acorn:
       - Deployment and Trust: deployment-and-trust.md
       - Project Status: project-status.md
+  - Mitigating AI and Quantum Attacks: mitigating-ai-and-quantum-attacks.md
   - Security: security.md
 
 markdown_extensions:

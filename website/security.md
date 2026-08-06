@@ -97,6 +97,7 @@ The complete residual-risk register, deployment guidance, disclosure process,
 and security non-claims are maintained in the repository.
 
 [Read the full SECURITY.md](https://github.com/trbouma/safebox-acorn/blob/main/SECURITY.md){ .md-button .md-button--primary }
+[Read Mitigating AI and Quantum Attacks](mitigating-ai-and-quantum-attacks.md){ .md-button }
 [View the release roadmap](https://github.com/trbouma/safebox-acorn/blob/main/docs/ROADMAP-TO-RELEASABILITY.md){ .md-button }
 
 ## Reporting a vulnerability

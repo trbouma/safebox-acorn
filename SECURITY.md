@@ -198,6 +198,30 @@ and ordinary protocol stack are not yet post-quantum resistant.** Long-lived
 records remain subject to harvest-now-decrypt-later risk until that envelope is
 replaced or augmented by a reviewed post-quantum or hybrid construction.
 
+The proposed
+[Protected Record Profile](docs/PROTECTED-RECORD-PROFILE-DESIGN.md) would add an
+independent user-backed-up symmetric key that wraps per-record keys. This could
+preserve protected-record confidentiality after compromise of the `nsec` alone,
+but it would add a separate, unrecoverable backup obligation for the user.
+Acorn now provides the narrow key-material scaffold: it can generate an RPK
+from operating-system randomness, deterministically derive one from explicitly
+supplied 256-bit entropy using a domain-separated HKDF, and validate its working
+representation. No current record is encrypted with that key; the protected
+record profile and recovery ceremony remain unimplemented.
+
+Its primary purpose is harvest-now-decrypt-later resistance: retained NIP-44
+events may become readable after a future `nsec` or secp256k1 compromise, while
+the RPK-protected inner record and its blob key should remain confidential. The
+proposal does not claim availability. A holder of the `nsec` or an infrastructure
+operator may still suppress or delete data, and current Blossom authorization
+may permit author-based blob enumeration or deletion.
+
+Sensitive deployments can reduce those availability and collection risks by
+placing relays and blob servers behind firewalls, VPNs, or private gateways with
+access controls independent of the `nsec`. This is defense in depth, not a
+replacement for replication: provider diversity, reciprocal resilience,
+encrypted backups, and tested restoration remain necessary.
+
 ### Ecash transfers and proof state
 
 - Ecash transfers use NIP-44 encryption and default to a NIP-59 kind `1059`
