@@ -31,6 +31,14 @@ The keypair provides the Acorn component's cryptographic continuity and
 authority. It is not, by itself, the civil, legal, or social identity of a
 person. Identity claims and interpretations remain outside the keypair.
 
+A signed-event history can provide verifiable evidence that the same key
+authorized particular events over time. It does not prove truth, objective
+timestamps, consciousness, or contemporaneous intent. Trust remains a
+relying-party judgment that an intentional actor governs the key, constrains any
+delegated automation, and accepts accountability for its use. A stolen or
+misused key can produce a valid signature without producing a trustworthy
+action.
+
 ## Safeguards implemented today
 
 Current safeguards include:
@@ -61,7 +69,7 @@ boundaries:
 
 | Dependency | What it controls |
 | --- | --- |
-| Key holder | Signing, decryption, spending, and recovery authority |
+| Key holder or intentional controller | Signing, decryption, spending, recovery, and delegated automation authority |
 | Execution environment | The running code and plaintext processed in memory |
 | Relay | Availability, retention, indexing, query behavior, and visible metadata |
 | Mint | Cashu issuance, redemption, and authoritative proof spend state |

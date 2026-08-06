@@ -86,6 +86,19 @@ credential, attestation, legal claim, social relationship, prior interaction,
 or some combination of them. Ultimately, a counterparty decides what those
 signals mean and whom it believes controls the key.
 
+Signed events provide a history of what the key authorized. That history can
+support continuity across applications and infrastructure, but it remains
+evidence of key use—not proof of truth or human intent. Identity is the
+counterparty's interpretation of the actor behind the continuing key and event
+history. Trust is the further judgment that an intentional actor continues to
+govern the key, controls any delegated automation, and can be relied upon or
+held accountable over time.
+
+This means a mathematically valid signature is necessary evidence for many
+protocol actions but is not sufficient evidence of trust. Theft, coercion, or
+uncontrolled software can produce valid signatures while breaking the expected
+relationship between key use and actor intent.
+
 ```text
 private key -> signing, decryption, and authorization
 public key  -> addressing, verification, and encryption to Acorn

@@ -609,13 +609,14 @@ is currently protected by a secp256k1/NIP-44 envelope. See
 [Blob security design](#blob-security-design) for the exact boundary and attack
 path.
 
-Acorn does, however, need a quantum-safe migration path because private records
+Acorn does, however, need a quantum-resistant migration path because private records
 and recovery context may be long-lived. A future-compatible posture should
 include:
 
 - cryptographic agility in record metadata;
 - explicit algorithm identifiers;
-- hybrid classical/post-quantum wrapping where practical;
+- the ability to add reviewed hybrid wrapping later without changing version
+  `1` records;
 - test vectors for every supported encryption profile;
 - optional support until compatibility is mature;
 - clear distinction between experimental PQC and stable record formats.
@@ -631,24 +632,24 @@ The desired long-term posture is:
 
 ```text
 classical compatibility now;
-hybrid protection where practical;
+practical compartmentalization now;
 post-quantum agility over premature claims.
 ```
 
-Future record formats may add a versioned encryption profile such as:
+The current architectural decision is **not to add a KEM to the Acorn component
+or its record envelope yet**. A consuming application, initially Safebox Web,
+is the appropriate place to evaluate an optional KEM-assisted exchange because
+that experiment can evolve without turning a trial algorithm into an Acorn
+storage dependency. Material passed across the Acorn boundary should remain an
+ordinary validated secret or payload; Acorn should not depend on how the
+application obtained it.
 
-```json
-{
-  "profile": "acorn-record-v2-hybrid",
-  "metadata_alg": "nip44-v2",
-  "blob_alg": "aes-256-gcm",
-  "kem_alg": "ML-KEM-768",
-  "mode": "hybrid"
-}
-```
-
-Any such profile must preserve recoverability and avoid silently breaking older
-clients.
+This placement does not make Safebox Web or Acorn post-quantum secure. Promotion
+of a KEM into a future Acorn profile would require a stable algorithm choice,
+an interoperable and downgrade-resistant envelope, recovery and migration
+semantics, known-answer and cross-implementation test vectors, supported-
+platform evidence, and independent review. Any future profile must preserve
+recoverability and avoid silently breaking older clients.
 
 The proposed independent-key approach is specified separately in the
 [Protected Record Profile Design Note](PROTECTED-RECORD-PROFILE-DESIGN.md). It

@@ -110,6 +110,25 @@ relationships, prior interactions, and what another party remembers or
 believes about the controller. Acorn may resolve, sign, encrypt, or store parts
 of that evidence, but it does not own the resulting identity judgment.
 
+Identity can therefore be understood as a continuing interpretation of keys
+and signed events in context. The key supplies a stable cryptographic reference.
+Signed events provide a verifiable history of what that key authorized. Names,
+profiles, credentials, relationships, and prior interactions help another party
+interpret whom or what that continuing authority represents.
+
+Trust adds a further judgment: whether the key and its event history remain
+under the intentional control of an actor whose conduct can reasonably be
+relied upon. Cryptography cannot prove consciousness or intent. A signature may
+have been produced by a person, an authorized service, delegated automation, a
+compromised device, or a thief. Trust therefore depends on continuity plus
+custody, context, mandate, behaviour, and accountability over time.
+
+Acorn should preserve the evidence needed to make those judgments without
+claiming to make the judgments itself. It should verify signatures, preserve
+event provenance, make recovery and rotation explicit, and keep automated
+authority bounded. Counterparties, communities, institutions, and legal systems
+remain responsible for deciding what identity and trust mean in context.
+
 A person may control more than one keypair, and more than one person or process
 may be authorized to use a key in a deliberately shared arrangement. Several
 Acorn runtimes may also operate the same keypair, subject to the concurrency
@@ -382,7 +401,7 @@ The broader controllable-record model is specified in
 [Acorn Record Model](./ACORN-RECORD-MODEL.md). The encryption details are
 specified in [Record Encryption Specification](./RECORD-ENCRYPTION-SPEC.md).
 
-### It should have a quantum-safe migration path
+### It should have a quantum-resistant migration path
 
 Acorn should be designed with long-lived records in mind. Private records,
 recovery context, and institutional documents may need to remain confidential
@@ -398,13 +417,21 @@ The right posture is:
 
 ```text
 classical compatibility now;
-hybrid protection where practical;
+practical compartmentalization now;
 post-quantum agility over premature claims.
 ```
 
 This means Acorn should treat quantum-safe cryptography as a migration and
 agility requirement, not as a slogan. Any PQC feature should be versioned,
 documented, testable, and optional until there is a stable compatibility story.
+
+Near-term progress does not require putting a KEM into Acorn. Independent
+AES-256-GCM blob keys, separation of the Acorn key from the Record Protection
+Key, and explicit recovery boundaries reduce correlated compromise using
+mature cryptography. If a KEM is trialled, Safebox Web is currently the right
+application boundary for that experiment. It should move into Acorn only after
+the algorithm, envelope, interoperability, migration, and review requirements
+are mature enough to become a protocol commitment.
 
 ### It supports value transfer
 

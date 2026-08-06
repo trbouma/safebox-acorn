@@ -130,6 +130,14 @@ downgrade resistance, recovery, test vectors, dependency provenance, and
 independent review all matter. Cryptographic agility is the capability to make
 that migration safely—not a label applied in advance.
 
+The current boundary therefore keeps KEM experiments out of the ordinary Acorn
+component and its persisted record formats. Practical progress comes first from
+independent AES-256-GCM blob keys, separation of the Acorn key from the Record
+Protection Key, and recoverable compartment boundaries. If a KEM is evaluated,
+it belongs initially to Safebox Web as an optional application-layer experiment.
+Acorn should receive only the resulting validated secret or payload, without
+depending on the experimental mechanism that produced it.
+
 [Read the Cryptographic Evolution Roadmap](https://github.com/trbouma/safebox-acorn/blob/main/docs/ROADMAP-TO-RELEASABILITY.md){ .md-button }
 [Read the Recovery Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RECOVERY-SPEC.md){ .md-button }
 

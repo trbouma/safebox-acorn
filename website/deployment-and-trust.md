@@ -13,6 +13,13 @@ Every deployment has a trust boundary. User control does not come from hiding
 that boundary; it comes from making it explicit and preserving continuity when
 the surrounding operator or infrastructure changes.
 
+This page primarily describes **operational reliance**: which systems and
+operators must behave correctly. That is distinct from trust in an actor. In
+the actor-centred sense, trust is a counterparty's willingness to rely on the
+belief that a key and its signed history remain under the intentional control
+of a person or accountable organization over time. A relay or operator may be
+an essential dependency without being the actor represented by the key.
+
 ## The roles are separate
 
 ```text

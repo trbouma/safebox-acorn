@@ -13,6 +13,20 @@ Lightning address, credential, relationship, legal record, or prior
 interaction. Possession of the keypair alone proves control of the key, not who
 the controller is.
 
+Signed events make that control observable as a cryptographically verifiable
+history. They show that the key authorized particular event bytes and allow
+state and provenance to continue across relays. They do not prove that the
+content is true, that the declared timestamp is objective, or that a conscious
+actor personally intended the action. Identity is a counterparty's contextual
+interpretation of the key and its history. Trust is the further judgment that
+an intentional actor continues to govern that key—including any delegated
+software—and can be relied upon or held accountable over time.
+
+This matters for controllable records. Valid key authorization is necessary for
+many operations, but the meaning of an issued, presented, transferred, or
+revoked record also depends on issuer rules, holder intent, delegation,
+counterparty recognition, and applicable legal context.
+
 This model has two major record classes:
 
 - transferable records, where control can move from one wallet to another; and

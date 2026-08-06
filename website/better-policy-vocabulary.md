@@ -82,6 +82,39 @@ funds, and records it operates upon.
 
 </div>
 
+## From keys to identity and trust
+
+A clearer chain is:
+
+```text
+keys          -> cryptographic authority
+signed events -> verifiable continuity and evidence over time
+identity      -> an interpretation of the actor behind that continuity
+trust         -> reliance on intentional control and accountability over time
+```
+
+A signature proves that a key authorized exact event bytes. It does not prove
+that the event is true or that a conscious actor personally intended it. A
+history of signed events can strengthen continuity and provide evidence of
+prior conduct, but it remains evidence of key use.
+
+Trust arises when another party believes that the key remains governed by an
+intentional actor—a person, or people acting through an organization—and that
+the actor can be relied upon or held accountable. Software and AI agents may
+exercise delegated authority, but their signatures do not prove consciousness.
+Trust in their actions depends on who authorized, constrained, supervised, and
+accepted responsibility for them.
+
+This is why key compromise, coercion, or uncontrolled automation can produce a
+valid signature without producing a trustworthy action. It is also why recovery
+and rotation need recognized continuity evidence rather than merely a new key.
+
+Trust in an actor is distinct from operational reliance on infrastructure. A
+relay, mint, application, or hosted operator may need to behave correctly, but
+that dependency does not make it the actor represented by a key. Good policy
+asks both who intentionally controls the authority and which systems must work
+for that authority to remain useful.
+
 ## Start with the resources
 
 | Resource | What it represents | Questions policy should ask |
@@ -130,6 +163,8 @@ initiative, ask:
 3. Which issuer, institution, protocol, or legal framework gives it validity
    or recognition?
 4. What evidence supports identity, intent, control, and transaction history?
+   Who is the intentional actor, and is any signing authority delegated to
+   software or an AI agent?
 5. Can the resources be recovered and used through another application,
    device, provider, or infrastructure operator?
 6. What happens when one of those systems becomes unavailable?

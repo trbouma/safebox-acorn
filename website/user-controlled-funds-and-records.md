@@ -33,6 +33,12 @@ attestations, relationships, prior interactions, or legal claims. Those
 associations are external interpretations and are not implied by possession of
 the key alone.
 
+A history of signed events can provide verifiable continuity and evidence of
+key use. It cannot prove that the content is true or that a conscious actor
+personally intended each action. Identity is interpreted from that continuity
+and its surrounding context; trust is the further judgment that an intentional
+actor governs the key and any delegated automation over time.
+
 ## The controllable-record model
 
 A controllable record is a protocol object whose useful state includes not only

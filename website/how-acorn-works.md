@@ -49,6 +49,13 @@ party may associate the public key with a NIP-05 name, kind `0` profile,
 Lightning address, credentials, relationships, prior interactions, and its own
 understanding of the controller.
 
+Signed events make the key's use verifiable over time, but a signature remains
+evidence of authorization—not proof of truth, consciousness, or intent.
+Identity is another party's contextual interpretation of the actor behind that
+continuity. Trust is its judgment that an intentional actor continues to govern
+the key, including any delegated automation, and accepts accountability for its
+use.
+
 ## Funds and records are controlled objects
 
 Keys supply cryptographic continuity and authority. Funds and records are the

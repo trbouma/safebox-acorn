@@ -124,6 +124,9 @@ poetry install -E post-quantum
 
 This extra enables the experimental `acorn.post_quantum.PQEvent` implementation.
 It is not used by ordinary wallet, record, relay, mint, or ecash operations.
+It does not enable a KEM or change Acorn's ordinary record and blob formats.
+KEM experiments are currently an application-layer concern for Safebox Web,
+not a dependency or protocol commitment of Acorn.
 
 ## Smoke test
 

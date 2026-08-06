@@ -28,6 +28,9 @@ That model gives Acorn several useful properties:
   state.
 - **Events can be verified independently.** A valid signature remains
   verifiable regardless of which relay returned the event.
+- **Events can evidence continuity over time.** A history of events signed by
+  the same key can show prior key use, relationships, and protocol actions even
+  when storage providers change.
 - **Storage is separable from authority.** A relay can store encrypted,
   signed state without possessing the private key that controls it.
 - **The same event can have more than one home.** Signed events can be copied to
@@ -108,6 +111,25 @@ service, FreeBSD jail, dedicated appliance, or future hardware-backed system.
 The surrounding experience can change while the component keys and
 recoverable state continue.
 
+## Signatures are evidence, not intent
+
+Nostr makes key authority and signed history unusually visible, but it does not
+collapse identity or trust into cryptography. A valid event signature proves
+that a key authorized the event bytes. It does not prove that the event content
+is true, that its declared timestamp is independently established, or that a
+conscious actor personally intended the action.
+
+Identity is interpreted when a counterparty associates a key and its signed
+history with a person, organization, role, or component in context. Trust is the
+further decision to rely on the belief that an intentional actor continues to
+govern that key and accepts accountability for its use. Automated clients and
+AI agents can use delegated keys, but the trust question remains who authorized,
+bounded, supervised, and can revoke that delegation.
+
+This distinction is essential to Acorn's protocol-first model: Nostr preserves
+portable evidence, while people, communities, institutions, and legal systems
+decide what that evidence means.
+
 ## Nostr-native does not mean Nostr-only
 
 Acorn should not become dependent on protocol branding for its architectural
@@ -137,6 +159,8 @@ A Nostr-native design does not mean that:
 
 - a public key proves the civil or legal identity of a person;
 - a signature proves that every claim in a record is true;
+- a signature proves consciousness, contemporaneous intent, or uncompromised
+  key custody;
 - encryption eliminates metadata exposure;
 - every relay is suitable for wallet state;
 - a relay validates whether ecash is spendable;

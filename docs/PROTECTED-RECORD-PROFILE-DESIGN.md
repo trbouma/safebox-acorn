@@ -86,6 +86,12 @@ recovery obligation. Loss of the RPK means permanent loss of protected records.
 - Preserve protected-record confidentiality against collection now followed by
   future compromise of the classical `nsec` envelope.
 
+These goals deliberately begin with symmetric-key separation rather than a KEM.
+Independent per-blob AES-256-GCM keys and an independently backed-up RPK create
+a practical compartment boundary using mature primitives. A future algorithm
+can be added at a versioned boundary without making today's Acorn component or
+stored records depend on an experimental KEM.
+
 ## Non-goals
 
 - Protecting plaintext from a compromised process while it is being used.
@@ -99,6 +105,9 @@ recovery obligation. Loss of the RPK means permanent loss of protected records.
   execution provider.
 - Shipping experimental post-quantum algorithms without independent review and
   interoperability tests.
+- Implementing a KEM inside the Acorn component at this stage. Optional KEM
+  experiments currently belong to Safebox Web's application boundary and must
+  not define the Acorn record format.
 
 ## Terminology
 

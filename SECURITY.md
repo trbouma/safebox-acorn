@@ -76,6 +76,20 @@ relationships, and what another party recognizes or believes about the
 controller. Those associations are claims and judgments, not properties
 proven by possession of the key.
 
+Signed events provide evidence of key use over time. They can establish that a
+key authorized exact event bytes and can support continuity when counterparties
+recognize the same key and history. They do not prove that event content is
+true, that a timestamp is objective, or that a conscious actor personally
+intended the action. Acorn treats trust as an external relying-party judgment:
+the belief that an intentional actor continues to control the key, governs any
+delegated automation, and can be held accountable for its authorized use.
+
+A valid signature can survive key theft, coercion, or misuse by an over-broad
+automation mandate. Security controls must therefore protect the custody and
+execution path around the key, preserve explicit confirmation for consequential
+actions, and make delegation, recovery, and rotation visible where another
+party relies on continuity.
+
 ## Trust model
 
 Acorn separates key, code, and data, but this separation does not eliminate
@@ -83,7 +97,7 @@ trust. Each layer has a different role.
 
 | Layer | Role | What must be trusted |
 | --- | --- | --- |
-| Key holder | Authorizes signing, decryption, spending, and recovery | The key-generation process, backup method, and device or secret store |
+| Key holder or intentional controller | Authorizes signing, decryption, spending, recovery, and any delegated automation | The key-generation process, backup method, custody environment, delegation limits, and continued alignment between valid key use and the actor's intent |
 | Execution environment | Runs Acorn code and handles plaintext in memory | The operating system, Python runtime, installed package, application, and operator |
 | Relay | Stores and returns signed encrypted events | Availability, retention, indexing, query correctness, and censorship policy |
 | Mint | Issues and validates Cashu proofs | Correct issuance, redemption, spend-state reporting, availability, and operational integrity |
@@ -382,6 +396,23 @@ not require or load it.
 The optional `PQEvent` code is experimental. Acorn's normal Nostr key handling,
 NIP-44 record encryption, and Cashu interoperability continue to use classical
 cryptography. Acorn must not currently be described as quantum-safe.
+
+Acorn does not currently implement a key-encapsulation mechanism (KEM) in its
+stable component API or persisted record formats. That omission is deliberate.
+Independent AES-256-GCM blob keys, separation of the Acorn key from the RPK,
+and the proposed RPK wrapping profile provide practical compartmentalization
+without making ordinary Acorn installation or interoperability depend on a new
+post-quantum algorithm. The optional `PQEvent` signature experiment is not a
+KEM and must not be presented as one.
+
+If a KEM is evaluated now, the experiment belongs at the consuming-application
+boundary, initially Safebox Web. It must remain optional, versioned, and
+separate from ordinary Acorn records. Safebox Web may hand Acorn an ordinary
+validated secret or payload produced by that experiment, but Acorn should not
+need to know whether the material came from a KEM, secure hardware, a hidden
+form, or another trusted source. Moving a KEM into Acorn would require a stable
+algorithm choice, interoperable envelope, test vectors, downgrade and migration
+rules, recovery semantics, supported-platform evidence, and independent review.
 
 ### AI-enabled attack scaling
 

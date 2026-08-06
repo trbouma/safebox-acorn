@@ -68,7 +68,7 @@ This follows the architectural inversion described in
 be replaceable interfaces over user-controlled protocol state, not the only
 system of record for the user's keys, funds, records, or recovery path.
 
-### Keys, identifiers, and identity
+### Keys, signed events, identity, and trust
 
 Acorn holds and uses a Nostr public/private keypair. The public key provides a
 stable protocol identifier and address; control of the private key provides
@@ -86,6 +86,41 @@ The keypair and its authority can continue across replacement processes,
 devices, applications, and operators. A seed phrase is recovery material for
 the keypair. NIP-05 names, profiles, credentials, and real-world identity
 assertions remain separate records, claims, and external interpretations.
+
+Signed events add an observable history to that key authority. Each valid
+signature proves that the corresponding key authorized the exact event bytes.
+A sequence of such events can provide evidence of continuity, prior action,
+relationships, and protocol state over time. It does not prove that an event's
+timestamp is objectively correct, that its content is true, or that a conscious
+actor personally formed the intent expressed by the event.
+
+Acorn therefore separates four layers:
+
+| Layer | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Keypair | A protocol identifier and the capability to exercise cryptographic authority | The human, organization, or role behind the key |
+| Signed-event history | Verifiable evidence that the same key authorized particular events | Truth, legal effect, contemporaneous human intent, or uncompromised custody |
+| Identity interpretation | A counterparty's association of the key and its history with an actor in context | Universal recognition by every other party |
+| Trust judgment | A relying party's willingness to rely on the belief that an intentional actor controls the key over time and is accountable for its authorized use | A cryptographic guarantee of consciousness, honesty, competence, or future conduct |
+
+Here, an **intentional actor** is a person, or a group of people acting through
+an organization, capable of forming purposes and accepting responsibility.
+Software and AI agents may exercise delegated key authority, but their signed
+events are evidence of the key's use—not proof that the software is conscious.
+Trust in automation depends on the mandate, constraints, supervision, and
+accountability supplied by an intentional actor.
+
+Compromise, coercion, undisclosed delegation, or uncontrolled automation can
+preserve valid signatures while breaking the intended trust relationship. Key
+rotation or recovery likewise preserves identity continuity only when the
+transition is credibly authorized and recognized; mathematical possession of a
+new key is not enough by itself.
+
+This actor-centred use of trust does not replace Acorn's operational trust
+model. Relays, mints, applications, proxies, and execution providers remain
+dependencies that must behave correctly within disclosed limits. Operational
+reliance answers *which infrastructure must work*; actor trust answers *whose
+intentional control and accountability a counterparty is prepared to rely on*.
 
 Acorn owns:
 

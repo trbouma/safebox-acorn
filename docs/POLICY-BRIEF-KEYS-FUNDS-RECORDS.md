@@ -36,6 +36,13 @@ keys, funds and records
   transaction histories, configuration, operational state, and transferable
   electronic records.
 
+Keys and signed events also clarify the boundary between identity and trust. A
+key supplies cryptographic authority; signed events provide evidence of that
+authority being exercised over time. Identity is the contextual interpretation
+of the actor behind that continuity. Trust is a relying party's judgment that
+an intentional actor continues to govern the key and can be relied upon or held
+accountable. None of those human judgments is produced by a signature alone.
+
 This vocabulary does not abolish identity, credentials, wallets, or payments.
 It puts them in their proper places: identity is an interpretation and
 recognition problem; credentials and payment instructions are particular kinds
@@ -116,6 +123,55 @@ Policy should therefore ask how keys are generated, protected, delegated,
 rotated, recovered, and replaced—and separately ask what identity or legal
 meaning others attach to them.
 
+### From key control to identity and trust
+
+Digital systems often compress a longer chain of reasoning into the statement
+that an identity has signed something. A more precise model is:
+
+```text
+keypair
+  -> cryptographic authority
+signed events over time
+  -> verifiable continuity and evidence of key use
+identity
+  -> contextual interpretation of the actor behind that continuity
+trust
+  -> willingness to rely on intentional control and accountability over time
+```
+
+A signature proves that a key authorized exact bytes. A continuing series of
+signed events can provide useful evidence of provenance, relationships, prior
+conduct, and protocol state. Neither proves that the content is true, that the
+event timestamp is independently established, or that a conscious actor
+personally intended the action.
+
+For this brief, an **intentional actor** is a person, or people acting through
+an organization, capable of forming purposes and accepting responsibility.
+Software and AI agents can exercise delegated authority, but a valid signature
+does not prove that the software is conscious. Trust in an automated action is
+ultimately trust in the actor who authorized, constrained, supervised, or
+accepted accountability for that automation.
+
+Trust is therefore not stored inside a key or produced automatically by a
+signature. It is a relying party's judgment that a key and its signed history
+remain under intentional control and that the controller's mandate, behaviour,
+and accountability are sufficient for the decision at hand. Key theft,
+coercion, hidden delegation, or uncontrolled automation can preserve perfectly
+valid signatures while breaking that trust relationship.
+
+This layered model also makes rotation and recovery clearer. A new key can
+continue an existing identity or trust relationship only when the transition is
+credibly authorized and recognized. Possession of replacement key material is
+not, by itself, proof of continuity.
+
+This use of **trust** should be distinguished from **operational reliance**.
+A system may depend on a relay for availability, a mint for spend-state
+validity, or an application operator for correct execution. Those are important
+trust dependencies, but they are not evidence that the provider is the actor
+represented by a key. Policy should name both questions: who intentionally
+controls an authority over time, and which infrastructure must behave correctly
+for that authority to be useful.
+
 ### Funds
 
 Funds are controlled units or claims of value. Depending on the system, their
@@ -189,6 +245,14 @@ Identity systems should state precisely what a key, identifier, credential, or
 authentication event proves. Possession of a key proves control of that key at
 a point in time; it should not silently become proof of a person's legal or
 social identity. Recognition and liability rules must remain explicit.
+
+Policy should also distinguish signed-event continuity from intentional
+control. Systems should disclose whether consequential signatures are produced
+directly by a person, by an organization, or by delegated automation; how that
+authority is constrained and revoked; and what evidence supports recovery or
+key rotation. Trust frameworks should identify the actor expected to exercise
+intent and bear accountability rather than attributing intent to the key
+itself.
 
 ### 4. Treat credentials as a record profile
 
