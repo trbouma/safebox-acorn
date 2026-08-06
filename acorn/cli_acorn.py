@@ -48,6 +48,7 @@ from acorn.config import (
     load_config,
     write_config as persist_config,
 )
+from acorn.func_utils import normalize_mint_url
 from acorn.prompts import (
     WELCOME_MSG,
     INFO_HELP,
@@ -79,10 +80,7 @@ def _normalize_relay(relay: str) -> str:
 
 
 def _normalize_mint(mint: str) -> str:
-    mint = str(mint).strip()
-    if mint.startswith(("https://", "http://")):
-        return mint
-    return f"https://{mint}"
+    return normalize_mint_url(mint)
 
 
 def _split_csv(value: str) -> list[str]:
@@ -1239,9 +1237,9 @@ def deposit(amount: int, mint:str):
     qr = qrcode.QRCode()
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS,home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
-    effective_mint = _normalize_mint(mint) if mint else acorn_obj.home_mint
+    effective_mint = _normalize_mint(mint or acorn_obj.home_mint)
     click.echo(f"amount: {amount} mint:{effective_mint}")
-    cli_quote = acorn_obj.deposit(amount, mint)
+    cli_quote = acorn_obj.deposit(amount, effective_mint)
     qr.add_data(cli_quote.invoice)
     qr.make(fit=True)
     click.echo(f"\n\nQuote:\n{cli_quote.quote}\n") 
@@ -1255,7 +1253,9 @@ def deposit(amount: int, mint:str):
 
     while time() < end_time:
         click.echo("checking...")
-        success, lninvoice = asyncio.run(acorn_obj.check_quote(cli_quote.quote, int(amount), mint))
+        success, lninvoice = asyncio.run(
+            acorn_obj.check_quote(cli_quote.quote, int(amount), effective_mint)
+        )
         if success:
             break
         sleep(3)

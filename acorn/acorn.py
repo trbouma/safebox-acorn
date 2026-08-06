@@ -42,6 +42,7 @@ from acorn.func_utils import (
     decrypt_and_verify_record_blob,
     decrypt_bytes,
     encrypt_bytes,
+    normalize_mint_url,
     npub_to_hex,
 )
 
@@ -224,11 +225,14 @@ class Acorn:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging_level)  
         # Configure the logger's handler and format
-        if not self.logger.hasHandlers():
+        if not self.logger.handlers:
             handler = logging.StreamHandler()  # Output to console
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
+        # This logger owns its console handler. Propagating the same record to
+        # the root logger produces duplicate CLI messages under Poetry/pytest.
+        self.logger.propagate = False
 
         
         access_key_digest = hashlib.sha256()    
@@ -272,7 +276,7 @@ class Acorn:
             self.privkey_hex    =   self.k.private_key_hex()
             self.relays         =   relays
             self.public_relays  =   public_relays or []
-            self.mints          =   mints or [DEFAULT_HOME_MINT]
+            self.mints          =   [normalize_mint_url(each) for each in (mints or [DEFAULT_HOME_MINT])]
             self.home_mint      =   self.mints[0]
             self.safe_box_items = []
             self.proofs: List[Proof] = []
@@ -698,7 +702,7 @@ class Acorn:
                     self.balance = int(each[1])
                     self.unit = each[2]
                 if each[0] == "mint":
-                    self.home_mint = each[1]
+                    self.home_mint = normalize_mint_url(each[1])
                     # print(f"home mint: {self.home_mint}")
                 if each[0] == "name":
                     self.name = each[1]
@@ -4220,6 +4224,7 @@ class Acorn:
         relays: List[str] | str | None = None,
         verify_timeout: float = 8.0,
         return_result: bool = False,
+        preserve_existing_blob: bool = False,
     ):
         if record_origin:
             record_name = ':'.join([record_origin,record_name])
@@ -4241,6 +4246,21 @@ class Acorn:
         encrypt_parms = None
         blob_ref = None
         sha256 = None
+        existing_blob = None
+        if preserve_existing_blob:
+            try:
+                candidate = await self.get_record_safebox(
+                    record_name=record_name,
+                    record_kind=record_kind,
+                    relays=relays,
+                )
+            except ValueError as exc:
+                if "No event found" not in str(exc):
+                    raise
+            else:
+                if candidate.blobref:
+                    existing_blob = candidate
+
         if blob_data:
             self.logger.debug("op=put_record status=blob_upload_start")
             origsha256 = hashlib.sha256(blob_data).hexdigest()
@@ -4273,6 +4293,15 @@ class Acorn:
                 "op=put_record status=blob_uploaded sha256=%s",
                 sha256,
             )
+        elif existing_blob is not None:
+            # Updating a record's payload must not silently detach its existing
+            # encrypted attachment. The relay record remains authoritative for
+            # the attachment metadata and decryption material.
+            blob_ref = existing_blob.blobref
+            mime_type_guess = existing_blob.blobtype
+            sha256 = existing_blob.blobsha256
+            origsha256 = existing_blob.origsha256
+            encrypt_parms = existing_blob.encryptparms
 
         record_obj = SafeboxRecord(
             tag=[record_name],
@@ -4309,6 +4338,34 @@ class Acorn:
         # rebuildable compatibility cache and is updated only after readback.
         await self.update_tags([["user_record", record_name, record_type]])
         await self.set_wallet_config()
+
+        replaced_blob_cleanup = None
+        if (
+            existing_blob is not None
+            and blob_data
+            and existing_blob.blobsha256
+            and existing_blob.blobsha256 != sha256
+        ):
+            replaced_blob_cleanup = {
+                "sha256": existing_blob.blobsha256,
+                "deleted": False,
+                "servers": [],
+            }
+            client = BlossomClient(
+                nsec=self.privkey_bech32,
+                default_servers=self.blossom_servers,
+            )
+            for server in self.blossom_servers:
+                try:
+                    client.delete_blob(server=server, sha256=existing_blob.blobsha256)
+                    replaced_blob_cleanup["servers"].append(
+                        {"server": server, "deleted": True}
+                    )
+                    replaced_blob_cleanup["deleted"] = True
+                except Exception as exc:
+                    replaced_blob_cleanup["servers"].append(
+                        {"server": server, "deleted": False, "error": str(exc)}
+                    )
         if return_result:
             return {
                 "status": "OK",
@@ -4320,6 +4377,7 @@ class Acorn:
                 "verification": publish_result["verification"],
                 "blobref": blob_ref,
                 "blobsha256": sha256,
+                "replaced_blob_cleanup": replaced_blob_cleanup,
             }
         return record_name
     
@@ -4360,10 +4418,8 @@ class Acorn:
             lock_acquired = True
             headers = { "Content-Type": "application/json"}
             timeout = httpx.Timeout(20.0, connect=5.0)
-            if mint:
-                keyset_url = f"https://{mint}/v1/keysets"
-            else:
-                keyset_url = f"{self.home_mint}/v1/keysets"
+            mint_base_url = normalize_mint_url(mint or self.home_mint)
+            keyset_url = f"{mint_base_url}/v1/keysets"
 
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(keyset_url, headers=headers)
@@ -4373,10 +4429,7 @@ class Acorn:
                 keyset = keysets_json['keysets'][0]['id']
                 keysets_obj = KeysetsResponse(**keysets_json)
 
-            if mint:
-                self.known_mints[keysets_obj.keysets[0].id]= f"https://{mint}"
-            else:
-                self.known_mints[keysets_obj.keysets[0].id]= self.home_mint
+            self.known_mints[keysets_obj.keysets[0].id] = mint_base_url
 
             # print("id:", keysets_obj.keysets[0].id)
 
@@ -4398,10 +4451,7 @@ class Acorn:
                                                             
                                         )
             # print("blinded values, blinded messages:", blinded_values, blinded_messages)
-            if mint:
-                mint_url = f"https://{mint}/v1/mint/bolt11"
-            else:
-                mint_url = f"{self.home_mint}/v1/mint/bolt11"
+            mint_url = f"{mint_base_url}/v1/mint/bolt11"
 
 
             # blinded_message = BlindedMessage(amount=amount,id=keyset,B_=B_.serialize().hex())
@@ -4420,10 +4470,7 @@ class Acorn:
            
 
             
-            if mint:
-                mint_key_url = f"https://{mint}/v1/keys/{keyset}"
-            else:
-                mint_key_url = f"{self.home_mint}/v1/keys/{keyset}"
+            mint_key_url = f"{mint_base_url}/v1/keys/{keyset}"
 
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(mint_key_url, headers=headers)
@@ -4494,10 +4541,8 @@ class Acorn:
         success_mint = True  
         lninvoice = None  
           
-        if mint:
-            url = f"https://{mint}/v1/mint/quote/bolt11/{quote}"
-        else:
-             url = f"{self.home_mint}/v1/mint/quote/bolt11/{quote}" 
+        mint_base_url = normalize_mint_url(mint or self.home_mint)
+        url = f"{mint_base_url}/v1/mint/quote/bolt11/{quote}"
 
         self.logger.debug("op=check_quote status=request mint=%s", mint or self.home_mint)
 
@@ -4521,7 +4566,7 @@ class Acorn:
         if mint_quote.paid == True:
             self.logger.debug("op=check_quote status=paid amount=%s", amount)
             try:
-                success_mint = await self._mint_proofs(mint_quote.quote, amount, mint)
+                success_mint = await self._mint_proofs(mint_quote.quote, amount, mint_base_url)
             except (RuntimeError, httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
                 # Treat minting failures as transient so polling can continue and/or timeout cleanly.
                 self.logger.warning(
@@ -4542,13 +4587,8 @@ class Acorn:
         # return await self._check_quote(quote, amount,mint)
     
     async def async_deposit(self, amount:int, mint:str = None)->cliQuote:
-        
-        #FIXME parameter passing with scheme
-        if mint:
-            mint = mint.replace("https://","")
-            url = f"https://{mint}/v1/mint/quote/bolt11"
-        else:
-            url = f"{self.home_mint}/v1/mint/quote/bolt11"
+        mint_base_url = normalize_mint_url(mint or self.home_mint)
+        url = f"{mint_base_url}/v1/mint/quote/bolt11"
        
         headers = { "Content-Type": "application/json"}
         mint_request = mintRequest(amount=amount)
@@ -4579,22 +4619,20 @@ class Acorn:
 
         wallet_quote_list =[]
         
-        success, lninvoice = await self.poll_for_payment(quote=quote, amount=amount, mint=url)
+        success, lninvoice = await self.poll_for_payment(
+            quote=quote,
+            amount=amount,
+            mint=mint_base_url,
+        )
 
         return success, lninvoice 
         
        
     
     def deposit(self, amount:int, mint:str = None)->cliQuote:
-        
-        #FIXME parameter passing with scheme
+        mint_base_url = normalize_mint_url(mint or self.home_mint)
+        url = f"{mint_base_url}/v1/mint/quote/bolt11"
         try:
-            if mint:
-                mint = mint.replace("https://","")
-                url = f"https://{mint}/v1/mint/quote/bolt11"
-            else:
-                url = f"{self.home_mint}/v1/mint/quote/bolt11"
-            
             headers = { "Content-Type": "application/json"}
             mint_request = mintRequest(amount=amount)
             mint_request_dump = mint_request.model_dump()
@@ -4613,6 +4651,11 @@ class Acorn:
                         headers=headers,
                         timeout=(connect_timeout, read_timeout),
                     )
+                    status_code = getattr(response, "status_code", 200)
+                    if 400 <= status_code < 500 and status_code not in (408, 429):
+                        raise RuntimeError(
+                            f"Mint quote request was rejected with HTTP {status_code} at {url}"
+                        )
                     response.raise_for_status()
                     break
                 except requests.exceptions.RequestException as exc:
@@ -4627,8 +4670,15 @@ class Acorn:
                     if attempt < attempts:
                         sleep(0.4 * attempt)
                         continue
+                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                    if status_code is not None:
+                        raise RuntimeError(
+                            f"Mint quote request failed after {attempts} attempts with HTTP "
+                            f"{status_code} at {url}"
+                        ) from exc
                     raise RuntimeError(
-                        f"Mint quote endpoint unreachable or timed out at {url}"
+                        f"Mint quote endpoint was unreachable or timed out after {attempts} "
+                        f"attempts at {url}"
                     ) from exc
 
             if response is None:
@@ -4645,8 +4695,9 @@ class Acorn:
             wallet_quote_list =[]
             
 
+        except RuntimeError:
+            raise
         except (
-            RuntimeError,
             ValueError,
             TypeError,
             KeyError,
@@ -4655,7 +4706,7 @@ class Acorn:
             httpx.HTTPError,
             requests.exceptions.RequestException,
         ) as e:
-            raise RuntimeError(f"The is a error with the deposit {e}")
+            raise RuntimeError(f"Deposit failed for mint {mint_base_url}: {e}") from e
          
         return cliQuote(invoice=invoice, quote=quote, mint_url=url)
         # return f"Please pay invoice \n{invoice} \nfor quote: \n{quote}."
@@ -4665,13 +4716,15 @@ class Acorn:
         end_time = start_time + 120  # Set the loop to run for 120 seconds
         success = False
         lninvoice = None
-        #FIXME figure out the prefit
-        if mint:
-            mint = mint.replace("https://","")
+        mint_base_url = normalize_mint_url(mint or self.home_mint)
 
         while time() < end_time:
-            self.logger.debug("op=poll_for_payment status=checking amount=%s mint=%s", amount, mint)
-            success, lninvoice = await self.check_quote(quote=quote, amount=amount, mint=mint)
+            self.logger.debug("op=poll_for_payment status=checking amount=%s mint=%s", amount, mint_base_url)
+            success, lninvoice = await self.check_quote(
+                quote=quote,
+                amount=amount,
+                mint=mint_base_url,
+            )
             if success:
                 self.logger.info("op=poll_for_payment status=paid amount=%s", amount)
                 break

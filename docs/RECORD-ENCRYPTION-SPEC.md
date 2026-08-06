@@ -264,6 +264,27 @@ configured blob server.
 ## Blob encryption
 
 If a record includes binary blob data, Acorn adds a second encryption layer.
+The blob is an optional attachment to the private record, not a separate
+user-facing record class. A record continues to have one label, payload, and
+relay event whether or not an attachment is present.
+
+### Update and replacement semantics
+
+Callers that update a record through `put_record(...,
+preserve_existing_blob=True)` receive safe attachment behavior:
+
+- when `blob_data` is omitted, Acorn reads the existing record and carries its
+  blob reference, hashes, media type, and decryption parameters into the new
+  record event;
+- when new `blob_data` is supplied, Acorn encrypts and publishes the new
+  attachment, verifies the updated relay record, and only then attempts to
+  delete the superseded ciphertext from configured Blossom servers;
+- a failed relay publication removes the newly uploaded ciphertext on a
+  best-effort basis and leaves the old canonical record unchanged.
+
+This opt-in behavior prevents an ordinary payload edit from silently orphaning
+or detaching an existing encrypted attachment. Interfaces such as Safebox Web
+should use the preservation option for unified add/update record forms.
 
 ### 1. Generate a random blob key
 

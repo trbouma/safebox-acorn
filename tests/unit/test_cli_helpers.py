@@ -36,6 +36,8 @@ def test_normalize_mint_adds_https(monkeypatch, tmp_path):
     assert cli._normalize_mint("mint.example.com") == "https://mint.example.com"
     assert cli._normalize_mint("https://mint.example.com") == "https://mint.example.com"
     assert cli._normalize_mint("http://localhost:3338") == "http://localhost:3338"
+    assert cli._normalize_mint("https://mint.example.com/") == "https://mint.example.com"
+    assert cli._normalize_mint("testnut.cashu.space///") == "https://testnut.cashu.space"
 
 
 def test_split_csv_trims_spaces(monkeypatch, tmp_path):

@@ -23,6 +23,24 @@ import os
 Tag = List[str]
 Tags = List[Tag]
 
+
+def normalize_mint_url(mint: str) -> str:
+    """Return a canonical HTTP(S) mint base URL without trailing slashes."""
+    normalized = str(mint).strip()
+    if not normalized:
+        raise ValueError("Mint URL is required.")
+    if not normalized.startswith(("https://", "http://")):
+        normalized = f"https://{normalized}"
+
+    parsed = urllib.parse.urlsplit(normalized)
+    if parsed.scheme not in ("https", "http") or not parsed.netloc:
+        raise ValueError(f"Invalid mint URL: {mint}")
+    if parsed.query or parsed.fragment:
+        raise ValueError("Mint URL must not include a query string or fragment.")
+
+    path = parsed.path.rstrip("/")
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, path, "", ""))
+
 def get_tag_value(tags: Tags, key: str) -> Optional[str]:
     """
     Retrieve the value for a given key from a tag list.

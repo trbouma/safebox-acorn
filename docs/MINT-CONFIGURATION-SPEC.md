@@ -94,7 +94,7 @@ record as a tag:
 On startup, `load_data()` reads the encrypted wallet record and sets:
 
 ```python
-self.home_mint = each[1]
+self.home_mint = normalize_mint_url(each[1])
 ```
 
 where `each` is the wallet tag whose first value is `"mint"`.
@@ -104,7 +104,7 @@ where `each` is the wallet tag whose first value is `"mint"`.
 When an `Acorn` object is created, it initializes:
 
 ```python
-self.mints = mints or [DEFAULT_HOME_MINT]
+self.mints = [normalize_mint_url(mint) for mint in (mints or [DEFAULT_HOME_MINT])]
 self.home_mint = self.mints[0]
 ```
 
@@ -161,15 +161,37 @@ Mint values are normalized as follows:
 - leading and trailing whitespace is removed;
 - if the value starts with `https://`, keep it;
 - if the value starts with `http://`, keep it;
-- otherwise prefix `https://`.
+- otherwise prefix `https://`;
+- remove trailing `/` characters from the base URL;
+- reject query strings, fragments, and values without a valid HTTP(S) host.
 
 Examples:
 
 ```text
 mint.getsafebox.app          -> https://mint.getsafebox.app
 https://mint.getsafebox.app  -> https://mint.getsafebox.app
+https://mint.example.com/    -> https://mint.example.com
 http://localhost:3338        -> http://localhost:3338
 ```
+
+Normalization happens inside the Acorn component as well as at the CLI. This
+is important because a home mint loaded from older relay-backed wallet state
+may contain a trailing slash. Endpoint paths are always appended to the
+canonical base URL, preventing malformed paths such as `//v1/mint/quote/bolt11`.
+
+## Quote failure and retry behavior
+
+Creating a deposit quote distinguishes transient availability problems from
+permanent request failures:
+
+- connection failures, timeouts, HTTP 408, HTTP 429, and server-side HTTP 5xx
+  responses receive a bounded retry;
+- other HTTP 4xx responses are treated as permanent and fail immediately;
+- the error reports the HTTP status and canonical endpoint without incorrectly
+  describing a permanent rejection as a timeout.
+
+This avoids repeatedly sending a request that the mint has already rejected,
+while retaining limited recovery from temporary network and service failures.
 
 ## Deposit success output
 
