@@ -5,6 +5,12 @@ description: Product positioning for Safebox as a digital go-bag for emergency f
 
 # Safebox and the digital go-bag
 
+![Concept illustration of a compact Safebox appliance ready to be packed beside an open go-bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.png)
+
+*An illustrative product concept: Safebox alongside the final essentials a
+family might gather before leaving home, powered by the Acorn component. Final
+hardware and enclosure design may differ.*
+
 ## Emergency funds and critical records, kept ready
 
 Safebox is a digital go-bag: a deliberately compact collection of the funds and
@@ -62,12 +68,6 @@ execution environment. The appliance gives critical encrypted state a home
 that remains close to the person, household, institution, or community using
 it. Safebox may also be delivered through a trusted web provider or another
 compatible application without changing Acorn's underlying protocol role.
-
-![Concept illustration of a compact Safebox appliance ready to be packed beside an open go-bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.png)
-
-*An illustrative product concept: Safebox alongside the final essentials a
-family might gather before leaving home, powered by the Acorn component. Final
-hardware and enclosure design may differ.*
 
 That local home is not the only copy:
 
