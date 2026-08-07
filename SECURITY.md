@@ -19,6 +19,9 @@ Acorn is pre-release software and should presently be treated as a developer
 preview or hardened alpha.
 
 - Acorn has not received a comprehensive independent security audit.
+- The proposed scope, methods, evidence, and retest requirements for such a
+  review are documented in the
+  [Independent Security Audit Plan](docs/INDEPENDENT-SECURITY-AUDIT-PLAN.md).
 - Its storage and CLI contracts may still change before a stable release.
 - Only small test balances and non-critical records should be used.
 - Live tests can publish events and spend sats; they are opt-in.

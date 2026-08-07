@@ -23,6 +23,11 @@ satisfied.
 
 ## Current position
 
+The commissioning scope for an external review is maintained in the
+[Independent Security Audit Plan](INDEPENDENT-SECURITY-AUDIT-PLAN.md). It
+defines the pre-audit readiness gate, fund-safety and cryptographic workstreams,
+independence rules, finding severity, evidence, and retest requirements.
+
 As of July 2026, the project has demonstrated:
 
 - independent installation as `safebox-acorn`;
