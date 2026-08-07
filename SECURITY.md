@@ -31,6 +31,8 @@ The current release plan and remaining gates are documented in
 [Roadmap to Releasability](docs/ROADMAP-TO-RELEASABILITY.md).
 The public-facing policy rationale for emerging threats is summarized in
 [Mitigating AI and Quantum Attacks](website/mitigating-ai-and-quantum-attacks.md).
+For the boundary between Acorn and an operator-managed secret service, see the
+[OpenBao Integration Note](docs/OPENBAO-INTEGRATION-NOTE.md).
 
 ## Reporting a vulnerability
 

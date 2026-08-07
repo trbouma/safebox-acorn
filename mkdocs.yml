@@ -37,6 +37,7 @@ nav:
   - Home: index.md
   - Understand Acorn:
       - How Acorn Works: how-acorn-works.md
+      - Safebox and the Digital Go-Bag: digital-go-bag.md
       - User-Controlled Keys, Funds and Records: user-controlled-funds-and-records.md
       - A Better Vocabulary for Digital Policy: better-policy-vocabulary.md
       - User-Controlled Architecture: user-controlled-architecture.md

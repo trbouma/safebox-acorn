@@ -32,6 +32,8 @@ Acorn protocol state remains portable and recoverable.
 
 The goal is practical independence, not isolation.
 
+[Read how Safebox uses Acorn to create a digital go-bag](digital-go-bag.md)
+
 ## One component, three responsibilities
 
 <div class="acorn-grid" markdown>

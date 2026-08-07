@@ -202,6 +202,13 @@ boundary, not a requirement that every Acorn client use FastAPI or HTML. See
 [Safebox App Boundary](SAFEBOX-APP-BOUNDARY.md) for the fuller allocation of
 browser, application, component, and infrastructure responsibilities.
 
+A trusted provider may use an external secret manager for its own runtime
+keys without adding that product to Acorn. The
+[OpenBao Integration Note](OPENBAO-INTEGRATION-NOTE.md) defines this boundary:
+the application obtains provider-authorized secrets and supplies them through
+Acorn's normal interfaces, while Acorn remains independent of OpenBao and user
+recovery material remains user-controlled by default.
+
 ### MS02 / market / digital trade side project
 
 The MS02 market and digital trade experiment is intentionally outside Acorn.
