@@ -5,10 +5,11 @@ description: Product positioning for Safebox as a digital go-bag for emergency f
 
 # Safebox and the digital go-bag
 
-![Concept illustration of a compact Safebox appliance ready to be packed beside an open go-bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.png)
+![Concept illustration of a compact Safebox appliance with an integrated keypad, NFC tap point, and physical Wi-Fi control, ready to be packed beside an open go-bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.png)
 
 *An illustrative product concept: Safebox alongside the final essentials a
-family might gather before leaving home, powered by the Acorn component. Final
+family might gather before leaving home. The concept includes a physical
+keypad, Safebox Key tap point, and deliberately activated local Wi-Fi. Final
 hardware and enclosure design may differ.*
 
 ## Emergency funds and critical records, kept ready
@@ -91,6 +92,165 @@ receiving normal plaintext access to the records they hold.
 This is closer to a network of **reciprocal safes** than a shared folder.
 Participants help preserve one another's encrypted resources while each
 Safebox, through its Acorn component, retains its own keys and authority.
+
+## A physical ceremony for local access
+
+A Safebox appliance could combine a small numeric keypad, an NFC reader, and a
+physical control for local Wi-Fi. Together they provide an access ceremony that
+is understandable without turning the appliance into a general-purpose
+computer.
+
+The NFC credential—provisionally called a **Safebox Key**—should be a secure
+smart card or secure-element token rather than an ordinary writable NFC tag.
+The user taps the key and enters a PIN on the appliance keypad:
+
+```text
+physical Wi-Fi press -> short-lived local pairing network
+Safebox Key tap      -> possession of the registered secure credential
+PIN entry            -> knowledge verified with retry limits
+approved session     -> access to the attached or recovered Safebox
+```
+
+For an existing Safebox, successful presentation can authorize a local session
+against the Acorn already present. For a fresh Safebox, the key can provide or
+unlock the bootstrap coordinates and recovery package needed to find the
+encrypted relay state, reconstruct the Acorn authority, and retrieve its funds
+and records.
+
+> **The Safebox Key proves what the user has. The PIN proves what the user
+> knows. The appliance restores what the user controls.**
+
+### Deliberately activated local Wi-Fi
+
+The appliance may advertise its own Wi-Fi SSID only after someone physically
+presses a recessed Wi-Fi control. This creates a short, intentional pairing
+window for a nearby phone, tablet, or computer. The SSID is a convenience and
+presence signal; it is **not authentication** and should never expose the
+wallet, records, relay administration, or the surrounding network by itself.
+
+Before the Safebox Key and PIN are accepted, the temporary network should
+provide only a narrowly isolated pairing surface. A safe sequence is:
+
+1. The user physically enables the Wi-Fi pairing window.
+2. Safebox advertises a device-specific SSID for a limited period.
+3. A nearby client may connect only to a restricted local pairing service.
+4. The user taps the registered Safebox Key and enters the PIN on the appliance.
+5. The trusted input controller approves and binds that specific local session.
+6. Safebox attaches to the existing Acorn or performs the authorized recovery.
+7. The pairing window closes automatically after success, cancellation, or
+   timeout.
+
+![Setup-booklet schematic showing the Safebox keypad, NFC tap point, temporary Wi-Fi button, and five-step local access sequence](assets/images/safebox-setup-interactions.svg)
+
+*The local interface is deliberately small: physical intent opens the pairing
+window, while the Safebox Key and PIN authorize access.*
+
+The temporary network should be firewalled from relay administration, the host
+operating system, other tenants, and unrelated local networks. Pairing requests
+should be rate-limited and bound to a one-time challenge so that a nearby
+observer cannot reuse an earlier approval.
+
+### Security boundary
+
+The keypad, NFC reader, and secure element should form a trusted input path.
+Ideally the ordinary Safebox operating system never receives the plaintext PIN.
+Failed-attempt counters and delays should be enforced by the Safebox Key or its
+secure controller so that moving a stolen key to another appliance does not
+reset the counter.
+
+The first practical implementation may unlock an encrypted recovery package
+and briefly reconstruct Acorn secrets in protected process memory. A stronger
+future implementation could keep private keys inside secure hardware and ask
+it to perform signing and key-agreement operations without exporting them.
+Neither approach makes the NFC key the only recovery mechanism: the Safebox
+Acorn mnemonic and Protected record mnemonic remain the durable offline
+recovery path if the appliance or Safebox Key is lost, damaged, or locked.
+
+## Four modes of continuity
+
+Safebox should not be reduced to a binary choice between online and offline.
+It can change how it operates as infrastructure becomes unavailable, moving
+from ordinary network access to increasingly local forms of continuity.
+
+| Mode | Available connectivity | Primary purpose |
+| --- | --- | --- |
+| **Connected mode** | Normal Ethernet or Wi-Fi with upstream access | Relay synchronization, mint access, replication, updates, and ordinary use |
+| **Local pairing mode** | A temporary Safebox SSID without upstream access | Operate the local Safebox from a nearby phone or computer when external networks are unavailable |
+| **Mobile bridge mode** | A phone or other mobile device supplies upstream connectivity | Reach relays and mints through cellular service without making the mobile device the custodian of Safebox keys |
+| **Community mesh mode** | Nearby Safeboxes and participating devices communicate directly | Exchange signed events, carry messages, and preserve encrypted replicas until broader connectivity returns |
+
+> **Safebox is connected when possible, local when necessary, bridged when
+> available, and resilient together.**
+
+### Connected mode
+
+Connected mode is the ordinary operating state. Safebox uses Ethernet or an
+approved Wi-Fi network to reach home and replica relays, communicate with
+mints, receive software updates, and provide normal application services. The
+local appliance remains a home for Acorn state even when most interactions are
+backed by external infrastructure.
+
+### Local pairing mode
+
+When no upstream network is available, the physical Wi-Fi control can open the
+restricted local pairing network described above. A nearby phone, tablet, or
+computer becomes the interface to the appliance, but it does not provide
+internet access. Local records and already available state can remain usable
+after the Safebox Key and PIN authorize the session.
+
+### Mobile bridge mode
+
+In bridge mode, a phone or another mobile device contributes an upstream path,
+for example through cellular connectivity. The mobile device should be treated
+as transport rather than as the holder of Safebox authority: relay and mint
+connections remain independently authenticated, and the bridge should not
+receive plaintext keys or records merely because it carries the traffic.
+
+Bridge mode may be metered, intermittent, or power constrained. Safebox should
+therefore let the user prioritize essential synchronization, payment checks,
+or recovery operations instead of assuming that every replica and attachment
+must be transferred immediately.
+
+### Community mesh mode
+
+Mesh mode makes reciprocal resilience operational during a wider outage.
+Nearby Safeboxes or participating devices can discover approved peers and
+exchange signed events, encrypted messages, and opaque replicas without
+requiring a central internet connection. A participant that later regains
+upstream access can help carry authorized protocol traffic outward and bring
+new state back to the local community.
+
+The product-level mode should not prescribe one networking implementation.
+Direct Wi-Fi, a local peer network, store-and-forward exchange, or future radio
+and routing technologies may provide the underlying path. What matters is the
+Acorn-layer behavior: signed data remains attributable to its keys, private
+content remains encrypted, peers do not acquire one another's authority, and
+delayed state can be reconciled when normal infrastructure returns.
+
+### Graceful degradation has limits
+
+The four modes do not make every operation equally available during an outage:
+
+- private records and previously synchronized signed events can remain locally
+  available;
+- encrypted records and messages can be exchanged or carried for later relay
+  publication;
+- replicas can be preserved across participating devices without exposing
+  their plaintext contents;
+- ecash can potentially be transferred while offline, but the recipient cannot
+  conclusively verify or refresh it until the issuing mint becomes reachable;
+- Lightning payments require a working route to Lightning infrastructure; and
+- conflicting, delayed, expired, or deleted state may require reconciliation
+  after connectivity returns.
+
+Safebox should show its current mode plainly and avoid presenting provisional
+or delayed operations as final. Mode changes should preserve a default-deny
+posture: discovering a device, joining an SSID, providing a bridge, or
+participating in a mesh does not by itself grant access to keys, funds, records,
+or administrative functions.
+
+> **Safebox does not stop working when the network disappears. It changes how
+> it works.**
 
 ## If the appliance is lost
 
@@ -372,6 +532,60 @@ services without becoming the only place the Acorn can exist.
 This approach also avoids assuming that resilience must come from one enormous
 central platform. Continuity can emerge from several modest, independently
 operated systems that preserve encrypted state for one another.
+
+## Related products and a distinct synthesis
+
+Safebox does not emerge from a vacuum. Several existing product categories
+demonstrate parts of the model, and each provides useful engineering and
+product lessons.
+
+| Existing product or category | Relevant precedent | Difference from the Safebox model |
+| --- | --- | --- |
+| [Arca](https://arcasafes.com/) | A physical digital safe for keys, files, recovery material, isolated tenants, and geographically distributed Swarm mirroring | Closest to the appliance and reciprocal-safe concepts, but not organized around Acorn's protocol-portable funds, relay events, four continuity modes, and community mesh operation |
+| [Passport Prime](https://foundation.xyz/2024/12/introducing-passport-prime/) | Secure keys, PIN-protected hardware, encrypted files, NFC recovery cards, USB-C, and a phone companion | A personal security device rather than a household relay appliance or community replication network |
+| [Start9](https://start9.com/) and [Umbrel Home](https://umbrel.com/umbrel-home) | Small personal servers providing private services, storage, and Bitcoin infrastructure | General-purpose home servers rather than bounded emergency safes for recoverable funds and critical records |
+| [Smarana](https://mysmarana.com/) and [DataBunker](https://databunker1.com/) | Family readiness, emergency documents, local or offline storage, and disaster recovery | Records-focused products without integrated ecash, relay-backed signed events, or reciprocal protocol replication |
+| [Meshtastic](https://meshtastic.org/) and [Berty](https://berty.tech/features/) | Infrastructure-independent communication, nearby device pairing, and off-grid message exchange | Communication systems rather than safekeeping appliances for keys, funds, records, and recovery state |
+
+These precedents show that the individual building blocks are understandable
+and useful. Safebox's distinction is the way they are composed:
+
+```text
+physical household appliance
++ Safebox Key and PIN ceremony
++ emergency funds and critical records
++ protocol-portable Acorn authority
++ local relay
++ encrypted reciprocal replication
++ connected, pairing, bridge, and mesh modes
++ recovery onto a fresh appliance
+```
+
+The result is not merely a personal server, hardware wallet, encrypted drive,
+emergency-document application, or mesh communicator. It is a continuity
+system in which:
+
+- funds and records are controlled protocol objects rather than an undifferentiated
+  collection of files;
+- the appliance can be replaced while Acorn authority and encrypted state
+  remain portable;
+- communities and providers can preserve opaque replicas without becoming a
+  shared folder or acquiring the controller's keys;
+- connectivity degrades through explicit modes instead of simply failing; and
+- the same Acorn component can operate through an appliance, trusted provider,
+  web application, or another compatible execution environment.
+
+The defensible product claim is therefore one of **distinct synthesis**, not
+the invention of every underlying mechanism:
+
+> **Safebox combines established ideas from personal servers, secure hardware,
+> emergency preparedness, digital cash, and resilient networking into a
+> distinct digital go-bag architecture.**
+
+This comparison is illustrative rather than exhaustive and is not a patent,
+trademark, or formal novelty search. Adjacent products will continue to evolve;
+Safebox should learn from them while remaining precise about its own boundaries
+and claims.
 
 ## What Safebox is—and is not
 
