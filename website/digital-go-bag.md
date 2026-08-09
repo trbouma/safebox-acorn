@@ -1,6 +1,6 @@
 ---
 title: Safebox and the Digital Go-Bag
-description: Product positioning for Safebox as a digital go-bag for emergency funds and critical records, powered by the Acorn protocol component.
+description: Product positioning for Safebox as a household digital go-bag for master keys, emergency funds, and critical records, powered by the Acorn protocol component.
 ---
 
 # Safebox and the digital go-bag
@@ -43,6 +43,37 @@ A Safebox might contain:
 
 The category is defined by importance rather than volume. Safebox is designed to
 hold a small number of high-value resources well.
+
+## A household safekeeping appliance
+
+The long-term product direction is straightforward: a Safebox appliance that
+could have a place in every home, much as a physical safe, emergency kit, or
+fire-resistant document box does today. It would safeguard three bounded
+classes of resources:
+
+1. **Master keys** — recovery and authority material needed to regain control
+   of an Acorn and the resources it protects;
+2. **Emergency funds** — a deliberately limited reserve kept available for
+   disruption and recovery; and
+3. **Critical records** — the small set of documents and evidence that must
+   survive device, provider, network, and building loss.
+
+“Master keys” does not mean that Safebox should become a general password
+manager or collect every credential a household uses. It means the root
+cryptographic material whose loss would prevent recovery: Acorn key material,
+the record protection key (RPK) when that profile is used, and the recovery
+context needed to locate and reconstruct the corresponding encrypted state.
+
+The appliance is one deployment form, not the boundary of the product. Acorn is
+being hardened first as an installable protocol component that can run through
+the command line, a minimal web application, a hosted worker, a FreeBSD jail,
+or eventually dedicated hardware. This keeps the appliance replaceable: the
+box provides a convenient local home and execution environment, while recovery
+material and replicated encrypted state preserve continuity beyond the box.
+
+The aim is not to put another indispensable platform in every home. It is to
+make dependable household safekeeping practical without making any one device,
+application, relay, mint, or service provider irreplaceable.
 
 ## Digital earthquake money
 
@@ -600,11 +631,12 @@ and claims.
 
 ## Product position
 
-> **Safebox is a digital go-bag for emergency funds and critical records. It
-> enables people and communities to safeguard essential documents, preserve
-> evidence of their origin and history, and maintain encrypted continuity
-> across independently operated infrastructure. Safebox is powered by Acorn,
-> its protocol-first component for user-controlled keys, funds, and records.**
+> **Safebox is a household digital go-bag for master keys, emergency funds, and
+> critical records. It enables people and communities to safeguard essential
+> resources, preserve evidence of their origin and history, and maintain
+> encrypted continuity across independently operated infrastructure. Safebox
+> is powered by Acorn, its protocol-first component for user-controlled keys,
+> funds, and records.**
 
 Its technology is scale-neutral. Its authority model is contextual and plural.
 Its storage model is intentionally bounded. Its value lies not in holding the
