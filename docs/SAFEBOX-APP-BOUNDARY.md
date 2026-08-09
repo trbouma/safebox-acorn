@@ -66,6 +66,60 @@ Conversely, private-record encryption, proof refresh, transaction journalling,
 and relay readback verification stay in Acorn even when initiated by an HTML
 form.
 
+### Private-record and blob-storage boundary
+
+Acorn owns private-record and attachment encryption. Safebox Web receives the
+user's file through an authenticated request and invokes Acorn inside the
+trusted application execution environment. Acorn generates an independent
+random 32-byte key, encrypts the attachment with AES-256-GCM, and uploads only
+the resulting ciphertext to the configured Blossom server. The blob key,
+nonce, original MIME type, plaintext hash, ciphertext hash, and blob reference
+remain inside the corresponding encrypted private record.
+
+This produces the following observation boundary:
+
+| Layer | What it can observe |
+| --- | --- |
+| **Browser** | The original file selected by the user and the rendered plaintext returned after retrieval. |
+| **TLS reverse proxy** | Request metadata and, because it terminates TLS, potentially the uploaded plaintext and returned plaintext in transit. |
+| **Safebox Web** | The plaintext, connected Acorn key, and working encryption material in process memory for the duration of the request. |
+| **Acorn** | The plaintext while operating; it generates the blob key, encrypts the attachment, and verifies it after retrieval. |
+| **Nostr relay** | The encrypted private-record event plus observable event metadata such as author, kind, size, timing, and access patterns. |
+| **Blossom server, including Grove** | Opaque blob ciphertext, ciphertext hash and size, uploader authorization public key, timing, network metadata, and access patterns. |
+| **Retrieving Acorn** | The downloaded ciphertext and encrypted record; it verifies both hashes and authenticated encryption before returning plaintext. |
+
+The governing invariant is:
+
+> Acorn owns private-record and attachment encryption. Safebox Web invokes
+> Acorn inside a trusted execution environment. Grove or another Blossom
+> server stores bytes exactly as supplied and is an availability provider with
+> visible operational metadata, not a confidentiality boundary.
+
+Content opacity does not imply metadata anonymity. A Blossom operator cannot
+derive the plaintext or blob key from an Acorn-uploaded object alone, but it
+may correlate uploads and retrievals using authorization public keys, hashes,
+sizes, timing, network sources, and server logs. Public retrieval also means
+that anyone who learns a ciphertext hash may download the ciphertext.
+
+The confidentiality property belongs to the Acorn path, not to Blossom as a
+generic protocol. A direct Blossom client can upload plaintext to Grove or any
+other compatible server. Safebox documentation must therefore say that
+**Safebox Acorn encrypts before upload**, not that the blob server encrypts or
+guarantees confidentiality.
+
+The Blossom operator still controls availability. It may refuse, delay,
+retain, enumerate, or delete objects, and deletion cannot guarantee erasure
+from mirrors, logs, caches, or backups. Durable use therefore requires
+replication, integrity verification, replaceable servers, and recovery of the
+encrypted record that contains the blob key.
+
+For ordinary private records, compromise of the Acorn `nsec` can expose the
+record metadata and its blob key. The proposed protected-record profile adds a
+separate record-protection key so that compromise of the ordinary Acorn key
+does not automatically reveal protected record content. It strengthens the
+confidentiality boundary but does not prevent an infrastructure operator from
+suppressing or deleting ciphertext.
+
 ### Boundary test for web features
 
 For each Safebox Web feature, ask:
@@ -131,6 +185,30 @@ Safebox should expose these roles separately in configuration, user messaging,
 logs, and operational controls. Combining them may improve usability, but must
 not obscure which party can observe secrets and which party can delay, lose,
 or misdirect funds in transit.
+
+### Hosted Safebox secret inventory
+
+A hosted Safebox deployment brings together four cryptographic secrets without
+making them equivalent:
+
+| Secret | Owner | Boundary |
+| --- | --- | --- |
+| Attached-user Acorn `nsec` | User | Supplied through the encrypted session and exposed in plaintext only while the web process performs authorized Acorn work |
+| Attached-user record protection key (RPK) | User | Optional independent key reserved for the proposed protected-record confidentiality profile; the profile is not yet implemented |
+| Safebox cookie-encryption key | Operator | Protects user secrets in browser session cookies and must remain confined to the web runtime |
+| Service Acorn `nsec` | Operator | Gives the standalone provider worker authority over its own funds, events, ecash delivery, and signed receipts |
+
+The service Acorn is a separate component, not a copy of the attached user's
+Acorn. Its key must not enter the user's cookie or ordinary web routes. Likewise,
+the worker does not need the cookie-encryption key. Strict separation requires
+different runtime permissions and storage access; merely running two processes
+while mounting the same secret-bearing volume is only logical separation.
+
+Acorn defines and exercises the user-key and record-protection primitives.
+Safebox owns the custody, process isolation, session, and provider-key policies
+introduced by hosting them. The concrete worker lifecycle and current storage
+boundary are documented in
+[Standalone Service Acorn Worker](https://github.com/trbouma/safebox-web/blob/main/docs/SERVICE-ACORN-LIFECYCLE.md).
 
 The future registration and delivery model is documented in
 [Acorn Lightning-Address Gateway Design](ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md).
