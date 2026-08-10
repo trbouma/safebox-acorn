@@ -51,6 +51,8 @@ implemented and reviewed.
 - [Acorn Record Model](./docs/ACORN-RECORD-MODEL.md)
 - [Bitcoin Silent Payments Capability](./docs/BITCOIN-SILENT-PAYMENTS-SPEC.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
+- [Acorn Record Transfer Specification](./docs/RECORD-TRANSFER-SPEC.md)
+- [Record Sharing Lessons Learned](./docs/RECORD-SHARING-LESSONS-LEARNED.md)
 - [Protected Record Profile Design](./docs/PROTECTED-RECORD-PROFILE-DESIGN.md)
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)

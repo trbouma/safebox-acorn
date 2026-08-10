@@ -17,6 +17,9 @@ for one temporary encrypted package.
 Safebox Web supplies the confirmation and scanning interface. Acorn owns the
 portable descriptor, encryption, validation, import, and cleanup behavior.
 
+The architectural experience that led to this smaller model is recorded in
+[Record Sharing Lessons Learned](RECORD-SHARING-LESSONS-LEARNED.md).
+
 ## User flow
 
 1. The sender selects **Share** and confirms creation of a temporary copy.

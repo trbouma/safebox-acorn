@@ -1,6 +1,6 @@
 ---
 title: Safebox and the Digital Go-Bag
-description: Product positioning for Safebox as a household digital go-bag for master keys, emergency funds, and critical records, powered by the Acorn protocol component.
+description: Product positioning for Safebox as a digital go-bag and community continuity system for master keys, emergency funds, critical records, and local mesh payments, powered by the Acorn protocol component.
 ---
 
 # Safebox and the digital go-bag
@@ -75,23 +75,75 @@ The aim is not to put another indispensable platform in every home. It is to
 make dependable household safekeeping practical without making any one device,
 application, relay, mint, or service provider irreplaceable.
 
-## Digital earthquake money
+## Community mesh payment system
 
 Some people keep **earthquake money**: a modest reserve for transportation,
 temporary accommodation, food, medicine, communication, and other immediate
-needs when an emergency interrupts normal services.
+needs when an emergency interrupts normal services. That is a useful starting
+point, but the broader need is not merely to preserve one household's reserve.
+A disrupted community may also need a way to continue exchanging value when
+ordinary payment terminals, banks, mobile networks, Lightning routes, or
+internet services are unavailable.
 
-Safebox applies the same preparedness logic digitally. It is not an investment
-account or a complete personal archive. It is the emergency value and evidence
-that should remain usable when an ordinary device, application, institution,
-or network is no longer available.
+Safebox generalizes the earthquake-money idea into a **community mesh payment
+system**. An Acorn can hold a deliberately limited reserve of ecash, while a
+local relay running in the Safebox appliance keeps the wallet's signed state
+available without an internet connection. Nearby Safeboxes and participating
+devices can provide local access and carry payment messages across a direct,
+community-operated mesh.
 
-> **Safebox is digital earthquake money—and the critical records a person or
-> community may need after the earthquake.**
+> **One Safebox can preserve emergency funds. A mesh of Safeboxes can help a
+> community continue exchanging value during disruption.**
+
+A possible offline flow is:
+
+```text
+payer's Acorn
+  -> selects ecash already held by the wallet
+  -> transfers the bearer proofs to the recipient
+  -> publishes or carries the encrypted transfer through a local relay or mesh
+recipient's Acorn
+  -> receives and safeguards the provisional ecash
+  -> checks and refreshes it with the issuing mint when connectivity returns
+```
+
+This is closer to passing cash locally than to maintaining an always-online
+bank account. The local appliance provides access to the Acorn and its stored
+state; the mesh provides transport between participants; and the mint remains
+the final authority on whether its ecash proofs are spendable.
+
+That distinction matters. While fully offline, the recipient cannot ask the
+issuing mint whether a proof has already been spent or immediately refresh it
+into newly issued proofs. An offline transfer must therefore be presented as
+**provisional**, not final settlement. When a participant, bridge device, or
+community node regains connectivity, the recipient Acorn can reconcile the
+transfer against the mint by checking and refreshing the received proofs and
+then recording the confirmed result in its normal wallet state.
+
+Community policy can bound the provisional risk through small transaction
+limits, known counterparties, local recognition, short offline periods, and
+clear confirmation status. Safebox should never disguise an unverified offline
+receipt as mint-confirmed funds.
+
+The community mesh does not replace a mint, create a new consensus network, or
+promise that every offline proof will settle. It provides a continuity layer:
+local access to funds already held, direct or store-and-forward transfer, and
+an orderly path back to mint-confirmed state when wider infrastructure is
+restored.
+
+A Safebox appliance with an NFC reader and PIN pad could also double as a
+small payment terminal. In connected mode it could present or acquire a
+payment request and complete the normal online payment flow. In local or mesh
+mode it could exchange an ecash transfer directly with another Safebox or
+participating device and preserve the pending transfer until mint access
+returns. This gives the same appliance a practical community role: it can be a
+safe during ordinary life and a local point of exchange during disruption.
 
 The point is not limited to earthquakes. The same preparation matters during
 wildfires, floods, storms, displacement, prolonged outages, infrastructure
-failure, or the sudden loss of a trusted service.
+failure, politically turbulent conditions, or the sudden loss of a trusted
+service. Safebox combines the emergency reserve with the critical records a
+person or community may need during and after the disruption.
 
 ## A local home with independent continuity
 
@@ -181,6 +233,95 @@ operating system, other tenants, and unrelated local networks. Pairing requests
 should be rate-limited and bound to a one-time challenge so that a nearby
 observer cannot reuse an earlier approval.
 
+### Payment-terminal mode
+
+The NFC reader and keypad can support a second, explicitly selected role:
+Safebox can act as a payment terminal for its owner, household, organization,
+or community. The terminal may use NFC, a QR code, or the locally paired device
+to exchange a payment request. The keypad can confirm an amount or authorize an
+outgoing payment with the owner's PIN without requiring a general-purpose
+computer interface.
+
+```text
+payment mode selected
+  -> amount and counterparty are shown for confirmation
+  -> NFC, QR, or local mesh exchanges the payment request or ecash transfer
+  -> PIN authorizes any outgoing use of the local Acorn's funds
+  -> terminal reports provisional or mint-confirmed status explicitly
+```
+
+This role must remain distinct from the Safebox Key access ceremony. Tapping an
+access credential should not accidentally initiate a payment, and presenting a
+payment credential should not unlock the appliance. The current mode, amount,
+direction, recipient, and confirmation status must be clear before value
+moves.
+
+In connected mode, the terminal can obtain online confirmation through the
+appropriate payment infrastructure. In community mesh mode, it can accept and
+hold an encrypted ecash transfer locally, but it must label the receipt as
+provisional until the receiving Acorn checks and refreshes the proofs with the
+issuing mint. The terminal coordinates the exchange; it does not become a
+shared custodian or acquire authority over another participant's Acorn.
+
+### Community-issued funds and records
+
+This terminal model can support practical emergency-distribution programs. A
+community, aid organization, food bank, local authority, or other recognized
+issuer could provision a bounded Acorn with emergency funds and provide the
+recipient with a secure NFC card and PIN through which that Acorn can be
+accessed.
+
+The distinction between card and wallet should remain clear. The NFC card is a
+portable access and authorization factor for the Acorn; it need not hold
+plaintext proofs or records in ordinary NFC memory. Depending on the hardware
+design, its secure element could hold a key or unlock an encrypted bootstrap
+package. The Acorn holds the funds and records in its protected, relay-backed
+state.
+
+A recipient could then use the card at a Safebox terminal operated by an
+emergency food bank, shelter, clinic, community distribution point, or mobile
+response team:
+
+```text
+community issues card + PIN
+  -> card gives controlled access to the recipient's Acorn
+  -> Acorn contains issued emergency funds and relevant records
+recipient taps at a Safebox terminal
+  -> terminal identifies payment or record-presentation mode
+  -> PIN confirms the recipient's intended action
+  -> funds are transferred, or a selected record is presented
+  -> result is shown as provisional or confirmed
+```
+
+When infrastructure is connected, the terminal can check and refresh ecash
+through the issuing mint. During a disruption, participating Safeboxes can
+carry a provisional ecash transfer over local relays or the community mesh and
+reconcile it when mint access returns. This can preserve access to food,
+medicine, shelter, transportation, and other essential resources without
+requiring every participant to reach a remote application at the moment of
+need.
+
+The same Acorn could hold a community-issued record relevant to the exchange:
+for example, an entitlement, referral, authorization, membership, care
+instruction, or proof that a resource was issued. The recipient could present
+the selected record at the terminal, while the relying organization uses the
+[OpenETR](https://trbouma.github.io/openetr/) protocol to inspect its origin,
+integrity, and associated control events.
+
+OpenETR verification does not make the terminal the authority. It lets the
+terminal evaluate whether the artifact matches what was issued, which keys
+signed the relevant events, how control or status changed, and whether the
+relying community recognizes those keys and rules. During an outage, this
+verification is limited to the record history and recognition material already
+available through local relays or synchronized Safeboxes; new or missing state
+can be reconciled when connectivity returns.
+
+Funds and records should remain separately controlled. Presenting an
+eligibility or authorization record must not expose every private record or the
+wallet's complete balance, and making a payment must not silently disclose the
+holder's other records. The terminal should request only the action and
+evidence required for the immediate exchange.
+
 ### Security boundary
 
 The keypad, NFC reader, and secure element should form a trusted input path.
@@ -250,6 +391,18 @@ exchange signed events, encrypted messages, and opaque replicas without
 requiring a central internet connection. A participant that later regains
 upstream access can help carry authorized protocol traffic outward and bring
 new state back to the local community.
+
+This mode can also carry the provisional ecash transfers described in the
+**Community mesh payment system** above. Each Acorn remains its own wallet and
+authority; the mesh transports encrypted transfer messages rather than pooling
+community funds or placing a shared custodian in the middle. A local relay in
+each appliance can make the wallet and pending transfers available to its
+authorized user even while public relays are unreachable.
+
+When mint connectivity returns, received proofs can be checked and refreshed,
+confirmed wallet state can be published to the appropriate relays, and delayed
+transaction history can be reconciled. Until that happens, the interface must
+distinguish locally received value from mint-confirmed spendable balance.
 
 The product-level mode should not prescribe one networking implementation.
 Direct Wi-Fi, a local peer network, store-and-forward exchange, or future radio
