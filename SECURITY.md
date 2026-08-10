@@ -419,6 +419,27 @@ form, or another trusted source. Moving a KEM into Acorn would require a stable
 algorithm choice, interoperable envelope, test vectors, downgrade and migration
 rules, recovery semantics, supported-platform evidence, and independent review.
 
+### Bitcoin Silent Payments capability
+
+Acorn owns its experimental NSP Bitcoin implementation directly and does not
+load OpenETR at runtime. The optional `bitcoin` package extra installs BTClib
+for transaction parsing, fee estimation, signing, and serialization. Address
+derivation, targeted receipt detection, UTXO availability checks, sweep
+construction, and explicit broadcast are specified in the
+[Bitcoin Silent Payments Capability Specification](docs/BITCOIN-SILENT-PAYMENTS-SPEC.md).
+
+The NSP private scan key is root-equivalent because its public derivation tweak
+can be subtracted to recover the underlying Acorn private scalar. Acorn therefore
+keeps scan, spend, receipt-tweak, reconstructed output-key, and signed
+transaction material inside the operation and returns only sanitized public
+results. Detection never broadcasts. Preview and broadcast are separate, and
+an ambiguous broadcast response must not be retried automatically.
+
+The configured Bitcoin backend can observe submitted txids, derived one-time
+output addresses, timing, and the service source address. It does not receive
+the Acorn `nsec` or private scan material. This is metadata privacy, availability,
+and supply-chain exposure rather than a cryptographic custody transfer.
+
 ### AI-enabled attack scaling
 
 Acorn does not treat artificial intelligence as a new cryptographic primitive

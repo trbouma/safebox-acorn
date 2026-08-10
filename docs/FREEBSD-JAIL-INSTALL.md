@@ -8,6 +8,14 @@ dependencies, installation from GitHub or a local checkout, wallet
 initialization, smoke tests, optional post-quantum support, upgrades, and
 troubleshooting.
 
+The optional `bitcoin` extra is not yet part of the validated FreeBSD path.
+Its BTClib transaction package currently pulls a binary
+`btclib-libsecp256k1` distribution that does not publish FreeBSD wheels. Keep
+the core jail installation independent of this extra until a FreeBSD build or
+a portable replacement has been tested. This limitation is one reason the
+Bitcoin capability remains an optional package profile during its experimental
+phase.
+
 The initial validated target is:
 
 - FreeBSD `15.1-RELEASE-p1`;

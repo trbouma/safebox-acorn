@@ -49,6 +49,7 @@ implemented and reviewed.
 - [Acorn Product North Star](./docs/ACORN-PRODUCT-NORTH-STAR.md)
 - [Acorn Component Boundary](./docs/ACORN-COMPONENT-BOUNDARY.md)
 - [Acorn Record Model](./docs/ACORN-RECORD-MODEL.md)
+- [Bitcoin Silent Payments Capability](./docs/BITCOIN-SILENT-PAYMENTS-SPEC.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
 - [Protected Record Profile Design](./docs/PROTECTED-RECORD-PROFILE-DESIGN.md)
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)
@@ -127,6 +128,30 @@ It is not used by ordinary wallet, record, relay, mint, or ecash operations.
 It does not enable a KEM or change Acorn's ordinary record and blob formats.
 KEM experiments are currently an application-layer concern for Safebox Web,
 not a dependency or protocol commitment of Acorn.
+
+Acorn owns its Nostr Silent Payments Bitcoin primitives directly. Install the
+optional Bitcoin transaction dependency for address derivation, txid-targeted
+receipt detection, sweep preview, and explicit broadcast:
+
+```sh
+pip install "safebox-acorn[bitcoin]"
+```
+
+For local development:
+
+```sh
+poetry install -E bitcoin
+```
+
+To install both optional capability profiles:
+
+```sh
+poetry install -E post-quantum -E bitcoin
+```
+
+The Bitcoin implementation has no runtime dependency on OpenETR. OpenETR was
+the experimental origin of the NSP derivation, but Acorn is now the canonical
+implementation owner for user-controlled receipt detection and spending.
 
 ## Smoke test
 
