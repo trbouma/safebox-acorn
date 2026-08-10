@@ -4,8 +4,8 @@
 
 Version 1 is implemented as an initial interoperable format. It supports a
 short-lived encrypted copy of one Acorn record, optional inclusion of its
-Original Record, Base64URL QR transport, receiver-side import, and best-effort
-deletion after successful storage.
+Original Record, Base64URL QR transport, receiver-side import, sender-initiated
+revocation, and best-effort deletion after successful storage.
 
 ## Purpose
 
@@ -30,6 +30,12 @@ portable descriptor, encryption, validation, import, and cleanup behavior.
    protection.
 9. Only after storage succeeds does Acorn request deletion of the temporary
    transfer blob.
+
+Before import or expiry, the sender may instead select **Stop Sharing**. Acorn
+decodes the sender-held descriptor, derives the same transfer-scoped deletion
+authority, and requests immediate deletion of the temporary blob. This changes
+neither the sender's original record nor a copy that a recipient has already
+imported.
 
 ## Descriptor
 
@@ -117,6 +123,12 @@ clients from accepting the descriptor after its deadline; it does not itself
 prove physical erasure of ciphertext. Operators should provide garbage
 collection for expired temporary objects.
 
+Sender revocation uses the same deletion operation as receiver cleanup. Acorn
+permits this cleanup after descriptor expiry because expiry should not prevent
+the holder of the transfer-scoped authority from requesting deletion. A failed
+or timed-out request is reported as unconfirmed and must not be represented as
+successful revocation.
+
 ## Security and trust model
 
 The descriptor is a bearer secret. Anyone who obtains it before expiry can
@@ -146,9 +158,9 @@ consistent with the established Safebox Web trust boundary.
 ## Current limitations
 
 - The default transfer lifetime is one hour in Safebox Web.
-- Sharing status is established by successful receiver storage and the
-  subsequent deletion request; there is no sender-visible acknowledgement
-  event yet.
+- Sharing status is established locally by confirmed sender deletion or by
+  successful receiver storage followed by its deletion request; there is no
+  sender-visible receiver acknowledgement event yet.
 - Expired-object garbage collection depends on the transfer-server operator.
 - Label collisions are rejected by Safebox Web rather than silently replacing
   an existing receiving record.

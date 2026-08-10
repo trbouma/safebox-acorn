@@ -4355,6 +4355,52 @@ class Acorn:
             "server": descriptor.server,
         }
 
+    async def delete_record_transfer(
+        self,
+        descriptor_value: str,
+        *,
+        allowed_servers: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Delete a temporary transfer using its transfer-scoped authority."""
+
+        descriptor = decode_record_transfer_descriptor(
+            descriptor_value,
+            require_unexpired=False,
+        )
+        if not self._record_transfer_server_allowed(
+            descriptor.server,
+            allowed_servers,
+        ):
+            raise RecordTransferError(
+                "Record transfer server is not allowed by this application"
+            )
+        authority_nsec = Keys(
+            priv_k=derive_record_transfer_authority_hex(descriptor.secret)
+        ).private_key_bech32()
+        client = BlossomClient(
+            nsec=authority_nsec,
+            default_servers=[descriptor.server],
+        )
+        try:
+            client.delete_blob(
+                server=descriptor.server,
+                sha256=descriptor.ciphertext_sha256,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=delete_record_transfer status=failed error_type=%s",
+                type(exc).__name__,
+            )
+            raise RecordTransferError(
+                "Temporary record transfer deletion could not be confirmed"
+            ) from exc
+        return {
+            "status": "DELETED",
+            "transfer_deleted": True,
+            "server": descriptor.server,
+            "ciphertext_sha256": descriptor.ciphertext_sha256,
+        }
+
     async def accept_record_transfer(
         self,
         descriptor_value: str,

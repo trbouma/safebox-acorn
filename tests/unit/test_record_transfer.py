@@ -157,3 +157,56 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
         ("https://blossom.example", transfer["ciphertext_sha256"])
     ]
     assert stored_blobs == {}
+
+
+@pytest.mark.asyncio
+async def test_originator_can_delete_temporary_transfer(monkeypatch) -> None:
+    deleted: list[tuple[str, str]] = []
+
+    class FakeBlossomClient:
+        def __init__(self, **kwargs) -> None:
+            self.kwargs = kwargs
+
+        def delete_blob(self, server, sha256):
+            deleted.append((server, sha256))
+            return {"status": "deleted", "sha256": sha256}
+
+    monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
+    component = object.__new__(Acorn)
+    component.logger = logging.getLogger("record-transfer-delete-test")
+    descriptor = encode_record_transfer_descriptor(
+        RecordTransferDescriptor(
+            blob_url="https://blossom.example/" + "ab" * 32,
+            ciphertext_sha256="ab" * 32,
+            secret=b"s" * 32,
+            expires_at=100,
+        )
+    )
+
+    result = await component.delete_record_transfer(
+        descriptor,
+        allowed_servers=["https://blossom.example"],
+    )
+
+    assert result["transfer_deleted"] is True
+    assert deleted == [("https://blossom.example", "ab" * 32)]
+
+
+@pytest.mark.asyncio
+async def test_originator_delete_rejects_unapproved_transfer_server() -> None:
+    component = object.__new__(Acorn)
+    component.logger = logging.getLogger("record-transfer-delete-server-test")
+    descriptor = encode_record_transfer_descriptor(
+        RecordTransferDescriptor(
+            blob_url="https://unapproved.example/" + "ab" * 32,
+            ciphertext_sha256="ab" * 32,
+            secret=b"s" * 32,
+            expires_at=2_000_000_000,
+        )
+    )
+
+    with pytest.raises(RecordTransferError, match="not allowed"):
+        await component.delete_record_transfer(
+            descriptor,
+            allowed_servers=["https://blossom.example"],
+        )
