@@ -151,6 +151,12 @@ Acorn owns:
 - JSON and human output for records;
 - optional encrypted blob metadata and transfer support.
 
+Acorn also owns the application-neutral record-transfer envelope, Base64URL
+descriptor, transfer-scoped encryption and Blossom authority, import
+validation, and cleanup ordering. Applications own the QR presentation,
+camera acquisition, confirmation pages, and operator allowlist. See
+[Acorn Record Transfer Specification](RECORD-TRANSFER-SPEC.md).
+
 The record encryption model is specified separately in
 [Record Encryption Specification](./RECORD-ENCRYPTION-SPEC.md).
 

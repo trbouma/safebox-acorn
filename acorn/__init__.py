@@ -12,6 +12,16 @@ __all__ = [
     "record_protection_key_from_entropy",
     "record_protection_key_from_recovery_phrase",
     "record_protection_recovery_phrase",
+    "RECORD_TRANSFER_PREFIX",
+    "RecordTransferDescriptor",
+    "RecordTransferEnvelope",
+    "RecordTransferError",
+    "decode_record_transfer_descriptor",
+    "decrypt_record_transfer_envelope",
+    "derive_record_transfer_authority_hex",
+    "encode_record_transfer_descriptor",
+    "encrypt_record_transfer_envelope",
+    "verify_record_transfer_ciphertext",
     "validate_record_protection_key",
 ]
 
@@ -53,4 +63,19 @@ def __getattr__(name):
         from acorn import record_protection
 
         return getattr(record_protection, name)
+    if name in {
+        "RECORD_TRANSFER_PREFIX",
+        "RecordTransferDescriptor",
+        "RecordTransferEnvelope",
+        "RecordTransferError",
+        "decode_record_transfer_descriptor",
+        "decrypt_record_transfer_envelope",
+        "derive_record_transfer_authority_hex",
+        "encode_record_transfer_descriptor",
+        "encrypt_record_transfer_envelope",
+        "verify_record_transfer_ciphertext",
+    }:
+        from acorn import record_transfer
+
+        return getattr(record_transfer, name)
     raise AttributeError(f"module 'acorn' has no attribute {name!r}")

@@ -45,6 +45,17 @@ from acorn.func_utils import (
     normalize_mint_url,
     npub_to_hex,
 )
+from acorn.record_transfer import (
+    RecordTransferDescriptor,
+    RecordTransferEnvelope,
+    RecordTransferError,
+    decode_record_transfer_descriptor,
+    decrypt_record_transfer_envelope,
+    derive_record_transfer_authority_hex,
+    encode_record_transfer_descriptor,
+    encrypt_record_transfer_envelope,
+    verify_record_transfer_ciphertext,
+)
 
 
 tail = util_funcs.str_tails
@@ -4212,6 +4223,183 @@ class Acorn:
                 exc,
             )
             return {"status": "PROCESSING_FAILED", "reason": str(exc)}
+
+    @staticmethod
+    def _record_transfer_server_allowed(
+        server: str,
+        allowed_servers: List[str] | None,
+    ) -> bool:
+        if not allowed_servers:
+            return True
+        normalized = server.rstrip("/").lower()
+        return normalized in {
+            str(candidate).rstrip("/").lower() for candidate in allowed_servers
+        }
+
+    def _read_record_transfer(
+        self,
+        descriptor_value: str,
+        *,
+        allowed_servers: List[str] | None = None,
+    ) -> tuple[RecordTransferDescriptor, RecordTransferEnvelope, BlossomClient]:
+        descriptor = decode_record_transfer_descriptor(descriptor_value)
+        if not self._record_transfer_server_allowed(
+            descriptor.server,
+            allowed_servers,
+        ):
+            raise RecordTransferError(
+                "Record transfer server is not allowed by this application"
+            )
+        authority_nsec = Keys(
+            priv_k=derive_record_transfer_authority_hex(descriptor.secret)
+        ).private_key_bech32()
+        client = BlossomClient(
+            nsec=authority_nsec,
+            default_servers=[descriptor.server],
+        )
+        try:
+            retrieved = client.get_blob(
+                server=descriptor.server,
+                sha256=descriptor.ciphertext_sha256,
+            )
+        except Exception as exc:
+            raise RecordTransferError(
+                "Temporary record transfer is not available"
+            ) from exc
+        ciphertext = retrieved.get_bytes()
+        verify_record_transfer_ciphertext(ciphertext, descriptor)
+        envelope = decrypt_record_transfer_envelope(
+            ciphertext,
+            secret=descriptor.secret,
+        )
+        return descriptor, envelope, client
+
+    async def create_record_transfer(
+        self,
+        record_name: str,
+        *,
+        expires_in: int = 3600,
+        blossom_transfer_server: str | None = None,
+    ) -> Dict[str, Any]:
+        """Create a short-lived encrypted bearer transfer for one record."""
+
+        if not isinstance(expires_in, int) or not 60 <= expires_in <= 30 * 24 * 60 * 60:
+            raise ValueError("Record transfer lifetime must be between 60 seconds and 30 days")
+        record = await self.get_record_safebox(record_name=record_name)
+        blob_type = None
+        blob_data = None
+        if record.blobref:
+            blob_type, blob_data = await self.get_record_blobdata(record_name=record_name)
+            if blob_data is None:
+                raise RuntimeError("Original Record could not be loaded for sharing")
+        ciphertext, secret = encrypt_record_transfer_envelope(
+            RecordTransferEnvelope(
+                label=record_name,
+                record_type=str(record.type),
+                payload=record.payload,
+                blob_data=blob_data,
+                blob_type=blob_type or record.blobtype,
+            )
+        )
+        server = (blossom_transfer_server or self._default_blossom_xfer_server()).rstrip("/")
+        authority_nsec = Keys(
+            priv_k=derive_record_transfer_authority_hex(secret)
+        ).private_key_bech32()
+        client = BlossomClient(nsec=authority_nsec, default_servers=[server])
+        upload = client.upload_blob(
+            server,
+            data=ciphertext,
+            description="Temporary Acorn record transfer",
+        )
+        ciphertext_sha256 = hashlib.sha256(ciphertext).hexdigest()
+        uploaded_sha256 = str(upload.get("sha256", "")).lower()
+        if uploaded_sha256 != ciphertext_sha256:
+            raise RuntimeError("Transfer server returned an unexpected ciphertext hash")
+        blob_url = upload.get("url") or f"{server}/{ciphertext_sha256}"
+        expires_at = int(time()) + expires_in
+        descriptor = encode_record_transfer_descriptor(
+            RecordTransferDescriptor(
+                blob_url=str(blob_url),
+                ciphertext_sha256=ciphertext_sha256,
+                secret=secret,
+                expires_at=expires_at,
+            )
+        )
+        return {
+            "descriptor": descriptor,
+            "expires_at": expires_at,
+            "label": record_name,
+            "has_original": blob_data is not None,
+            "server": server,
+            "ciphertext_sha256": ciphertext_sha256,
+        }
+
+    async def inspect_record_transfer(
+        self,
+        descriptor_value: str,
+        *,
+        allowed_servers: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Validate and decrypt transfer metadata without storing the record."""
+
+        descriptor, envelope, _ = self._read_record_transfer(
+            descriptor_value,
+            allowed_servers=allowed_servers,
+        )
+        return {
+            "label": envelope.label,
+            "record_type": envelope.record_type,
+            "has_original": envelope.blob_data is not None,
+            "blob_type": envelope.blob_type,
+            "expires_at": descriptor.expires_at,
+            "server": descriptor.server,
+        }
+
+    async def accept_record_transfer(
+        self,
+        descriptor_value: str,
+        *,
+        record_name: str | None = None,
+        allowed_servers: List[str] | None = None,
+        delete_transfer: bool = True,
+    ) -> Dict[str, Any]:
+        """Import a transfer and delete its temporary ciphertext after storage."""
+
+        descriptor, envelope, client = self._read_record_transfer(
+            descriptor_value,
+            allowed_servers=allowed_servers,
+        )
+        destination_label = str(record_name or envelope.label).strip()
+        if not destination_label:
+            raise RecordTransferError("Record transfer destination label is required")
+        await self.put_record(
+            destination_label,
+            envelope.payload,
+            record_type=envelope.record_type,
+            blob_data=envelope.blob_data,
+        )
+        deleted = False
+        delete_error = None
+        if delete_transfer:
+            try:
+                client.delete_blob(
+                    server=descriptor.server,
+                    sha256=descriptor.ciphertext_sha256,
+                )
+                deleted = True
+            except Exception as exc:
+                delete_error = str(exc)
+                self.logger.warning(
+                    "op=accept_record_transfer status=cleanup_failed error_type=%s",
+                    type(exc).__name__,
+                )
+        return {
+            "status": "OK",
+            "label": destination_label,
+            "has_original": envelope.blob_data is not None,
+            "transfer_deleted": deleted,
+            "cleanup_error": delete_error,
+        }
 
     async def put_record(
         self,
