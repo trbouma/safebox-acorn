@@ -349,9 +349,11 @@ critical fields must fail closed.
 
 ## Creation and backup ceremony
 
-Protected records should be an explicit opt-in capability. During creation of
-a new Acorn, the user may choose to enable protected records. Existing Acorns
-should be able to enable the profile later without changing their `nsec`.
+Protected records are an explicit, later opt-in capability. Quick creation of
+a new Acorn does not generate an RPK and does not burden onboarding with a
+second recovery ceremony. An existing Acorn enables the profile later without
+changing its `nsec`, when the user decides the additional protection and backup
+responsibility are needed.
 
 When enabled:
 

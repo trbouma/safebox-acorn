@@ -258,6 +258,99 @@ async def test_get_ecash_dm_awaits_cursor_write():
 
 
 @pytest.mark.asyncio
+async def test_deferred_recovery_round_trip_stores_status_without_secrets(monkeypatch):
+    wallet = wallet_with_key()
+    stored = {}
+
+    async def set_info(label, label_info, **kwargs):
+        stored[label] = label_info
+        return {"event_id": "a" * 64, "verified": kwargs.get("verify", False)}
+
+    async def get_info(label, **kwargs):
+        return stored.get(label)
+
+    monkeypatch.setattr(wallet, "set_wallet_info", set_info)
+    monkeypatch.setattr(wallet, "get_wallet_info", get_info)
+
+    created = await wallet.store_deferred_recovery()
+    recovered = await wallet.get_deferred_recovery()
+    status = await wallet.get_deferred_recovery_status()
+
+    assert created["pending"] is True
+    assert created["verified"] is True
+    assert recovered["pending"] is True
+    assert status["pending"] is True
+    assert status["status"] == "PENDING"
+    serialized = stored["deferred_recovery"]
+    assert "mnemonic" not in serialized
+    assert "seedphrase" not in serialized
+    assert "record_protection" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_record_protection_activation_stores_only_status_and_fingerprint(monkeypatch):
+    wallet = wallet_with_key()
+    stored = {}
+
+    async def set_info(label, label_info, **kwargs):
+        stored[label] = label_info
+        return {"event_id": "c" * 64, "verified": kwargs.get("verify", False)}
+
+    async def get_info(label, **kwargs):
+        return stored.get(label)
+
+    monkeypatch.setattr(wallet, "set_wallet_info", set_info)
+    monkeypatch.setattr(wallet, "get_wallet_info", get_info)
+
+    activated = await wallet.activate_record_protection(
+        record_protection_key="42" * 32,
+    )
+    status = await wallet.get_record_protection_status()
+
+    assert activated["active"] is True
+    assert activated["verified"] is True
+    assert status["active"] is True
+    assert status["key_fingerprint"] == activated["key_fingerprint"]
+    serialized = stored["record_protection_status"]
+    assert "42" * 32 not in serialized
+    assert "mnemonic" not in serialized
+
+
+@pytest.mark.asyncio
+async def test_complete_deferred_recovery_scrubs_current_state(monkeypatch):
+    wallet = wallet_with_key()
+    wallet.name = "wallet"
+    wallet.seed_phrase = "sensitive phrase"
+    wallet.acorn_tags = [
+        ["name", "wallet"],
+        ["seedphrase", "sensitive phrase"],
+    ]
+    wallet.get_deferred_recovery = AsyncMock(
+        return_value={"status": "PENDING", "pending": True}
+    )
+    wallet.set_wallet_info = AsyncMock(
+        return_value={"event_id": "b" * 64, "verified": True}
+    )
+    wallet.set_wallet_config = AsyncMock()
+    wallet.delete_record = AsyncMock(
+        return_value={"status": "DELETE_REQUESTED"}
+    )
+
+    result = await wallet.complete_deferred_recovery()
+
+    assert result["completed"] is True
+    assert wallet.seed_phrase is None
+    assert wallet.acorn_tags == [["name", "wallet"]]
+    assert wallet.set_wallet_info.await_count == 2
+    first_payload = wallet.set_wallet_info.await_args_list[0].args[1]
+    final_payload = wallet.set_wallet_info.await_args_list[1].args[1]
+    assert "seedphrase" not in first_payload
+    assert "sensitive phrase" not in first_payload
+    assert '"status":"complete"' in final_payload
+    wallet.delete_record.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_delete_uses_event_address_and_kind_tags(monkeypatch):
     from acorn import acorn as acorn_module
 

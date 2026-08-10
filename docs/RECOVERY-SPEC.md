@@ -67,6 +67,34 @@ state. The target security contract is:
   routine command output; and
 - use the derived `nsec` as the operational secret of the running component.
 
+### Deferred backup ceremony
+
+A user-facing application may offer an explicit **complete recovery later**
+option when immediate wallet delivery matters more than completing the backup
+ceremony at creation time. This is an opt-in transitional state, not the
+default recovery policy.
+
+When selected, the integrating application keeps the Safebox Acorn mnemonic
+only in its encrypted client-held session. Acorn publishes a versioned
+`deferred_recovery` system record containing only a non-secret `PENDING` marker
+and timestamp, with relay readback verification. Applications should show a
+prominent warning on every wallet view until the ceremony is completed.
+
+Safebox Web implements this pattern with an authenticated, encrypted,
+`HttpOnly` browser cookie. Cookie loss, expiry, disconnection, or browser-data
+clearing before completion destroys the temporary mnemonic copy. The user must
+complete the backup while that original session remains available. Neither the
+Safebox Acorn mnemonic nor a Protected record mnemonic is placed on the relay.
+
+Completion requires an authenticated, confirmation-gated display of the Acorn
+mnemonic followed by an explicit acknowledgement that it was backed up. Acorn
+then replaces the pending state with a non-secret `COMPLETE` marker, and the
+application issues a replacement cookie without the temporary mnemonic.
+
+Protected Records are deliberately outside this quick-onboarding ceremony. No
+RPK or Protected record mnemonic is generated. A user may activate that
+capability later through its own backup ceremony.
+
 Once initialization ends, Acorn cannot reconstruct the original offline
 mnemonic from the `nsec`. The `nsec` contains the final private key, not the
 original entropy, BIP39 seed, derivation context, or mnemonic checksum.
@@ -119,8 +147,8 @@ equivalent control over the wallet and must receive the same protection. See
 
 Current Acorn wallet metadata may retain the generated mnemonic in encrypted
 relay-backed state, and `acorn set --show-recovery` may redisplay it. This is a
-known gap against the target offline-mnemonic policy above, not the desired
-long-term contract.
+known gap against the target offline-mnemonic policy above, except for the new,
+explicitly selected deferred-backup lifecycle described above.
 
 Before stable release, Acorn should stop writing newly generated mnemonics to
 wallet metadata, remove the expectation that they can be redisplayed later,

@@ -56,6 +56,7 @@ from acorn.record_transfer import (
     encrypt_record_transfer_envelope,
     verify_record_transfer_ciphertext,
 )
+from acorn.record_protection import validate_record_protection_key
 
 
 tail = util_funcs.str_tails
@@ -111,11 +112,15 @@ DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
+DEFERRED_RECOVERY_LABEL: str = "deferred_recovery"
+RECORD_PROTECTION_STATUS_LABEL: str = "record_protection_status"
 MELT_RECOVERY_ATTEMPTS: int = 4
 INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
     {
         "balance",
         "default",
+        DEFERRED_RECOVERY_LABEL,
+        RECORD_PROTECTION_STATUS_LABEL,
         "ecash_latest",
         "ecash_transfer_latest",
         "home_relay",
@@ -943,6 +948,7 @@ class Acorn:
         keepkey: bool = False,
         name: str = "wallet",
         seed_phrase: str | None = None,
+        retain_seed_phrase: bool = True,
     ):
         out_msg = "This is another instance"
         access_key_digest = hashlib.sha256()
@@ -960,13 +966,14 @@ class Acorn:
             nut_key = Keys()
             self.seed_phrase = seed_phrase
             self.acorn_tags = [ [ "balance", "0", "sat" ],
-                                [ "privkey", nut_key.private_key_hex() ], 
+                                [ "privkey", nut_key.private_key_hex() ],
                                 [ "mint", self.mints[0]],
                                 [ "name", name ],
-                                ["seedphrase",seed_phrase],
                                 ["owner",self.pubkey_bech32],
                                 ["local_currency", self.local_currency]
                             ]
+            if retain_seed_phrase:
+                self.acorn_tags.insert(4, ["seedphrase", seed_phrase])
             
             self.handle = generate_name_from_hex(self.pubkey_hex)
             access_key_digest.update(self.privkey_hex.encode())
@@ -2789,6 +2796,206 @@ class Acorn:
         
 
         return decrypt_content
+
+    async def store_deferred_recovery(
+        self,
+        *,
+        verify_timeout: float = 8.0,
+    ) -> dict:
+        """Persist only the non-secret state of a deferred backup ceremony."""
+
+        payload = {
+            "version": 1,
+            "status": "pending",
+            "created_at": int(time()),
+        }
+        result = await self.set_wallet_info(
+            DEFERRED_RECOVERY_LABEL,
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            verify=True,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            "status": "PENDING",
+            "pending": True,
+            "created_at": payload["created_at"],
+            "event_id": result.get("event_id"),
+            "verified": bool(result.get("verified")),
+        }
+
+    async def get_deferred_recovery(self) -> dict:
+        """Return validated deferred recovery state for the active Acorn."""
+
+        raw = await self.get_wallet_info(DEFERRED_RECOVERY_LABEL)
+        if raw is None:
+            return {"status": "ABSENT", "pending": False}
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("deferred recovery state is malformed") from exc
+        if payload.get("version") != 1:
+            raise ValueError("deferred recovery state is not supported")
+        status = str(payload.get("status", "")).lower()
+        if status == "complete":
+            return {
+                "status": "COMPLETE",
+                "pending": False,
+                "completed_at": int(payload.get("completed_at", 0)),
+            }
+        if status == "pending":
+            return {
+                "status": "PENDING",
+                "pending": True,
+                "created_at": int(payload.get("created_at", 0)),
+            }
+        raise ValueError("deferred recovery state is not supported")
+
+    async def get_deferred_recovery_status(self) -> dict:
+        """Return the persistent recovery state without returning secrets."""
+
+        raw = await self.get_wallet_info(DEFERRED_RECOVERY_LABEL)
+        if raw is None:
+            return {"status": "ABSENT", "pending": False}
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("deferred recovery state is malformed") from exc
+        if payload.get("version") != 1:
+            raise ValueError("deferred recovery state is not supported")
+        status = str(payload.get("status", "")).lower()
+        if status == "pending":
+            return {
+                "status": "PENDING",
+                "pending": True,
+                "created_at": int(payload.get("created_at", 0)),
+            }
+        if status == "complete":
+            return {
+                "status": "COMPLETE",
+                "pending": False,
+                "completed_at": int(payload.get("completed_at", 0)),
+            }
+        raise ValueError("deferred recovery state is not supported")
+
+    async def activate_record_protection(
+        self,
+        *,
+        record_protection_key: str,
+        verify_timeout: float = 8.0,
+    ) -> dict:
+        """Publish non-secret state indicating that an RPK has been activated."""
+
+        canonical_key = validate_record_protection_key(record_protection_key)
+        activated_at = int(time())
+        fingerprint = hashlib.sha256(bytes.fromhex(canonical_key)).hexdigest()[:16]
+        payload = {
+            "version": 1,
+            "status": "active",
+            "activated_at": activated_at,
+            "key_fingerprint": fingerprint,
+        }
+        result = await self.set_wallet_info(
+            RECORD_PROTECTION_STATUS_LABEL,
+            json.dumps(payload, separators=(",", ":"), sort_keys=True),
+            verify=True,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            "status": "ACTIVE",
+            "active": True,
+            "activated_at": activated_at,
+            "key_fingerprint": fingerprint,
+            "event_id": result.get("event_id"),
+            "verified": bool(result.get("verified")),
+        }
+
+    async def get_record_protection_status(self) -> dict:
+        """Read record-protection capability state without returning the RPK."""
+
+        raw = await self.get_wallet_info(RECORD_PROTECTION_STATUS_LABEL)
+        if raw is None:
+            return {"status": "DISABLED", "active": False}
+        try:
+            payload = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise ValueError("record protection status is malformed") from exc
+        if payload.get("version") != 1 or payload.get("status") != "active":
+            raise ValueError("record protection status is not supported")
+        return {
+            "status": "ACTIVE",
+            "active": True,
+            "activated_at": int(payload.get("activated_at", 0)),
+            "key_fingerprint": str(payload.get("key_fingerprint", "")),
+        }
+
+    async def complete_deferred_recovery(
+        self,
+        *,
+        verify_timeout: float = 8.0,
+    ) -> dict:
+        """Remove current recovery secrets after the user confirms backup."""
+
+        recovery = await self.get_deferred_recovery()
+        if not recovery.get("pending"):
+            return {
+                "status": recovery.get("status", "ABSENT"),
+                "pending": False,
+                "completed": recovery.get("status") == "COMPLETE",
+            }
+
+        current_tags = list(getattr(self, "acorn_tags", []) or [])
+        scrubbed_tags = [
+            tag
+            for tag in current_tags
+            if not (
+                isinstance(tag, list)
+                and len(tag) > 0
+                and tag[0] == "seedphrase"
+            )
+        ]
+        self.acorn_tags = scrubbed_tags
+        self.seed_phrase = None
+        wallet_label = str(getattr(self, "name", "") or "wallet")
+        await self.set_wallet_info(
+            wallet_label,
+            json.dumps(scrubbed_tags),
+            verify=True,
+            verify_timeout=verify_timeout,
+        )
+        await self.set_wallet_config()
+
+        deletion = await self.delete_record(
+            DEFERRED_RECOVERY_LABEL,
+            relays=[self.home_relay],
+        )
+        completed_at = int(time())
+        marker = await self.set_wallet_info(
+            DEFERRED_RECOVERY_LABEL,
+            json.dumps(
+                {
+                    "version": 1,
+                    "status": "complete",
+                    "completed_at": completed_at,
+                },
+                separators=(",", ":"),
+                sort_keys=True,
+            ),
+            verify=True,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            "status": "COMPLETE",
+            "pending": False,
+            "completed": True,
+            "completed_at": completed_at,
+            "delete_request": deletion,
+            "marker_event_id": marker.get("event_id"),
+            "advisory": (
+                "Recovery secrets were removed from current Acorn state. "
+                "NIP-09 deletion is advisory; relays or replicas may retain "
+                "historical encrypted events."
+            ),
+        }
     
     async def delete_record(
         self,

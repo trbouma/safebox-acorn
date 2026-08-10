@@ -132,8 +132,11 @@ or process isolation boundary is used.
 - Imported `nsec` wallets do not claim to have a recoverable seed phrase. The
   imported key itself must be backed up.
 - The target policy hands the Safebox Acorn mnemonic to the operator once at
-  initialization and does not retain it in configuration or relay-backed
-  state. Existing wallets may still contain an encrypted retained phrase;
+  initialization and does not retain it in ordinary configuration or
+  relay-backed state. An application may temporarily retain it inside an
+  authenticated encrypted client session while Acorn's `deferred_recovery`
+  record stores only non-secret status. Existing wallets may contain an
+  encrypted retained phrase;
   removing it safely is a documented pre-release migration requirement.
 - `acorn recover` verifies that the derived wallet state is readable from the
   selected home relay before replacing local configuration.
@@ -146,9 +149,8 @@ or process isolation boundary is used.
   `safebox-acorn/record-protection-key/v1`; it does not reuse the entropy as the
   key directly.
 - RPK entropy must be generated independently from wallet entropy and must not
-  be derived from a password or another guessable value. Safebox Web rejects
-  exact reuse of the wallet entropy in its creation flow, but cannot detect
-  every correlated or weak external source.
+  be derived from a password or another guessable value. Safebox Web requests
+  RPK entropy only during a later, explicit activation ceremony.
 - RPK validation returns a canonical 32-byte working-key representation. Acorn
   can encode the exact working key as the checksummed, separately labelled
   24-word **Protected record mnemonic** and decode it directly back to the RPK. It does not
@@ -157,7 +159,7 @@ or process isolation boundary is used.
 The RPK functions and recovery encoding remain a scaffold for the future
 protected-record profile. Acorn does not currently encrypt records with the
 RPK or persist it in ordinary configuration. Safebox Web implements an initial
-creation, backup-confirmation, authenticated redisplay, and reconnect ceremony,
+activation, backup-confirmation, authenticated redisplay, and reconnect ceremony,
 but it has not yet been independently reviewed. A consuming application that
 holds the working RPK in an encrypted session still exposes it to that
 application's execution environment while processing requests.
@@ -503,7 +505,8 @@ formal audited severity score.
 | Local key storage | `config.yml` contains the `nsec` in plaintext. File permissions do not protect against the user account, root, malware, backups, or disk acquisition. | Enforce `0600`/`0700`; minimize config; recommend encrypted disks and protected backups; design future OS keychain or HSM integration. |
 | Runtime key exposure | Python objects and process memory contain keys, proofs, and plaintext while in use. Memory is not reliably zeroized. | Minimize lifetime and logging; keep execution hosts trusted; pursue constrained signing or hardware-backed key custody. |
 | Recovery export | A confirmed recovery display can still be captured by terminals, screenshots, shell recording, clipboard tools, remote sessions, or observers. | Keep export explicit; warn users; prefer offline backup and trusted local terminals. |
-| Combined safekeeping message | The mobile-friendly Safebox Acorn safekeeping message deliberately places the Safebox Acorn mnemonic and Protected record mnemonic together for reliable backup and transfer to a password-manager vault. Anyone who obtains that one message gains both the signing-key recovery path and the RPK, so the backup no longer provides independent custody of the two factors. Clipboard managers and device synchronization may create additional copies. | Label the message as highly sensitive; require explicit backup confirmation; use `Cache-Control: no-store`; keep it out of logs, URLs, databases, and JavaScript state; warn before clipboard use and clear the clipboard afterward. High-assurance users should maintain separately protected copies or distinct storage locations in addition to any combined convenience backup. |
+| Deferred recovery backup | An explicitly deferred ceremony temporarily stores the Safebox Acorn mnemonic in an authenticated encrypted browser cookie. Relay state contains only a non-secret pending marker. Cookie theft plus the application key exposes the mnemonic; cookie loss, expiry, disconnection, or browser-data clearing before backup makes that mnemonic unavailable. | Keep deferral opt-in and short-lived; show a persistent prominent warning; verify marker readback; require authenticated display and explicit completion; replace the cookie without the mnemonic after confirmation; never put either recovery mnemonic in relay state. |
+| Separate recovery ceremonies | The Safebox Acorn mnemonic and Protected record mnemonic are generated and backed up at different times. This preserves conceptual and operational separation, but users may protect the two artifacts inconsistently or lose one of them. | Label each artifact precisely; keep Protected Records disabled until a later explicit activation and confirmed backup; never combine the two mnemonics in relay state; encourage separately protected offline copies. |
 | Key loss | Loss of both the recovery secret and usable backup means permanent loss of control. | Make recovery material available at initialization; document backup and recovery drills; support relay replication for state availability. |
 | RPK lifecycle | The RPK scaffold and 24-word Protected record mnemonic exist, and Safebox Web implements an initial backup and reconnect ceremony. The ceremony is not independently reviewed. A session-only RPK disappears when the session expires or is cleared, and placing the RPK beside the `nsec` in one application session does not isolate either secret from that execution environment. | No current record depends on the RPK. Require the separately stored Protected record mnemonic before relying on the key. Do not enable protected-record creation until the encryption format, rotation, migration, compatibility vectors, and recovery UX are implemented, tested, and reviewed. Treat application session storage only as an expiring working copy. |
 | Host/operator compromise | Whoever controls the running code can potentially alter behavior or observe secrets and plaintext. | Make the trust boundary explicit; pin and verify releases; isolate deployments; work toward hardware-backed authority boundaries. |

@@ -107,6 +107,28 @@ async def test_external_entropy_instance_stores_supplied_recovery_phrase():
 
 
 @pytest.mark.asyncio
+async def test_instance_can_keep_recovery_phrase_out_of_relay_metadata():
+    seed_phrase, expected_nsec = seed_phrase_and_nsec_from_entropy("02" * 32)
+    wallet = Acorn(
+        nsec=Keys().private_key_bech32(),
+        relays=["wss://relay.example.com"],
+        mints=["https://mint.example.com"],
+        home_relay="wss://relay.example.com",
+    )
+    wallet.set_wallet_info = AsyncMock()
+
+    initialized_nsec = await wallet.create_instance(
+        seed_phrase=seed_phrase,
+        retain_seed_phrase=False,
+    )
+
+    assert initialized_nsec == expected_nsec
+    assert wallet.seed_phrase == seed_phrase
+    stored_tags = json.loads(wallet.set_wallet_info.await_args.kwargs["label_info"])
+    assert not any(tag[0] == "seedphrase" for tag in stored_tags)
+
+
+@pytest.mark.asyncio
 async def test_imported_nsec_does_not_manufacture_seed_phrase():
     imported_nsec = Keys().private_key_bech32()
     wallet = Acorn(

@@ -199,22 +199,18 @@ cookie provides independent offline recovery factors but no runtime isolation.
 A stolen decrypted session remains usable until expiry or cookie destruction
 because there is no server-side revocation state.
 
-## Protected-record backup ceremony
+## Protected-record activation and backup ceremony
 
-At new-Acorn creation, Acorn generates or derives the RPK and converts the
+Quick onboarding does not generate an RPK. Protected Records begin in a
+disabled state and can be activated later, when the user has time and a private
+place to complete a separate backup ceremony.
+
+During explicit activation, Acorn generates or derives the RPK and converts the
 exact RPK bytes into the separately labelled, checksummed 24-word Protected
-record mnemonic. Safebox Web displays it once beside, but visibly distinct
-from, the Safebox Acorn mnemonic. A confirmed POST records
-`record_protection_backup_confirmed=true` in the newly encrypted cookie.
-
-The reference interface also constructs one mobile-friendly **Safebox Acorn
-safekeeping message** containing:
-
-- the Safebox Acorn mnemonic;
-- the Protected record mnemonic;
-- the bootstrap relay;
-- the home mint; and
-- the component public key for reference.
+record mnemonic. Acorn publishes only a non-secret active marker and one-way
+key fingerprint with verified readback. Safebox Web places the working RPK in
+the encrypted cookie, displays its mnemonic, and records
+`record_protection_backup_confirmed=true` only after a confirmed POST.
 
 The message is server-rendered in a read-only, manually selectable field. A
 small same-origin progressive enhancement may copy the complete message to the
@@ -235,11 +231,13 @@ record-protection entropy through masked form fields. The two inputs are
 mutually exclusive. Successful conversion stores only the working RPK and
 marks the supplied backup as confirmed.
 
-This ceremony makes the RPK recoverable without server-side storage, but it is
-not yet authority to create protected records. No current record depends on
-the RPK. Protected-record creation must remain disabled until the encryption
-profile, migration rules, compatibility vectors, and recovery UX have been
-implemented, tested, and reviewed.
+This ceremony makes the RPK recoverable without server-side or relay secret
+storage. The current implementation is activation scaffolding: no current
+record is encrypted with the RPK. Protected-record creation must remain
+disabled until the encryption profile, migration rules, compatibility vectors,
+and recovery UX have been implemented, tested, and reviewed. Once that profile
+is implemented, protection applies prospectively; existing records require an
+explicit verified migration rather than silent reinterpretation.
 
 ## Request-scoped dependency model
 
@@ -504,6 +502,23 @@ This is another reason to complete the migration described in the
 Until then, a hosted Acorn process should be assumed capable of accessing the
 retained mnemonic as well as the operational `nsec`.
 
+Safebox Web may also offer a deliberate **complete recovery later** path for
+rapid onboarding. The encrypted browser cookie temporarily carries the Safebox
+Acorn mnemonic. Acorn's reserved `deferred_recovery` system record contains
+only non-secret pending state and verifies relay readback before Safebox enters
+the wallet. No RPK or Protected record mnemonic exists during this flow.
+
+The wallet must display a prominent warning while that record is pending.
+Recovery display and completion are authenticated, CSRF-protected POST actions.
+On completion, Acorn writes a non-secret completion marker and Safebox replaces
+the cookie with one that omits the temporary Acorn mnemonic.
+
+This is a temporary convenience boundary, not a durable server backup. Cookie
+loss or expiry before completion makes the mnemonic unavailable. Anyone who
+obtains the application cookie key and cookie can decrypt it. Applications
+must disclose both facts and must never enable deferral implicitly outside an
+explicit quick-onboarding action.
+
 ## Testing contract
 
 The web integration should have deterministic tests for:
@@ -515,6 +530,8 @@ The web integration should have deterministic tests for:
 - cookie expiry, corruption, and unsupported versions;
 - `nsec` validation and mnemonic-to-`nsec` compatibility vectors;
 - confirmation that the mnemonic is absent from the cookie;
+- explicit opt-in, verified readback, persistent warning, confirmed display,
+  and secret-scrubbing behavior for deferred recovery;
 - matching, mismatched, absent, and `null` Origin behavior;
 - valid, invalid, expired, and tampered CSRF form tokens;
 - request-scoped Acorn construction;
