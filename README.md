@@ -64,6 +64,7 @@ implemented and reviewed.
 - [Acorn Lightning-Address Gateway Design](./docs/ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Lockbox Product Vision](./docs/LOCKBOX-PRODUCT-VISION.md)
+- [Lockbox Local Integration Milestone](./docs/LOCKBOX-LOCAL-INTEGRATION-MILESTONE-2026-08-11.md)
 - [Lockbox External Dependencies and Offline Transfer](./docs/LOCKBOX-EXTERNAL-DEPENDENCIES-AND-OFFLINE-TRANSFER.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)

@@ -518,6 +518,51 @@ def test_secret_file_accepts_owner_only_permissions(monkeypatch, tmp_path):
     assert cli._read_secret_file(str(secret_file), "seed phrase") == "alpha beta gamma"
 
 
+def test_init_uses_code_defaults_not_existing_config_defaults(monkeypatch, tmp_path):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_path = tmp_path / ".acorn" / "config.yml"
+    config_path.parent.mkdir()
+    config_path.write_text(
+        yaml.safe_dump(
+            {
+                "nsec": Keys().private_key_bech32(),
+                "home_relay": "wss://old-relay.example",
+                "mints": ["https://testnut.cashu.space"],
+            }
+        ),
+        encoding="utf-8",
+    )
+    config_path.chmod(0o600)
+    cli = importlib.reload(importlib.import_module("acorn.cli_acorn"))
+
+    class FakeAcorn:
+        def __init__(self, nsec=None, relays=None, mints=None, home_relay=None, **kwargs):
+            self.privkey_bech32 = nsec or Keys().private_key_bech32()
+            self.pubkey_bech32 = "npub1fake"
+            self.pubkey_hex = "f" * 64
+            self.seed_phrase = None
+            self.home_relay = home_relay
+            self.mints = mints
+
+        async def get_wallet_config(self):
+            return {}
+
+        async def create_instance(self, **kwargs):
+            return self.privkey_bech32
+
+        async def load_data(self):
+            return None
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(cli.init, ["--force", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    assert payload["home_relay"] == cli.default_home_relay
+    assert payload["home_mint"] == cli.default_mints[0]
+
+
 def test_recover_hidden_prompt_does_not_echo_seed_phrase(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
     secret_phrase = "alpha beta gamma"

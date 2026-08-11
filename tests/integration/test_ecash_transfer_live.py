@@ -12,6 +12,7 @@ from acorn.acorn import Acorn
 
 from tests.helpers import (
     get_test_transfer_relay,
+    is_source_wallet_environment_error,
     live_progress,
     live_relay_scenarios,
     relay_suitable,
@@ -95,16 +96,25 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
         )
 
     live_progress("ecash transfer test: publishing gift-wrapped transfer", amount=f"{amount} sat", relay=transfer_relay)
-    transfer = await _await_or_skip(
-        sender.send_ecash_transfer(
-            amount=amount,
-            recipient=source_recipient,
-            relay=transfer_relay,
-            comment="pytest live gift-wrapped transfer",
-        ),
-        "ecash transfer publish",
-        timeout,
-    )
+    try:
+        transfer = await _await_or_skip(
+            sender.send_ecash_transfer(
+                amount=amount,
+                recipient=source_recipient,
+                relay=transfer_relay,
+                comment="pytest live gift-wrapped transfer",
+            ),
+            "ecash transfer publish",
+            timeout,
+        )
+    except RuntimeError as exc:
+        if is_source_wallet_environment_error(exc):
+            pytest.skip(
+                "source wallet proof state or home relay is not ready; run "
+                "`acorn check-proofs`, `acorn repair-proofs`, and "
+                "`acorn balance --verify` before retrying the ecash relay test"
+            )
+        raise
 
     assert transfer["kind"] == 1059
     assert transfer["transfer_kind"] == 7378

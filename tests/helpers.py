@@ -68,6 +68,19 @@ async def wait_for_tx_history_entry(
     return last_history
 
 
+def is_source_wallet_environment_error(exc: Exception) -> bool:
+    """Return true for failures outside the relay currently under test."""
+
+    message = str(exc)
+    return (
+        "already spent" in message
+        or "Local wallet proof state is stale" in message
+        or "Retry payment after wallet state refresh" in message
+        or "Proof publish could not be verified" in message
+        or "error writing proofs" in message
+    )
+
+
 def relay_suitable(scenario: dict, capability: str, **details) -> None:
     result = _relay_result(scenario["relay"])
     result["scenario"] = scenario["name"]

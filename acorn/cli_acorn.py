@@ -711,20 +711,23 @@ def init(import_nsec, nsec_file, use_entropy, words, keepkey, homerelay, mint, f
         keepkey = False
         generated_nsec = True
 
+    init_home_relay_default = default_home_relay
+    init_home_mint_default = default_mints[0]
+
     home_relay = _normalize_relay(
         homerelay
         or (
-            (HOME_RELAY or default_home_relay)
+            init_home_relay_default
             if force or json_output
-            else click.prompt("home relay", default=HOME_RELAY or default_home_relay)
+            else click.prompt("home relay", default=init_home_relay_default)
         )
     )
     home_mint = _normalize_mint(
         mint
         or (
-            (MINTS[0] if MINTS else default_mints[0])
+            init_home_mint_default
             if force or json_output
-            else click.prompt("home mint", default=(MINTS[0] if MINTS else default_mints[0]))
+            else click.prompt("home mint", default=init_home_mint_default)
         )
     )
     init_mints = [home_mint]
@@ -1306,11 +1309,30 @@ def swap(consolidate):
 
 @click.command("repair-proofs", help="Prune spent proofs and rewrite wallet proof state")
 @click.option("--force", "-f", is_flag=True, default=False, help="Allow repair to clear the wallet if no usable proofs survive")
-def repair_proofs(force):
+@click.option("--refresh", is_flag=True, default=False, help="Refresh all proofs even when check-proofs reports clean state.")
+def repair_proofs(force, refresh):
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
     click.echo("Repair proofs")
-    result_out = asyncio.run(acorn_obj.repair_proofs(force_prune_stale=force))
+    report = asyncio.run(acorn_obj.check_proofs())
+    if not refresh and not report.get("requires_repair"):
+        status = report.get("status", "unknown")
+        recommendation = report.get("recommendation", "No repair indicated.")
+        click.echo(f"repair-proofs skipped ({status}). {recommendation}")
+        click.echo("Use --refresh to force a proof refresh rewrite.")
+        return
+    try:
+        result_out = asyncio.run(acorn_obj.repair_proofs(force_prune_stale=force))
+    except RuntimeError as exc:
+        message = str(exc)
+        if "Proof publish could not be verified" in message:
+            raise click.ClickException(
+                f"{message}. The mint check may still be clean, but the wallet "
+                "could not verify refreshed proof state on its home relay. "
+                "Retry later or use a more reliable home relay before forcing "
+                "a full proof refresh."
+            ) from exc
+        raise
     click.echo(result_out)
 
 @click.command("check-proofs", help="Check proof state at each mint without changing the wallet")

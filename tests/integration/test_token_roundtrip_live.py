@@ -13,6 +13,7 @@ from acorn.acorn import Acorn
 from tests.helpers import (
     ensure_test_wallet_config,
     get_test_transfer_relay,
+    is_source_wallet_environment_error,
     live_progress,
     live_relay_scenarios,
     relay_suitable,
@@ -139,16 +140,25 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
             amount=f"{amount} sat",
             relay=transfer_relay,
         )
-        funding = await _await_or_skip(
-            source_wallet.send_ecash_transfer(
-                amount=amount,
-                recipient=test_recipient,
-                relay=transfer_relay,
-                comment="pytest token round-trip funding",
-            ),
-            "token round-trip funding transfer",
-            timeout,
-        )
+        try:
+            funding = await _await_or_skip(
+                source_wallet.send_ecash_transfer(
+                    amount=amount,
+                    recipient=test_recipient,
+                    relay=transfer_relay,
+                    comment="pytest token round-trip funding",
+                ),
+                "token round-trip funding transfer",
+                timeout,
+            )
+        except RuntimeError as exc:
+            if is_source_wallet_environment_error(exc):
+                pytest.skip(
+                    "source wallet proof state or home relay is not ready; run "
+                    "`acorn check-proofs`, `acorn repair-proofs`, and "
+                    "`acorn balance --verify` before retrying the token relay test"
+                )
+            raise
 
         await _await_or_skip(test_wallet.load_data(), "test wallet load", timeout)
         received = await _await_or_skip(

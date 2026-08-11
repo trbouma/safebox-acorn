@@ -26,7 +26,7 @@ limits, authentication requirements, or infrastructure at any time.
 
 ## Current results
 
-Last updated: 2026-07-29
+Last updated: 2026-08-11
 
 The preferred relay suitability signal is a post-`1059` test result. Earlier
 results gathered while Acorn used kind `7378` as the relay-visible outer
@@ -36,6 +36,7 @@ payloads.
 
 | Relay | Status | Observed result | Observed time | Notes |
 | --- | --- | --- | --- | --- |
+| `ws://127.0.0.1:8080` | Suitable | Passed external-entropy-bootstrap-recovery-burn, private-record-put-get-list-delete | ~11.1s | Spurline local relay tested in third-party scenario. Funded ecash capabilities were tested separately in controlled mode. |
 | `wss://purplerelay.com/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~48.7s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.mostr.pub/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~49.4s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.openetr.org` | Suitable | Passed third-party scenario live test matrix | ~55s | Independently deployed relay controlled by the project operator. |

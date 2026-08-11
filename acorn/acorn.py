@@ -711,6 +711,13 @@ class Acorn:
             else:
                 #FIXME get rid of this eventually
                 wallet_info = await self.get_wallet_info(label="wallet")
+                if wallet_info is None:
+                    if force_profile_creation:
+                        self.logger.info("op=load_data status=create_profile_on_missing_data relay=%s", self.home_relay)
+                        await self.create_instance(keepkey=True)
+                        await self._load_proofs()
+                        return
+                    raise RuntimeError(f"No wallet data found on {self.home_relay}")
                 self.acorn_tags = json.loads(wallet_info)
 
 
@@ -1272,8 +1279,20 @@ class Acorn:
             len(relays_to_use),
             len(FILTER),
         )
-        async with ClientPool(relays_to_use) as c:  
-            events = await c.query(FILTER)           
+        events = []
+        try:
+            async with ClientPool(relays_to_use) as c:
+                events = await c.query(FILTER)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            self.logger.warning(
+                "op=get_user_records status=query_failed kind=%s relays=%s error=%s",
+                record_kind,
+                relays_to_use,
+                exc,
+            )
+            return []
 
         if 30000 <= int(record_kind) < 40000:
             events = self._canonical_record_events(events)

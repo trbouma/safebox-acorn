@@ -13,6 +13,7 @@ from acorn.acorn import Acorn
 from tests.helpers import (
     ensure_test_wallet_config,
     get_test_transfer_relay,
+    is_source_wallet_environment_error,
     live_progress,
     live_relay_scenarios,
     relay_suitable,
@@ -122,16 +123,25 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
 
     try:
         live_progress("burn test: funding disposable wallet", amount=f"{amount} sat", relay=transfer_relay)
-        fund_transfer = await _await_or_skip(
-            source_wallet.send_ecash_transfer(
-                amount=amount,
-                recipient=test_recipient,
-                relay=transfer_relay,
-                comment="pytest burn test funding",
-            ),
-            "burn test funding transfer",
-            timeout,
-        )
+        try:
+            fund_transfer = await _await_or_skip(
+                source_wallet.send_ecash_transfer(
+                    amount=amount,
+                    recipient=test_recipient,
+                    relay=transfer_relay,
+                    comment="pytest burn test funding",
+                ),
+                "burn test funding transfer",
+                timeout,
+            )
+        except RuntimeError as exc:
+            if is_source_wallet_environment_error(exc):
+                pytest.skip(
+                    "source wallet proof state or home relay is not ready; run "
+                    "`acorn check-proofs` and `acorn repair-proofs` before "
+                    "retrying the funded burn relay suitability test"
+                )
+            raise
         assert fund_transfer["event_id"]
         source_debit_history = await _await_or_skip(
             wait_for_tx_history_entry(
@@ -206,7 +216,9 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
                 event=burn_result["sweep"]["event_id"][:12],
                 expected=f"{amount} sats",
                 accepted=f"{sweep_back['accepted_amount']} sats",
-                queried=sweep_back.get("queried_count"),
+                queried=sweep_back.get("queried"),
+                skipped=len(sweep_back.get("skipped", [])),
+                failed=len(sweep_back.get("failed", [])),
         )
         assert sweep_back["accepted_amount"] >= amount, (
             "relay compatibility: burn sweep transfer was published but the "
@@ -217,7 +229,9 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             f"event_id={burn_result['sweep']['event_id']} "
             f"expected_amount={amount} "
             f"accepted_amount={sweep_back['accepted_amount']} "
-            f"queried_count={sweep_back.get('queried_count')}. "
+            f"queried={sweep_back.get('queried')} "
+            f"skipped={sweep_back.get('skipped')} "
+            f"failed={sweep_back.get('failed')}. "
             "This relay may not reliably return kind 1059 gift wraps or "
             "direct/legacy kind 7378 events, may have delayed propagation, "
             "or may apply filtering/"
