@@ -1,22 +1,23 @@
 ---
-title: Safebox and the Digital Go-Bag
-description: Product positioning for Safebox as a digital go-bag and community continuity system for master keys, emergency funds, critical records, and local mesh payments, powered by the Acorn protocol component.
+title: Safebox and the Digital Lock Box
+description: Product positioning for Safebox as a digital lock box and community continuity system for master keys, emergency funds, critical records, and local mesh payments, powered by the Acorn protocol component.
 ---
 
-# Safebox and the digital go-bag
+# Safebox and the digital lock box
 
-![Concept illustration of a compact Safebox appliance with an integrated keypad, NFC tap point, and physical Wi-Fi control, ready to be packed beside an open go-bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.png)
+![Concept illustration of a compact Safebox appliance with an integrated keypad, NFC tap point, short LoRa-style antenna, and physical Wi-Fi control, ready beside a small emergency bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.jpg)
 
 *An illustrative product concept: Safebox alongside the final essentials a
-family might gather before leaving home. The concept includes a physical
-keypad, Safebox Key tap point, and deliberately activated local Wi-Fi. Final
-hardware and enclosure design may differ.*
+household or community might need to keep close, recoverable, and usable. The
+concept includes a physical keypad, Safebox Key tap point, short LoRa-style
+antenna, and deliberately activated local Wi-Fi. Final hardware and enclosure
+design may differ.*
 
 ## Emergency funds and critical records, kept ready
 
-Safebox is a digital go-bag: a deliberately compact collection of the funds and
-records that a person, family, or community cannot afford to lose when ordinary
-systems become unavailable.
+Safebox is a digital lock box: a deliberately compact place for the funds,
+master keys, and records that a person, family, organization, or community
+cannot afford to lose when ordinary systems become unavailable.
 
 Safebox is the product people use. **Acorn is the protocol-first component
 inside it**, providing portable key authority, private records, funds logic,
@@ -657,7 +658,7 @@ signals; people and institutions remain responsible for interpreting them.
 
 ## Non-transferable and transferable records
 
-Many digital go-bag records are ordinarily non-transferable. A birth
+Many digital lock box records are ordinarily non-transferable. A birth
 certificate, passport, health record, or prescription concerns a subject and
 may be presented or delegated, but it is not normally transferred to a new
 owner.
@@ -692,7 +693,7 @@ product experience:
 | Safekeeping of keys, funds, and private records | Durable control and event history for transferable records |
 | Encrypted availability and recovery | Transfer, endorsement, and enforcement semantics |
 | Holder-controlled presentation | Independent validation of the control chain |
-| Digital go-bag and appliance model | Portable record-control layer |
+| Digital lock box and appliance model | Portable record-control layer |
 
 Safebox can use Acorn to safeguard the artifact and its related evidence. The
 OpenETR model can describe the control layer when transfer and current control
@@ -764,7 +765,7 @@ the invention of every underlying mechanism:
 
 > **Safebox combines established ideas from personal servers, secure hardware,
 > emergency preparedness, digital cash, and resilient networking into a
-> distinct digital go-bag architecture.**
+> distinct digital lock box architecture.**
 
 This comparison is illustrative rather than exhaustive and is not a patent,
 trademark, or formal novelty search. Adjacent products will continue to evolve;
@@ -775,7 +776,7 @@ and claims.
 
 | Safebox is | Safebox is not |
 | --- | --- |
-| A digital go-bag for high-value resources | A general-purpose cloud drive |
+| A digital lock box for high-value resources | A general-purpose cloud drive |
 | A compact home for emergency funds and critical records | An archive of every file a user owns |
 | A way to preserve artifacts and authority evidence | A system that decides who every community must trust |
 | A local-first component with encrypted replication | A requirement that every user become a server operator |
@@ -784,7 +785,7 @@ and claims.
 
 ## Product position
 
-> **Safebox is a household digital go-bag for master keys, emergency funds, and
+> **Safebox is a household digital lock box for master keys, emergency funds, and
 > critical records. It enables people and communities to safeguard essential
 > resources, preserve evidence of their origin and history, and maintain
 > encrypted continuity across independently operated infrastructure. Safebox
