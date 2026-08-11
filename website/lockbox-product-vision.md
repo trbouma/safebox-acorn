@@ -13,6 +13,11 @@ The product family is intentionally made of sibling projects. Each one should
 remain useful on its own, while also fitting into a larger local appliance
 profile.
 
+The user path should remain simple. In ordinary conditions, someone can use a
+web-connected Safebox Web service. If the hosted service, provider, or wider
+internet is unavailable, the same user app should be able to fall back to local
+Lockbox services.
+
 ![Lockbox family architecture](assets/images/lockbox-family-architecture.svg)
 
 ## The family
@@ -34,7 +39,7 @@ stack.
 
 ### Safebox Web
 
-The human-facing web application for custody, records, offers, grants, and
+The user app for custody, records, offers, grants, payments, handles, and
 workflows.
 
 [Safebox Web source](https://github.com/trbouma/safebox-web)
@@ -80,18 +85,33 @@ can request authority, but local hardware should govern high-risk actions.
 
 > Network services can assist. Local presence controls authority.
 
+## Continuity modes
+
+Lockbox gives the user app four plain operating modes:
+
+| Mode | User meaning |
+| --- | --- |
+| **Connected Mode** | Normal connected use with hosted services, relays, mints, synchronization, and updates available. |
+| **Local Mode** | Direct local use of the Lockbox appliance when upstream internet or hosted services are unavailable. |
+| **Mobile Mode** | A phone or nearby device supplies temporary upstream connectivity while Lockbox remains the local authority environment. |
+| **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages locally. |
+
+The current Safebox Web app can start by showing **Connected Mode**. Later
+versions can determine mode from service reachability, local pairing, bridge
+state, and community mesh participation.
+
 ## Product roles
 
 Acorn is the protocol authority layer. It coordinates keys, signing, encrypted
 records, wallet state, transfer flows, and recovery material.
 
-Safebox Web is the user-facing application. It gives people a browser-based
-workflow surface without becoming the system of record.
+Safebox Web is the user app. It gives people browser-based workflows without
+becoming the system of record.
 
-Grove is the blob-storage surface. It stores opaque bytes and attachments
+Grove is the blob-storage service. It stores opaque bytes and attachments
 without needing to understand plaintext records.
 
-Spurline is the relay surface. It preserves relevant Nostr events locally and
+Spurline is the relay service. It preserves relevant Nostr events locally and
 creates a base for local continuity, network synchronization, and future mesh
 operation.
 

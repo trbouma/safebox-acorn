@@ -347,23 +347,23 @@ from ordinary network access to increasingly local forms of continuity.
 
 | Mode | Available connectivity | Primary purpose |
 | --- | --- | --- |
-| **Connected mode** | Normal Ethernet or Wi-Fi with upstream access | Relay synchronization, mint access, replication, updates, and ordinary use |
-| **Local pairing mode** | A temporary Safebox SSID without upstream access | Operate the local Safebox from a nearby phone or computer when external networks are unavailable |
-| **Mobile bridge mode** | A phone or other mobile device supplies upstream connectivity | Reach relays and mints through cellular service without making the mobile device the custodian of Safebox keys |
-| **Community mesh mode** | Nearby Safeboxes and participating devices communicate directly | Exchange signed events, carry messages, and preserve encrypted replicas until broader connectivity returns |
+| **Connected Mode** | Normal Ethernet or Wi-Fi with upstream access | Relay synchronization, mint access, replication, updates, and ordinary use |
+| **Local Mode** | A temporary Safebox SSID without upstream access | Operate the local Safebox from a nearby phone or computer when external networks are unavailable |
+| **Mobile Mode** | A phone or other mobile device supplies upstream connectivity | Reach relays and mints through cellular service without making the mobile device the custodian of Safebox keys |
+| **Community Mode** | Nearby Safeboxes and participating devices communicate directly | Exchange signed events, carry messages, and preserve encrypted replicas until broader connectivity returns |
 
-> **Safebox is connected when possible, local when necessary, bridged when
-> available, and resilient together.**
+> **Safebox is connected when possible, local when necessary, mobile when
+> useful, and resilient together.**
 
-### Connected mode
+### Connected Mode
 
-Connected mode is the ordinary operating state. Safebox uses Ethernet or an
+Connected Mode is the ordinary operating state. Safebox uses Ethernet or an
 approved Wi-Fi network to reach home and replica relays, communicate with
 mints, receive software updates, and provide normal application services. The
 local appliance remains a home for Acorn state even when most interactions are
 backed by external infrastructure.
 
-### Local pairing mode
+### Local Mode
 
 When no upstream network is available, the physical Wi-Fi control can open the
 restricted local pairing network described above. A nearby phone, tablet, or
@@ -371,22 +371,22 @@ computer becomes the interface to the appliance, but it does not provide
 internet access. Local records and already available state can remain usable
 after the Safebox Key and PIN authorize the session.
 
-### Mobile bridge mode
+### Mobile Mode
 
-In bridge mode, a phone or another mobile device contributes an upstream path,
+In Mobile Mode, a phone or another mobile device contributes an upstream path,
 for example through cellular connectivity. The mobile device should be treated
 as transport rather than as the holder of Safebox authority: relay and mint
 connections remain independently authenticated, and the bridge should not
 receive plaintext keys or records merely because it carries the traffic.
 
-Bridge mode may be metered, intermittent, or power constrained. Safebox should
+Mobile Mode may be metered, intermittent, or power constrained. Safebox should
 therefore let the user prioritize essential synchronization, payment checks,
 or recovery operations instead of assuming that every replica and attachment
 must be transferred immediately.
 
-### Community mesh mode
+### Community Mode
 
-Mesh mode makes reciprocal resilience operational during a wider outage.
+Community Mode makes reciprocal resilience operational during a wider outage.
 Nearby Safeboxes or participating devices can discover approved peers and
 exchange signed events, encrypted messages, and opaque replicas without
 requiring a central internet connection. A participant that later regains

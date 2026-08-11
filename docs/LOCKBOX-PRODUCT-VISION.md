@@ -8,6 +8,12 @@ It packages Acorn, Safebox Web, Grove, and Spurline into a single local runtime
 for individuals and communities that want custody, records, storage, and relay
 continuity under local control.
 
+The ordinary user experience can still be web-connected. A person may use a
+hosted Safebox Web service in normal conditions, then fall back to their local
+Lockbox when a provider, service, or internet connection is unavailable. The
+same user app should work across those continuity modes rather than becoming a
+separate emergency-only tool.
+
 The initial target platform is:
 
 ```text
@@ -28,8 +34,8 @@ Acorn remains the protocol runtime at the center of the system. The sibling
 products use Acorn or are used by Acorn:
 
 - **Acorn**: wallet, identity, signing, record, and protocol runtime.
-- **Safebox Web**: human-facing web application for custody, records, offers,
-  grants, and workflows.
+- **Safebox Web**: user app for custody, records, offers, grants, payments,
+  handles, and workflows.
 - **Grove**: local-first Blossom storage for encrypted blobs and attachments.
 - **Spurline**: local-first Nostr relay for event continuity, community
   infrastructure, and mesh synchronization.
@@ -44,7 +50,7 @@ The intended relationship is:
         ------------------------------------------------
         |                    |                         |
    Safebox Web            Grove                   Spurline
-   human workflows      blob storage             local relay
+   user app             blob storage             local relay
         \                    |                         /
          \                   |                        /
           ---------------- Acorn ---------------------
@@ -133,12 +139,28 @@ The initial Raspberry Pi 4 target imposes useful constraints: low power,
 limited resources, local storage, simple thermal behavior, and a small physical
 footprint. Those constraints should keep the stack disciplined.
 
+## Continuity modes
+
+Lockbox should give the user app a clear vocabulary for how it is operating:
+
+| Mode | Meaning |
+| --- | --- |
+| **Connected Mode** | Normal use with upstream internet, hosted services, relays, mints, synchronization, and updates available. |
+| **Local Mode** | Direct local use of the Lockbox appliance without upstream internet; the user reaches local Acorn, Spurline, and Grove services nearby. |
+| **Mobile Mode** | A phone or other nearby device provides temporary upstream connectivity while Lockbox remains the local authority environment. |
+| **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages through local or mesh transport. |
+
+The app can hardcode **Connected Mode** at first. Later releases can determine
+mode from actual service reachability, local pairing state, bridge state, and
+community mesh participation.
+
 ## Component roles inside Lockbox
 
 ### Safebox Web
 
-Safebox Web is the human-facing surface. It should provide the local browser UI
-for records, custody, offers, grants, payments, recovery, and device status.
+Safebox Web is the user app. It should provide the local browser UI for
+records, custody, offers, grants, payments, recovery, continuity mode, and
+device status.
 
 Safebox Web should not become the system of record. It uses Acorn and presents
 flows around it.
@@ -182,6 +204,7 @@ Lockbox should eventually provide:
 
 - single-device local startup for all stack services;
 - predictable local URLs and ports;
+- a clear continuity-mode indicator in the user app;
 - health and status views for Acorn, Safebox Web, Grove, and Spurline;
 - local data directories with clear backup and migration semantics;
 - service supervision and restart behavior suitable for FreeBSD;
@@ -227,6 +250,6 @@ The long-term product promise is not that every user becomes an infrastructure
 operator. It is that individuals and communities can run a credible local home
 for keys, records, funds, storage, and relay continuity when that matters.
 
-Acorn gives the stack portable protocol authority. Safebox Web gives it a human
-interface. Grove preserves encrypted blobs. Spurline preserves events. Lockbox
+Acorn gives the stack portable protocol authority. Safebox Web gives it the
+user app. Grove preserves encrypted blobs. Spurline preserves events. Lockbox
 brings them together as an appliance.
