@@ -42,6 +42,7 @@ nav:
       - A Better Vocabulary for Digital Policy: better-policy-vocabulary.md
       - User-Controlled Architecture: user-controlled-architecture.md
       - Nostr-Native Approach: nostr-native-approach.md
+      - Lockbox Product Vision: lockbox-product-vision.md
   - Continuity:
       - Recovery and Continuity: recovery-and-continuity.md
       - Relay Availability and Reciprocal Resilience: relay-availability-and-reciprocal-resilience.md

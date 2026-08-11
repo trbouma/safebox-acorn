@@ -20,6 +20,8 @@ should boot predictably, run locally, expose a clear local web interface, keep
 state on durable local storage, and use hardware-backed controls for sensitive
 authority.
 
+![Lockbox family architecture](./assets/lockbox-family-architecture.svg)
+
 ## Product relationship
 
 Acorn remains the protocol runtime at the center of the system. The sibling
