@@ -46,13 +46,16 @@ from acorn.func_utils import (
     npub_to_hex,
 )
 from acorn.record_transfer import (
+    RECORD_PRESENTATION_PREFIX,
     RecordTransferDescriptor,
     RecordTransferEnvelope,
     RecordTransferError,
     decode_record_transfer_descriptor,
+    decode_record_presentation_descriptor,
     decrypt_record_transfer_envelope,
     derive_record_transfer_authority_hex,
     encode_record_transfer_descriptor,
+    encode_record_presentation_descriptor,
     encrypt_record_transfer_envelope,
     verify_record_transfer_ciphertext,
 )
@@ -4448,8 +4451,13 @@ class Acorn:
         descriptor_value: str,
         *,
         allowed_servers: List[str] | None = None,
+        presentation: bool = False,
     ) -> tuple[RecordTransferDescriptor, RecordTransferEnvelope, BlossomClient]:
-        descriptor = decode_record_transfer_descriptor(descriptor_value)
+        descriptor = (
+            decode_record_presentation_descriptor(descriptor_value)
+            if presentation
+            else decode_record_transfer_descriptor(descriptor_value)
+        )
         if not self._record_transfer_server_allowed(
             descriptor.server,
             allowed_servers,
@@ -4479,6 +4487,11 @@ class Acorn:
             ciphertext,
             secret=descriptor.secret,
         )
+        expected_capability = "presentation" if presentation else "transfer"
+        if envelope.capability != expected_capability:
+            raise RecordTransferError(
+                f"Record capability is {envelope.capability}, not {expected_capability}"
+            )
         return descriptor, envelope, client
 
     async def create_record_transfer(
@@ -4487,6 +4500,7 @@ class Acorn:
         *,
         expires_in: int = 3600,
         blossom_transfer_server: str | None = None,
+        _capability: str = "transfer",
     ) -> Dict[str, Any]:
         """Create a short-lived encrypted bearer transfer for one record."""
 
@@ -4506,6 +4520,7 @@ class Acorn:
                 payload=record.payload,
                 blob_data=blob_data,
                 blob_type=blob_type or record.blobtype,
+                capability=_capability,
             )
         )
         server = (blossom_transfer_server or self._default_blossom_xfer_server()).rstrip("/")
@@ -4516,7 +4531,7 @@ class Acorn:
         upload = client.upload_blob(
             server,
             data=ciphertext,
-            description="Temporary Acorn record transfer",
+            description=f"Temporary Acorn record {_capability}",
         )
         ciphertext_sha256 = hashlib.sha256(ciphertext).hexdigest()
         uploaded_sha256 = str(upload.get("sha256", "")).lower()
@@ -4524,13 +4539,16 @@ class Acorn:
             raise RuntimeError("Transfer server returned an unexpected ciphertext hash")
         blob_url = upload.get("url") or f"{server}/{ciphertext_sha256}"
         expires_at = int(time()) + expires_in
-        descriptor = encode_record_transfer_descriptor(
-            RecordTransferDescriptor(
+        descriptor_value = RecordTransferDescriptor(
                 blob_url=str(blob_url),
                 ciphertext_sha256=ciphertext_sha256,
                 secret=secret,
                 expires_at=expires_at,
             )
+        descriptor = (
+            encode_record_presentation_descriptor(descriptor_value)
+            if _capability == "presentation"
+            else encode_record_transfer_descriptor(descriptor_value)
         )
         return {
             "descriptor": descriptor,
@@ -4540,6 +4558,22 @@ class Acorn:
             "server": server,
             "ciphertext_sha256": ciphertext_sha256,
         }
+
+    async def create_record_presentation(
+        self,
+        record_name: str,
+        *,
+        expires_in: int = 3600,
+        blossom_transfer_server: str | None = None,
+    ) -> Dict[str, Any]:
+        """Create a view-only record presentation bearer capability."""
+
+        return await self.create_record_transfer(
+            record_name,
+            expires_in=expires_in,
+            blossom_transfer_server=blossom_transfer_server,
+            _capability="presentation",
+        )
 
     async def inspect_record_transfer(
         self,
@@ -4562,6 +4596,35 @@ class Acorn:
             "server": descriptor.server,
         }
 
+    async def inspect_record_presentation(
+        self,
+        descriptor_value: str,
+        *,
+        allowed_servers: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Decrypt presentation content for display without storing it."""
+
+        descriptor, envelope, _ = self._read_record_transfer(
+            descriptor_value,
+            allowed_servers=allowed_servers,
+            presentation=True,
+        )
+        return {
+            "label": envelope.label,
+            "record_type": envelope.record_type,
+            "payload": envelope.payload,
+            "has_original": envelope.blob_data is not None,
+            "blob_data": envelope.blob_data,
+            "blob_type": envelope.blob_type,
+            "blob_sha256": (
+                hashlib.sha256(envelope.blob_data).hexdigest()
+                if envelope.blob_data is not None
+                else None
+            ),
+            "expires_at": descriptor.expires_at,
+            "server": descriptor.server,
+        }
+
     async def delete_record_transfer(
         self,
         descriptor_value: str,
@@ -4570,9 +4633,17 @@ class Acorn:
     ) -> Dict[str, Any]:
         """Delete a temporary transfer using its transfer-scoped authority."""
 
-        descriptor = decode_record_transfer_descriptor(
-            descriptor_value,
-            require_unexpired=False,
+        normalized_descriptor = str(descriptor_value or "").strip()
+        descriptor = (
+            decode_record_presentation_descriptor(
+                normalized_descriptor,
+                require_unexpired=False,
+            )
+            if normalized_descriptor.lower().startswith(RECORD_PRESENTATION_PREFIX)
+            else decode_record_transfer_descriptor(
+                normalized_descriptor,
+                require_unexpired=False,
+            )
         )
         if not self._record_transfer_server_allowed(
             descriptor.server,

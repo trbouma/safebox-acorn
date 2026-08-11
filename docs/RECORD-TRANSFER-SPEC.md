@@ -4,8 +4,14 @@
 
 Version 1 is implemented as an initial interoperable format. It supports a
 short-lived encrypted copy of one Acorn record, optional inclusion of its
-Original Record, Base64URL QR transport, receiver-side import, sender-initiated
-revocation, and best-effort deletion after successful storage.
+Original Record, Base64URL QR transport, and two explicit capabilities:
+
+- **transfer**, which permits a receiver-confirmed import; and
+- **presentation**, which permits temporary viewing and verification but not
+  import through the Acorn API.
+
+Both modes support presenter- or sender-initiated closure and best-effort
+recipient cleanup.
 
 ## Purpose
 
@@ -21,6 +27,8 @@ The architectural experience that led to this smaller model is recorded in
 [Record Sharing Lessons Learned](RECORD-SHARING-LESSONS-LEARNED.md).
 
 ## User flow
+
+### Transfer
 
 1. The sender selects **Share** and confirms creation of a temporary copy.
 2. Acorn reads the record and, when present, decrypts its Original Record.
@@ -40,12 +48,36 @@ authority, and requests immediate deletion of the temporary blob. This changes
 neither the sender's original record nor a copy that a recipient has already
 imported.
 
+### Presentation
+
+1. The presenter selects **Present** and confirms creation of a temporary
+   presentation.
+2. Acorn packages the record and optional Original Record in an envelope whose
+   authenticated capability is `presentation`.
+3. Safebox Web displays an `acorn:record-presentation:` QR descriptor.
+4. The recipient scans the descriptor and views the record, its Original
+   Record, and available Control History in a server-rendered representation.
+5. The representation offers no import operation. Selecting **Done** requests
+   deletion of the temporary object.
+6. The presenter may independently select **Stop Presenting**, including after
+   the recipient has already deleted the object.
+
+Presentation is a constrained application and protocol capability, not a way
+to prevent a recipient from taking a screenshot, photographing the screen, or
+otherwise retaining what they were permitted to view.
+
 ## Descriptor
 
 The URI form is:
 
 ```text
 acorn:record-transfer:<base64url(compact-json)>
+```
+
+Presentation uses the distinct URI form:
+
+```text
+acorn:record-presentation:<base64url(compact-json)>
 ```
 
 The compact JSON object contains:
@@ -94,6 +126,7 @@ does not derive or reveal either Acorn's permanent key.
 The encrypted CBOR envelope contains:
 
 - version;
+- authenticated capability (`transfer` or `presentation`);
 - suggested record label;
 - record type;
 - JSON-serializable payload; and
@@ -105,6 +138,12 @@ only for the compact QR descriptor. The outer descriptor hash authenticates the
 retrieved ciphertext before decryption; AES-GCM authenticates the envelope; and
 the inner Original Record hash detects unexpected plaintext changes before the
 receiver stores it.
+
+The capability is inside the authenticated AES-GCM envelope. A caller cannot
+turn a presentation into an importable transfer merely by replacing its URI
+prefix: Acorn rejects a descriptor whose outer prefix and authenticated
+capability disagree. Legacy version 1 envelopes without a capability field are
+interpreted as transfers for compatibility.
 
 ## Import and deletion ordering
 
@@ -131,6 +170,12 @@ permits this cleanup after descriptor expiry because expiry should not prevent
 the holder of the transfer-scoped authority from requesting deletion. A failed
 or timed-out request is reported as unconfirmed and must not be represented as
 successful revocation.
+
+Presentation cleanup follows the same best-effort deletion model. The
+presenter and recipient hold the same narrowly scoped bearer capability, so
+either may request deletion. Cleanup is therefore idempotent from the user-flow
+perspective: the second party receives a graceful closed result if the first
+has already removed the temporary object.
 
 ## Security and trust model
 
@@ -164,6 +209,8 @@ consistent with the established Safebox Web trust boundary.
 - Sharing status is established locally by confirmed sender deletion or by
   successful receiver storage followed by its deletion request; there is no
   sender-visible receiver acknowledgement event yet.
+- Presentation prevents import through conforming Acorn and Safebox Web
+  operations, but cannot prevent screen capture or other out-of-band copying.
 - Expired-object garbage collection depends on the transfer-server operator.
 - Label collisions are rejected by Safebox Web rather than silently replacing
   an existing receiving record.

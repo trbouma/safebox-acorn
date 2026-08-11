@@ -153,8 +153,9 @@ Acorn owns:
 
 Acorn also owns the application-neutral record-transfer envelope, Base64URL
 descriptor, transfer-scoped encryption and Blossom authority, import
-validation, and cleanup ordering. Applications own the QR presentation,
-camera acquisition, confirmation pages, and operator allowlist. See
+validation, presentation-only inspection, authenticated capability separation,
+and cleanup ordering. Applications own QR rendering, camera acquisition,
+confirmation and verification pages, and the operator allowlist. See
 [Acorn Record Transfer Specification](RECORD-TRANSFER-SPEC.md) and
 [Record Sharing Lessons Learned](RECORD-SHARING-LESSONS-LEARNED.md).
 

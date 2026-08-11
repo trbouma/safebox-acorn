@@ -63,6 +63,7 @@ implemented and reviewed.
 - [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Acorn Lightning-Address Gateway Design](./docs/ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
+- [Lockbox Product Vision](./docs/LOCKBOX-PRODUCT-VISION.md)
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)

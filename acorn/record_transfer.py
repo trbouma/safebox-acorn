@@ -18,6 +18,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 RECORD_TRANSFER_PREFIX = "acorn:record-transfer:"
+RECORD_PRESENTATION_PREFIX = "acorn:record-presentation:"
 _ENVELOPE_MAGIC = b"ACRN-RECORD-XFER-1\x00"
 _ENVELOPE_AAD = b"acorn/record-transfer/envelope/v1"
 _KEY_INFO = b"acorn/record-transfer/encryption-key/v1"
@@ -89,10 +90,23 @@ class RecordTransferEnvelope:
     payload: Any
     blob_data: bytes | None = None
     blob_type: str | None = None
+    capability: str = "transfer"
     version: int = 1
 
 
 def encode_record_transfer_descriptor(descriptor: RecordTransferDescriptor) -> str:
+    return _encode_record_descriptor(descriptor, prefix=RECORD_TRANSFER_PREFIX)
+
+
+def encode_record_presentation_descriptor(descriptor: RecordTransferDescriptor) -> str:
+    return _encode_record_descriptor(descriptor, prefix=RECORD_PRESENTATION_PREFIX)
+
+
+def _encode_record_descriptor(
+    descriptor: RecordTransferDescriptor,
+    *,
+    prefix: str,
+) -> str:
     parsed = urlsplit(descriptor.blob_url)
     if parsed.scheme not in {"http", "https"} or not parsed.netloc:
         raise RecordTransferError("Record transfer blob URL must use HTTP or HTTPS")
@@ -119,7 +133,7 @@ def encode_record_transfer_descriptor(descriptor: RecordTransferDescriptor) -> s
         separators=(",", ":"),
         sort_keys=True,
     ).encode("utf-8")
-    return RECORD_TRANSFER_PREFIX + _b64url_encode(payload)
+    return prefix + _b64url_encode(payload)
 
 
 def decode_record_transfer_descriptor(
@@ -128,10 +142,39 @@ def decode_record_transfer_descriptor(
     now: int | None = None,
     require_unexpired: bool = True,
 ) -> RecordTransferDescriptor:
+    return _decode_record_descriptor(
+        value,
+        prefix=RECORD_TRANSFER_PREFIX,
+        now=now,
+        require_unexpired=require_unexpired,
+    )
+
+
+def decode_record_presentation_descriptor(
+    value: str,
+    *,
+    now: int | None = None,
+    require_unexpired: bool = True,
+) -> RecordTransferDescriptor:
+    return _decode_record_descriptor(
+        value,
+        prefix=RECORD_PRESENTATION_PREFIX,
+        now=now,
+        require_unexpired=require_unexpired,
+    )
+
+
+def _decode_record_descriptor(
+    value: str,
+    *,
+    prefix: str,
+    now: int | None = None,
+    require_unexpired: bool = True,
+) -> RecordTransferDescriptor:
     normalized = str(value or "").strip()
-    if not normalized.lower().startswith(RECORD_TRANSFER_PREFIX):
-        raise RecordTransferError("QR code is not an Acorn record transfer")
-    encoded = normalized[len(RECORD_TRANSFER_PREFIX) :]
+    if not normalized.lower().startswith(prefix):
+        raise RecordTransferError("QR code is not the expected Acorn record capability")
+    encoded = normalized[len(prefix) :]
     try:
         data = json.loads(_b64url_decode(encoded, field="descriptor"))
         descriptor = RecordTransferDescriptor(
@@ -146,7 +189,7 @@ def decode_record_transfer_descriptor(
     if descriptor.version != 1:
         raise RecordTransferError("Record transfer version is not supported")
     # Reuse the strict structural validation without changing the supplied form.
-    encode_record_transfer_descriptor(descriptor)
+    _encode_record_descriptor(descriptor, prefix=prefix)
     if require_unexpired and descriptor.expires_at < int(time.time() if now is None else now):
         raise RecordTransferError("Record transfer has expired")
     return descriptor
@@ -160,7 +203,10 @@ def encrypt_record_transfer_envelope(
     transfer_secret = secret or os.urandom(32)
     key = _derive(transfer_secret, _KEY_INFO)
     nonce = os.urandom(12)
+    if envelope.capability not in {"transfer", "presentation"}:
+        raise RecordTransferError("Record capability mode is not supported")
     payload: dict[str, Any] = {
+        "c": envelope.capability,
         "l": envelope.label,
         "p": envelope.payload,
         "t": envelope.record_type,
@@ -212,12 +258,16 @@ def decrypt_record_transfer_envelope(
         record_type = str(data["t"]).strip()
         if not label or len(label) > 200 or not record_type:
             raise RecordTransferError("Record transfer metadata is invalid")
+        capability = str(data.get("c", "transfer"))
+        if capability not in {"transfer", "presentation"}:
+            raise RecordTransferError("Record capability mode is not supported")
         return RecordTransferEnvelope(
             label=label,
             record_type=record_type,
             payload=data["p"],
             blob_data=blob_data,
             blob_type=blob_type,
+            capability=capability,
         )
     except RecordTransferError:
         raise

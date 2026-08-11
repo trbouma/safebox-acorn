@@ -6,14 +6,17 @@ from unittest.mock import AsyncMock
 import pytest
 
 from acorn.record_transfer import (
+    RECORD_PRESENTATION_PREFIX,
     RECORD_TRANSFER_PREFIX,
     RecordTransferDescriptor,
     RecordTransferEnvelope,
     RecordTransferError,
     decode_record_transfer_descriptor,
+    decode_record_presentation_descriptor,
     decrypt_record_transfer_envelope,
     derive_record_transfer_authority_hex,
     encode_record_transfer_descriptor,
+    encode_record_presentation_descriptor,
     encrypt_record_transfer_envelope,
     verify_record_transfer_ciphertext,
 )
@@ -61,6 +64,31 @@ def test_record_transfer_envelope_round_trip_with_original_record() -> None:
 
     verify_record_transfer_ciphertext(ciphertext, descriptor)
     assert decrypt_record_transfer_envelope(ciphertext, secret=secret) == envelope
+
+
+def test_record_presentation_descriptor_and_envelope_preserve_mode() -> None:
+    descriptor = RecordTransferDescriptor(
+        blob_url="https://blossom.example/" + "ab" * 32,
+        ciphertext_sha256="ab" * 32,
+        secret=b"p" * 32,
+        expires_at=2_000_000_000,
+    )
+    encoded = encode_record_presentation_descriptor(descriptor)
+    ciphertext, secret = encrypt_record_transfer_envelope(
+        RecordTransferEnvelope(
+            label="Credential",
+            record_type="generic",
+            payload={"claim": "example"},
+            capability="presentation",
+        ),
+        secret=b"p" * 32,
+    )
+
+    assert encoded.startswith(RECORD_PRESENTATION_PREFIX)
+    assert decode_record_presentation_descriptor(encoded, now=1_900_000_000) == descriptor
+    assert decrypt_record_transfer_envelope(ciphertext, secret=secret).capability == "presentation"
+    with pytest.raises(RecordTransferError):
+        decode_record_transfer_descriptor(encoded, now=1_900_000_000)
 
 
 def test_record_transfer_rejects_expired_and_tampered_values() -> None:
@@ -157,6 +185,59 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
         ("https://blossom.example", transfer["ciphertext_sha256"])
     ]
     assert stored_blobs == {}
+
+
+@pytest.mark.asyncio
+async def test_presentation_envelope_cannot_be_imported_as_transfer(monkeypatch) -> None:
+    stored_blobs: dict[str, bytes] = {}
+
+    class FakeBlob:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        def get_bytes(self) -> bytes:
+            return self._data
+
+    class FakeBlossomClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def upload_blob(self, server, data, description):
+            digest = hashlib.sha256(data).hexdigest()
+            stored_blobs[digest] = data
+            return {"sha256": digest, "url": f"{server}/{digest}"}
+
+        def get_blob(self, server, sha256):
+            return FakeBlob(stored_blobs[sha256])
+
+    monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
+    sender = object.__new__(Acorn)
+    sender.blossom_xfer_server = "https://blossom.example"
+    sender.logger = logging.getLogger("record-presentation-sender-test")
+    sender.get_record_safebox = AsyncMock(
+        return_value=SimpleNamespace(
+            type="generic",
+            payload={"credential": "example"},
+            blobref=None,
+            blobtype=None,
+        )
+    )
+    presentation = await sender.create_record_presentation("Credential")
+    disguised_transfer = (
+        RECORD_TRANSFER_PREFIX
+        + presentation["descriptor"][len(RECORD_PRESENTATION_PREFIX) :]
+    )
+    receiver = object.__new__(Acorn)
+    receiver.logger = logging.getLogger("record-presentation-receiver-test")
+    receiver.put_record = AsyncMock()
+
+    with pytest.raises(RecordTransferError, match="presentation, not transfer"):
+        await receiver.accept_record_transfer(
+            disguised_transfer,
+            record_name="Copied Credential",
+            allowed_servers=["https://blossom.example"],
+        )
+    receiver.put_record.assert_not_awaited()
 
 
 @pytest.mark.asyncio
