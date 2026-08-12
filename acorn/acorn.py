@@ -94,6 +94,8 @@ PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
 ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
+ECASH_TRANSFER_CURSOR_VERSION: int = 2
+ECASH_TRANSFER_LEGACY_EVENT_ID: str = "f" * 64
 
 
 class MalformedIncomingTransfer(ValueError):
@@ -3736,6 +3738,57 @@ class Acorn:
             return int(created_at.timestamp())
         return int(created_at)
 
+    def _event_checkpoint(self, event: Event) -> tuple[int, str]:
+        """Return the deterministic ordering key used by incoming-funds cursors."""
+
+        return self._event_timestamp(event), str(event.id or "").lower()
+
+    @staticmethod
+    def _parse_ecash_transfer_checkpoint(raw: object) -> tuple[int, str]:
+        """Read a v2 checkpoint or safely migrate a timestamp-only cursor."""
+
+        if raw is None or raw == "":
+            return 0, ""
+        if isinstance(raw, dict):
+            payload = raw
+        else:
+            normalized = str(raw).strip()
+            if not normalized:
+                return 0, ""
+            try:
+                payload = json.loads(normalized)
+            except (json.JSONDecodeError, TypeError):
+                payload = None
+            if not isinstance(payload, dict):
+                timestamp = int(normalized)
+                if timestamp < 0:
+                    raise ValueError("incoming funds cursor timestamp cannot be negative")
+                # The former cursor represented the whole second as processed.
+                return timestamp, ECASH_TRANSFER_LEGACY_EVENT_ID
+
+        timestamp = int(payload.get("created_at", 0))
+        event_id = str(payload.get("event_id") or "").strip().lower()
+        if timestamp < 0:
+            raise ValueError("incoming funds cursor timestamp cannot be negative")
+        if event_id and (
+            len(event_id) != 64
+            or not all(character in string.hexdigits for character in event_id)
+        ):
+            raise ValueError("incoming funds cursor event_id must be 64-character hex")
+        return timestamp, event_id
+
+    @staticmethod
+    def _serialize_ecash_transfer_checkpoint(checkpoint: tuple[int, str]) -> str:
+        timestamp, event_id = checkpoint
+        return json.dumps(
+            {
+                "version": ECASH_TRANSFER_CURSOR_VERSION,
+                "created_at": int(timestamp),
+                "event_id": str(event_id),
+            },
+            separators=(",", ":"),
+        )
+
     async def _resolve_receive_relays_from_kind0(
         self,
         receive_pubkey: str,
@@ -4286,6 +4339,7 @@ class Acorn:
         event_id: str | None = None,
         preview_only: bool = False,
         finalize: bool = True,
+        max_pages: int = 100,
     ) -> Dict[str, Any]:
         """Accept Acorn ecash transfers addressed to this wallet.
 
@@ -4317,15 +4371,22 @@ class Acorn:
             else f"{ECASH_TRANSFER_CURSOR_LABEL}:{receive_pubkey}"
         )
         cursor_from_record = False
-        cursor = int(since or 0)
+        cursor_checkpoint = self._parse_ecash_transfer_checkpoint(since or 0)
         if since is None:
             cursor_from_record = True
             try:
                 cursor_raw = await self.get_wallet_info(cursor_label, record_kind=37376)
-                cursor = int(cursor_raw) if cursor_raw else 0
+                cursor_checkpoint = self._parse_ecash_transfer_checkpoint(cursor_raw)
             except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
                 self.logger.debug("op=sweep_ecash_transfers status=no_cursor error=%s", exc)
-                cursor = 0
+                cursor_checkpoint = (0, "")
+
+        query_limit = int(limit)
+        page_limit = int(max_pages)
+        if query_limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        if page_limit <= 0:
+            raise ValueError("max_pages must be greater than zero")
 
         if target_event_id:
             query_filter = [{
@@ -4339,13 +4400,78 @@ class Acorn:
                 "kinds": [ECASH_TRANSFER_GIFT_WRAP_KIND, ECASH_TRANSFER_KIND],
                 "#p": [receive_pubkey],
             }]
-        if cursor > 0 and not target_event_id:
-            query_filter[0]["since"] = cursor + 1
+        if cursor_checkpoint[0] > 0 and not target_event_id:
+            # Nostr `since` is inclusive. Re-query the checkpoint second and
+            # discard keys at or below the stored (created_at, event_id) tuple.
+            query_filter[0]["since"] = cursor_checkpoint[0]
 
+        query_pages: List[Dict[str, Any]] = []
+        pagination_exhausted = True
+        pagination_snapshot = int(time())
+        seen_events: Dict[str, Event] = {}
         async with ClientPool(relay_pool) as c:
-            events: List[Event] = await c.query(query_filter)
+            if target_event_id:
+                query_pages.append(dict(query_filter[0]))
+                events: List[Event] = await c.query(query_filter)
+                for event in events:
+                    seen_events[str(event.id)] = event
+            else:
+                page_until = pagination_snapshot
+                previous_page_signature: tuple[str, ...] | None = None
+                for _page_number in range(1, page_limit + 1):
+                    page_filter = dict(query_filter[0])
+                    page_filter["until"] = page_until
+                    query_pages.append(page_filter)
+                    page_events: List[Event] = await c.query([page_filter])
+                    page_signature = tuple(
+                        sorted(str(event.id) for event in page_events)
+                    )
+                    for event in page_events:
+                        seen_events[str(event.id)] = event
 
-        events_sorted = sorted(events, key=self._event_timestamp)
+                    if len(page_events) < query_limit:
+                        break
+
+                    oldest_timestamp = min(
+                        self._event_timestamp(event) for event in page_events
+                    )
+                    if oldest_timestamp <= cursor_checkpoint[0]:
+                        raise RuntimeError(
+                            "Incoming funds pagination could not prove a complete "
+                            f"checkpoint-second page at timestamp {oldest_timestamp}; "
+                            "increase the page size or use another relay. The cursor "
+                            "was not advanced."
+                        )
+                    if (
+                        oldest_timestamp == page_until
+                        and page_signature == previous_page_signature
+                    ):
+                        raise RuntimeError(
+                            "Incoming funds pagination could not advance at "
+                            f"timestamp {oldest_timestamp}; the relay returned a "
+                            "saturated same-second page. The cursor was not advanced."
+                        )
+                    # Keep the boundary inclusive. The next page may contain
+                    # additional events from that second; event IDs deduplicate
+                    # the overlap.
+                    page_until = oldest_timestamp
+                    previous_page_signature = page_signature
+                else:
+                    pagination_exhausted = False
+                    raise RuntimeError(
+                        "Incoming funds pagination reached max_pages before the "
+                        "stored cursor. The cursor was not advanced."
+                    )
+
+        events_sorted = sorted(
+            (
+                event
+                for event in seen_events.values()
+                if target_event_id
+                or self._event_checkpoint(event) > cursor_checkpoint
+            ),
+            key=self._event_checkpoint,
+        )
         receive_enc = NIP44Encrypt(receive_key)
         receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND)
         legacy_receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_KIND)
@@ -4353,10 +4479,11 @@ class Acorn:
         previewed: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
-        latest_processed = cursor
+        latest_checkpoint = cursor_checkpoint
 
         for each_event in events_sorted:
             event_ts = self._event_timestamp(each_event)
+            event_checkpoint = self._event_checkpoint(each_event)
             try:
                 sender_pubkey = each_event.pub_key
                 mode = "direct"
@@ -4381,7 +4508,7 @@ class Acorn:
                             "timestamp": event_ts,
                             "error": str(unwrap_exc),
                         })
-                        latest_processed = max(latest_processed, event_ts)
+                        latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                         continue
                     try:
                         decrypted = receive_enc.decrypt(each_event.content, each_event.pub_key)
@@ -4405,7 +4532,7 @@ class Acorn:
                         "reason": "unsupported_payload_type",
                         "timestamp": event_ts,
                     })
-                    latest_processed = max(latest_processed, event_ts)
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                     continue
 
                 token = payload.get("token")
@@ -4505,7 +4632,7 @@ class Acorn:
                     "settlement": payload.get("settlement") or "mint-confirmed",
                     "provisional": provisional,
                 })
-                latest_processed = max(latest_processed, event_ts)
+                latest_checkpoint = max(latest_checkpoint, event_checkpoint)
             except MalformedIncomingTransfer as exc:
                 if preview_only:
                     failed.append({
@@ -4541,7 +4668,7 @@ class Acorn:
                     )
                     break
                 failed.append(terminal_error)
-                latest_processed = max(latest_processed, event_ts)
+                latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                 self.logger.error(
                     "op=sweep_ecash_transfers status=terminal_error "
                     "event_id=%s error=%s",
@@ -4563,8 +4690,17 @@ class Acorn:
                 )
                 break
 
-        if not preview_only and advance_cursor and latest_processed > cursor:
-            await self.set_wallet_info(cursor_label, str(latest_processed), record_kind=37376)
+        if (
+            not preview_only
+            and advance_cursor
+            and not target_event_id
+            and latest_checkpoint > cursor_checkpoint
+        ):
+            await self.set_wallet_info(
+                cursor_label,
+                self._serialize_ecash_transfer_checkpoint(latest_checkpoint),
+                record_kind=37376,
+            )
 
         return {
             "status": "OK" if not failed else "PARTIAL",
@@ -4573,13 +4709,25 @@ class Acorn:
             "relay_discovery": relay_discovery,
             "cursor_label": cursor_label,
             "query_filter": query_filter,
+            "query_pages": query_pages,
+            "page_count": len(query_pages),
+            "pagination_exhausted": pagination_exhausted,
+            "pagination_snapshot": pagination_snapshot,
             "event_id": target_event_id or None,
             "receive_pubkey": receive_pubkey,
             "wallet_pubkey": self.pubkey_hex,
             "used_transient_receive_key": bool(receive_nsec),
-            "since": cursor,
+            "since": cursor_checkpoint[0],
+            "cursor_checkpoint": {
+                "created_at": cursor_checkpoint[0],
+                "event_id": cursor_checkpoint[1],
+            },
             "cursor_from_record": cursor_from_record,
-            "latest_processed": latest_processed,
+            "latest_processed": latest_checkpoint[0],
+            "latest_checkpoint": {
+                "created_at": latest_checkpoint[0],
+                "event_id": latest_checkpoint[1],
+            },
             "queried": len(events_sorted),
             "accepted": accepted,
             "preview_only": bool(preview_only),

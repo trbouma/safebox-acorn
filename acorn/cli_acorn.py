@@ -1829,12 +1829,14 @@ def balance(json_output, show_mints, verify_mint_state):
 @click.command("receive-ecash", help="Receive incoming funds transfers into this Acorn")
 @click.option("--since", default=None, type=int, help="Override the incoming funds transfer cursor.")
 @click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps or direct kind 7378 transfers.")
+@click.option("--page-size", default=1024, type=click.IntRange(min=1), show_default=True, help="Maximum relay events requested per page.")
+@click.option("--max-pages", default=100, type=click.IntRange(min=1), show_default=True, help="Maximum relay pages read in one receive operation.")
 @click.option("--receive-key", is_flag=True, help="Prompt privately for a transient receiving nsec; it is not stored.")
 @click.option("--receive-nsec-file", default=None, metavar="PATH", help="Read a transient receiving nsec from a chmod-600 file, or '-' for stdin.")
 @click.option("--event-id", default=None, help="Receive a specific kind 1059 gift-wrap or direct kind 7378 event id; bypasses recipient tag and cursor query.")
 @click.option("--no-advance", is_flag=True, help="Do not advance the stored receive cursor.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
-def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_advance, json_output):
+def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_file, event_id, no_advance, json_output):
     receive_nsec = _private_key_from_secure_input(receive_key, receive_nsec_file)
     if receive_nsec is not None:
         try:
@@ -1849,6 +1851,8 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
             acorn_obj.sweep_ecash_transfers(
                 since=since,
                 relays=sweep_relays,
+                limit=page_size,
+                max_pages=max_pages,
                 advance_cursor=not no_advance,
                 receive_nsec=receive_nsec,
                 event_id=event_id,
@@ -1875,7 +1879,10 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
             click.echo(f"Receive relay discovery: {relay_discovery.get('reason', 'not available')}")
     if result.get("event_id"):
         click.echo(f"Direct event lookup: {result['event_id']}")
-    click.echo(f"Queried {result['queried']} transfer event(s).")
+    click.echo(
+        f"Queried {result['queried']} transfer event(s) across "
+        f"{result.get('page_count', 1)} relay page(s)."
+    )
     confirmed_count = int(result.get("confirmed_count", result["accepted_count"]))
     provisional_count = int(result.get("provisional_count", 0))
     if confirmed_count:

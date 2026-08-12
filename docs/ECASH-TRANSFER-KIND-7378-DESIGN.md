@@ -262,7 +262,7 @@ to understand where the balance increase came from:
 {
   "tx_type": "C",
   "amount": 21,
-  "comment": "ecash transfer received",
+  "comment": "funds transfer received",
   "tendered_amount": 21,
   "tendered_currency": "SAT",
   "source_kind": 7378,
@@ -276,10 +276,11 @@ The exact serialized transaction-history schema can follow the existing Acorn
 implementation can include this context in the comment, then promote it to
 structured fields later.
 
-## Since cursor
+## Receive checkpoint and pagination
 
-Acorn should maintain a cursor so old transfer events are not rechecked on
-every receive operation.
+Acorn maintains a deterministic checkpoint so old transfer events are not
+rechecked on every receive operation and events sharing a Nostr timestamp are
+not collapsed into one cursor position.
 
 Suggested reserved record:
 
@@ -287,13 +288,32 @@ Suggested reserved record:
 ecash_transfer_latest
 ```
 
-Suggested storage:
+Current storage:
 
-```text
-kind: 37376
-label: ecash_transfer_latest
-payload: "<latest processed created_at timestamp>"
+```json
+{
+  "version": 2,
+  "created_at": 1780000000,
+  "event_id": "<64-character event id>"
+}
 ```
+
+The tuple `(created_at, event_id)` defines deterministic ascending processing
+order. Nostr `since` is inclusive, so Acorn queries the checkpoint second again
+and discards tuples at or below the stored checkpoint. Timestamp-only cursor
+records from earlier releases are accepted and migrated without replaying their
+final second.
+
+Relay reads are paginated backwards from a fixed snapshot time. Consecutive
+pages deliberately overlap at their oldest timestamp, and event IDs deduplicate
+the overlap. Acorn then processes the complete collected backlog in ascending
+checkpoint order. The checkpoint advances only through events whose receipt,
+skip decision, or terminal error has been durably recorded.
+
+If pagination reaches its configured page limit or a relay repeatedly returns
+a saturated page from one timestamp, Acorn stops before processing and leaves
+the checkpoint unchanged. Guessing at that boundary could permanently skip a
+valid transfer.
 
 The receive command should also support a manual `since` override for recovery,
 debugging, or replay:
@@ -303,12 +323,15 @@ acorn receive-ecash --since 1780000000
 ```
 
 When `--since` is supplied, it should override the stored cursor for that run.
-Whether it updates the stored cursor should be explicit in implementation. A
-safe default is:
+The current behavior is:
 
 - normal sweep advances the cursor;
 - manual `--since` can advance the cursor only after successful processing;
-- a future `--dry-run` or `--no-advance` could inspect without changing state.
+- preview mode and direct event-ID lookup do not advance the stored cursor;
+- operational failures stop at the last safely processed tuple.
+
+See [Incoming Funds Reliability and Scaling](INCOMING-FUNDS-RELIABILITY-AND-SCALING.md)
+for invariants, failure boundaries, and residual limits.
 
 ## Relay selection
 

@@ -60,6 +60,86 @@ def serialized_token(proofs: list[Proof]) -> str:
     ).serialize()
 
 
+def incoming_transfer_event(
+    acorn: Acorn,
+    *,
+    event_id: str,
+    created_at: int,
+    amount: int = 1,
+) -> Event:
+    return Event(
+        id=event_id,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "cashu-token",
+                "token": serialized_token([proof(amount, event_id[:1])]),
+                "amount": amount,
+                "unit": "sat",
+                "payment_mode": "confirmed",
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="22" * 32,
+        created_at=created_at,
+    )
+
+
+def install_filtering_transfer_pool(monkeypatch, events: list[Event]) -> list[dict]:
+    from acorn import acorn as acorn_module
+
+    observed_filters: list[dict] = []
+
+    class FilteringPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, filters):
+            query_filter = dict(filters[0])
+            observed_filters.append(query_filter)
+            def event_timestamp(event: Event) -> int:
+                value = event.created_at
+                return int(value.timestamp()) if hasattr(value, "timestamp") else int(value)
+
+            candidates = [
+                event
+                for event in events
+                if int(query_filter.get("since", 0)) <= event_timestamp(event)
+                and event_timestamp(event) <= int(query_filter.get("until", 2**63 - 1))
+            ]
+            candidates.sort(
+                key=lambda event: (event_timestamp(event), str(event.id)),
+                reverse=True,
+            )
+            return candidates[: int(query_filter.get("limit", len(candidates)))]
+
+    class PlaintextNip44:
+        def __init__(self, _keys):
+            pass
+
+        def decrypt(self, content, _pubkey):
+            return content
+
+    class NoGiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            raise ValueError("not gift wrapped")
+
+    monkeypatch.setattr(acorn_module, "ClientPool", FilteringPool)
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", NoGiftWrap)
+    return observed_filters
+
+
 def test_exact_proof_subset_is_exact_and_deterministic() -> None:
     proofs = [proof(1, "1"), proof(2, "2"), proof(4, "4"), proof(8, "8")]
 
@@ -424,7 +504,11 @@ async def test_sweep_persists_standard_payment_before_unavailable_mint(
     assert stored_receipts[0]["token"] == token
     assert operations[1] == ("mint",)
     assert operations[2][0:2] == ("store", ECASH_TRANSFER_CURSOR_LABEL)
-    assert operations[2][2] == "123"
+    assert json.loads(operations[2][2]) == {
+        "version": 2,
+        "created_at": 123,
+        "event_id": "a" * 64,
+    }
     acorn._update_continuity_receipt.assert_not_awaited()
 
 
@@ -582,7 +666,119 @@ async def test_sweep_journals_malformed_event_and_continues_to_later_transfer(
     assert history["description_hash"] == f"cashu-transfer-error:{malformed.id}"
     assert "malformed and was skipped" in history["comment"]
     acorn._store_continuity_receipt.assert_awaited_once()
-    assert acorn.set_wallet_info.await_args_list[-1].args == (
-        ECASH_TRANSFER_CURSOR_LABEL,
-        "126",
+    cursor_write = acorn.set_wallet_info.await_args_list[-1]
+    assert cursor_write.args[0] == ECASH_TRANSFER_CURSOR_LABEL
+    assert json.loads(cursor_write.args[1]) == {
+        "version": 2,
+        "created_at": 126,
+        "event_id": "d" * 64,
+    }
+
+
+def test_transfer_checkpoint_migrates_legacy_timestamp_without_replaying_second() -> None:
+    acorn = wallet()
+
+    assert acorn._parse_ecash_transfer_checkpoint("123") == (123, "f" * 64)
+    assert acorn._parse_ecash_transfer_checkpoint(None) == (0, "")
+
+
+def test_transfer_checkpoint_round_trips_versioned_value() -> None:
+    acorn = wallet()
+    checkpoint = (456, "a" * 64)
+
+    encoded = acorn._serialize_ecash_transfer_checkpoint(checkpoint)
+
+    assert json.loads(encoded) == {
+        "version": 2,
+        "created_at": 456,
+        "event_id": "a" * 64,
+    }
+    assert acorn._parse_ecash_transfer_checkpoint(encoded) == checkpoint
+
+
+@pytest.mark.asyncio
+async def test_sweep_uses_event_id_to_resume_within_same_second(monkeypatch) -> None:
+    acorn = wallet()
+    events = [
+        incoming_transfer_event(acorn, event_id="a" * 64, created_at=200),
+        incoming_transfer_event(acorn, event_id="b" * 64, created_at=200),
+        incoming_transfer_event(acorn, event_id="c" * 64, created_at=200),
+    ]
+    observed_filters = install_filtering_transfer_pool(monkeypatch, events)
+    acorn.get_wallet_info = AsyncMock(
+        return_value=acorn._serialize_ecash_transfer_checkpoint((200, "b" * 64))
     )
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={"amount": 1, "status": "provisional"}
+    )
+
+    result = await acorn.sweep_ecash_transfers(finalize=False, limit=10)
+
+    assert observed_filters[0]["since"] == 200
+    assert result["accepted_count"] == 1
+    assert result["accepted"][0]["event_id"] == "c" * 64
+    assert result["cursor_checkpoint"] == {
+        "created_at": 200,
+        "event_id": "b" * 64,
+    }
+    assert result["latest_checkpoint"] == {
+        "created_at": 200,
+        "event_id": "c" * 64,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sweep_pages_with_inclusive_boundaries_and_deduplicates(monkeypatch) -> None:
+    acorn = wallet()
+    events = [
+        incoming_transfer_event(acorn, event_id="a" * 64, created_at=101),
+        incoming_transfer_event(acorn, event_id="b" * 64, created_at=102),
+        incoming_transfer_event(acorn, event_id="c" * 64, created_at=103),
+    ]
+    observed_filters = install_filtering_transfer_pool(monkeypatch, events)
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={"amount": 1, "status": "provisional"}
+    )
+
+    result = await acorn.sweep_ecash_transfers(
+        since=100,
+        finalize=False,
+        limit=2,
+        max_pages=10,
+    )
+
+    assert result["accepted_count"] == 3
+    assert [entry["event_id"] for entry in result["accepted"]] == [
+        "a" * 64,
+        "b" * 64,
+        "c" * 64,
+    ]
+    assert result["queried"] == 3
+    assert result["page_count"] == 3
+    assert observed_filters[1]["until"] == 102
+    assert observed_filters[2]["until"] == 101
+    assert result["latest_checkpoint"] == {
+        "created_at": 103,
+        "event_id": "c" * 64,
+    }
+
+
+@pytest.mark.asyncio
+async def test_sweep_stops_safely_when_same_second_page_is_saturated(monkeypatch) -> None:
+    acorn = wallet()
+    events = [
+        incoming_transfer_event(acorn, event_id="a" * 64, created_at=500),
+        incoming_transfer_event(acorn, event_id="b" * 64, created_at=500),
+        incoming_transfer_event(acorn, event_id="c" * 64, created_at=500),
+    ]
+    install_filtering_transfer_pool(monkeypatch, events)
+
+    with pytest.raises(RuntimeError, match="saturated same-second page"):
+        await acorn.sweep_ecash_transfers(
+            since=499,
+            finalize=False,
+            limit=2,
+            max_pages=10,
+        )
+
+    acorn.set_wallet_info.assert_not_awaited()

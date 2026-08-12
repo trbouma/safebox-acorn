@@ -196,6 +196,11 @@ persist the provisional receipt, or update relay-backed state, it does not
 advance past the affected event. This preserves retryability and prevents a
 temporary infrastructure problem from silently discarding valid funds.
 
+Incoming delivery now uses a versioned `(created_at, event_id)` checkpoint and
+overlapping paginated relay reads. See
+[Incoming Funds Reliability and Scaling](INCOMING-FUNDS-RELIABILITY-AND-SCALING.md)
+for the cursor invariants, pagination safety behavior, and remaining limits.
+
 ## Inspection, automatic reconciliation, and explicit repair
 
 Before repair, the operator can perform a read-only mint-state check:
