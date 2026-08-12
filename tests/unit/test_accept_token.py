@@ -26,6 +26,9 @@ def wallet_with_key() -> Acorn:
     wallet.logger = logging.getLogger("accept-token-test")
     wallet.acquire_lock = AsyncMock()
     wallet.release_lock = AsyncMock()
+    wallet._reconcile_spent_proofs_locked = AsyncMock(
+        return_value={"removed": 0, "amount": 0, "balance": 0}
+    )
     wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
     wallet.add_tx_history = AsyncMock()
     wallet._maybe_maintain_received_proofs = AsyncMock()

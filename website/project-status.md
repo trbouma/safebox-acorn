@@ -22,6 +22,9 @@ The project has working implementations of:
 - encrypted private-record storage, retrieval, listing, and deletion;
 - Cashu deposit, payment, transfer, receipt, proof inspection, repair, and
   wallet-burn flows;
+- mint-authoritative removal of confirmed spent proofs before wallet mutations,
+  while preserving pending or unknown proof state;
+- process-local and owned relay-lease serialization for wallet mutations;
 - NIP-59 gift-wrapped private ecash delivery;
 - transaction history shared between the CLI and Safebox web application;
 - relay replication, readback verification, and migration workflows;

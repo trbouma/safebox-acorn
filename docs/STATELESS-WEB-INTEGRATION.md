@@ -352,6 +352,8 @@ Acorn retains responsibility for the safety-critical sequence:
 
 ```text
 acquire wallet lock
+reload relay-backed proof state
+remove only mint-confirmed spent proofs
 reconcile previous pending melts
 resolve Lightning address and invoice
 obtain mint quote
@@ -362,6 +364,12 @@ resolve PAID / UNPAID / unknown outcome
 update proofs and transaction history
 release wallet lock
 ```
+
+The wallet lock combines a process-local mutex with an encrypted relay-backed
+owned lease. This serializes requests from the web application and its service
+worker within one process and prevents another Acorn instance from blindly
+clearing a live lock. Mint-mutating operations preserve proofs when mint state
+is pending, unknown, or unavailable.
 
 A timeout or exception is not presented as a definite failure. The web
 interface instructs the operator not to retry blindly and to run

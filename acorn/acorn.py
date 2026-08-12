@@ -115,6 +115,9 @@ DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
+WALLET_LOCK_LABEL: str = "lock"
+WALLET_LOCK_LEASE_SECONDS: int = int(os.getenv("ACORN_WALLET_LOCK_LEASE_SECONDS", "300"))
+_PROCESS_WALLET_LOCKS: dict[str, asyncio.Lock] = {}
 DEFERRED_RECOVERY_LABEL: str = "deferred_recovery"
 RECORD_PROTECTION_STATUS_LABEL: str = "record_protection_status"
 MELT_RECOVERY_ATTEMPTS: int = 4
@@ -316,6 +319,9 @@ class Acorn:
             self.wallet_reserved_records = {}
             self._lock_acquired_at: float | None = None
             self._lock_owner: str | None = None
+            self._lock_token: str | None = None
+            self._lock_depth: int = 0
+            self._process_wallet_lock: asyncio.Lock | None = None
         else:
             return "Need nsec" 
 
@@ -3202,7 +3208,44 @@ class Acorn:
 
 
     async def set_lock(self, lock: bool):
-        pass
+        if lock:
+            await self.acquire_lock()
+        else:
+            await self.release_lock()
+
+    @staticmethod
+    def _parse_wallet_lock(raw_value: Any) -> dict:
+        if raw_value is None:
+            return {"active": False, "legacy": False}
+        normalized = str(raw_value).strip()
+        if normalized.upper() == "TRUE":
+            # The former boolean lock had no owner or expiry and was commonly
+            # left behind after an interrupted request. It cannot safely prove
+            # ownership, so migrate it as unlocked into the owned-lease model.
+            return {"active": False, "legacy": True, "expires_at": None}
+        if normalized.upper() in {"FALSE", ""}:
+            return {"active": False, "legacy": True, "expires_at": None}
+        try:
+            parsed = json.loads(normalized)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return {"active": True, "legacy": True, "expires_at": None}
+        if not isinstance(parsed, dict) or parsed.get("version") != 1:
+            return {"active": True, "legacy": True, "expires_at": None}
+        expires_at = int(parsed.get("expires_at") or 0)
+        return {
+            "active": expires_at > int(time()),
+            "legacy": False,
+            "token": str(parsed.get("token") or ""),
+            "owner": str(parsed.get("owner") or ""),
+            "expires_at": expires_at,
+        }
+
+    async def _read_wallet_lock(self) -> dict:
+        try:
+            raw_value = await self.get_wallet_info(label=WALLET_LOCK_LABEL)
+        except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
+            raise RuntimeError(f"Unable to read wallet lock: {exc}") from exc
+        return self._parse_wallet_lock(raw_value)
 
     def _lock_actor(self) -> str:
         task = asyncio.current_task()
@@ -3215,23 +3258,12 @@ class Acorn:
         return task_name or f"task-{id(task)}"
 
     async def check_lock(self):
-        lock_value = "FALSE"
-        try:
-            lock_value = await self.get_wallet_info("lock")
-            # print(lock_value)
-        except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
-            self.logger.debug("Check lock fallback; lock record unavailable: %s", e)
-        if lock_value is None:
-            self.logger.debug("op=check_lock status=missing_lock_record")
-            lock_value = "FALSE"
-        
-        return str(lock_value).upper().strip() == "TRUE"
+        return bool((await self._read_wallet_lock())["active"])
 
-    async def acquire_lock(self, attempts=10):
+    async def acquire_lock(self, attempts=30):
         start_wait = monotonic()
         actor = self._lock_actor()
         current_depth = getattr(self, "_lock_depth", 0)
-        loop_count = 0
 
         # Re-entrant acquire for the same in-process actor.
         # This avoids false lock contention when a locked flow calls another
@@ -3246,85 +3278,79 @@ class Acorn:
             )
             return
 
-        self.logger.debug(
-            "op=acquire_lock status=start handle=%s actor=%s attempts=%s",
-            self.handle,
-            actor,
-            attempts,
+        process_lock = _PROCESS_WALLET_LOCKS.setdefault(
+            self.pubkey_hex,
+            asyncio.Lock(),
         )
+        attempts = max(1, int(attempts))
         try:
-            lock_value = await self.get_wallet_info(label="lock")
-        except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
-            self.logger.debug("Lock record missing/unreadable; defaulting to unlocked: %s", e)
-            lock_value = "FALSE"
-        if lock_value is None:
-            self.logger.debug("op=acquire_lock status=missing_lock_record")
-            lock_value = "FALSE"
+            await asyncio.wait_for(
+                process_lock.acquire(),
+                timeout=float(attempts),
+            )
+        except asyncio.TimeoutError as exc:
+            wait_ms = int((monotonic() - start_wait) * 1000)
+            raise RuntimeError(
+                f"Wallet is busy; could not acquire its process lock after {wait_ms} ms"
+            ) from exc
+        self._process_wallet_lock = process_lock
 
-        
-        if str(lock_value).upper().strip() == "TRUE":
-            
-            self.logger.debug("op=acquire_lock status=already_locked handle=%s actor=%s", self.handle, actor)
-            
-            
-            
-            while True:                
-                await asyncio.sleep(1)
-                loop_count +=1
-                if loop_count > attempts:
-                    wait_ms = int((monotonic() - start_wait) * 1000)
-                    self.logger.info(
-                        "op=acquire_lock status=seizing_lock handle=%s actor=%s attempts=%s wait_ms=%s previous_owner=%s",
-                        self.handle,
-                        actor,
-                        attempts,
-                        wait_ms,
-                        self._lock_owner,
+        token = secrets.token_hex(16)
+        try:
+            for attempt in range(1, attempts + 1):
+                lock_state = await self._read_wallet_lock()
+                if not lock_state["active"]:
+                    now = int(time())
+                    lock_value = json.dumps({
+                        "version": 1,
+                        "token": token,
+                        "owner": actor,
+                        "acquired_at": now,
+                        "expires_at": now + WALLET_LOCK_LEASE_SECONDS,
+                    }, separators=(",", ":"))
+                    await self.set_wallet_info(
+                        label=WALLET_LOCK_LABEL,
+                        label_info=lock_value,
+                        verify=True,
                     )
-                    await self.set_wallet_info(label="lock",label_info="FALSE")
-                    break
-                    # raise RuntimeError(f"Could not acquire lock after {timeout} attempts")
-                try:
-                    lock_value = await self.get_wallet_info(label="lock")
-                except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
-                    self.logger.debug("Lock poll failed; assuming unlocked for recovery: %s", e)
-                    lock_value = "FALSE"
-                if lock_value is None:
-                    self.logger.debug("op=acquire_lock status=missing_lock_record_during_poll")
-                    lock_value = "FALSE"
-                self.logger.debug(
-                    "op=acquire_lock status=poll lock_value=%s attempt=%s max_attempts=%s handle=%s",
-                    lock_value,
-                    loop_count,
-                    attempts,
-                    self.handle,
-                )
-                if str(lock_value).upper().strip() != 'TRUE':
-                    await self.set_wallet_info(label="lock",label_info="TRUE")
-                    self._lock_acquired_at = monotonic()
-                    self._lock_owner = actor
-                    self._lock_depth = 1
-                    wait_ms = int((self._lock_acquired_at - start_wait) * 1000)
-                    level = self.logger.warning if wait_ms >= 1500 else self.logger.info
-                    level(
-                        "op=acquire_lock status=acquired_after_wait handle=%s actor=%s wait_ms=%s attempts_used=%s",
-                        self.handle,
-                        actor,
-                        wait_ms,
-                        loop_count,
-                    )
-                    break
-        else:
-            self.logger.debug("op=acquire_lock status=acquired_immediately handle=%s actor=%s", self.handle, actor)
-            await self.set_wallet_info(label="lock",label_info="TRUE")
-            self._lock_acquired_at = monotonic()
-            self._lock_owner = actor
-            self._lock_depth = 1
+                    observed = await self._read_wallet_lock()
+                    if observed.get("active") and observed.get("token") == token:
+                        self._lock_acquired_at = monotonic()
+                        self._lock_owner = actor
+                        self._lock_token = token
+                        self._lock_depth = 1
+                        self.logger.info(
+                            "op=acquire_lock status=acquired handle=%s actor=%s attempt=%s",
+                            self.handle,
+                            actor,
+                            attempt,
+                        )
+                        return
+                if attempt < attempts:
+                    await asyncio.sleep(1)
+
+            wait_ms = int((monotonic() - start_wait) * 1000)
+            raise RuntimeError(
+                f"Wallet is busy; could not acquire its owned lease after {wait_ms} ms"
+            )
+        except Exception:
+            if process_lock.locked():
+                process_lock.release()
+            self._process_wallet_lock = None
+            raise
        
 
     async def release_lock(self):
         actor = self._lock_actor()
         current_depth = getattr(self, "_lock_depth", 0)
+
+        if not self._lock_token:
+            self.logger.debug(
+                "op=release_lock status=not_owned handle=%s actor=%s",
+                self.handle,
+                actor,
+            )
+            return
 
         if self._lock_owner == actor and current_depth > 1:
             self._lock_depth = current_depth - 1
@@ -3354,10 +3380,28 @@ class Acorn:
                 self._lock_owner,
                 held_ms,
             )
-        await self.set_wallet_info(label="lock",label_info="FALSE")
-        self._lock_acquired_at = None
-        self._lock_owner = None
-        self._lock_depth = 0
+        try:
+            lock_state = await self._read_wallet_lock()
+            if lock_state.get("token") == self._lock_token:
+                await self.set_wallet_info(
+                    label=WALLET_LOCK_LABEL,
+                    label_info="FALSE",
+                    verify=True,
+                )
+            else:
+                self.logger.warning(
+                    "op=release_lock status=ownership_lost handle=%s actor=%s",
+                    self.handle,
+                    actor,
+                )
+        finally:
+            self._lock_acquired_at = None
+            self._lock_owner = None
+            self._lock_token = None
+            self._lock_depth = 0
+            if self._process_wallet_lock and self._process_wallet_lock.locked():
+                self._process_wallet_lock.release()
+            self._process_wallet_lock = None
         
         pass  
 
@@ -5429,6 +5473,7 @@ class Acorn:
             expected_proofs = list(self.proofs)
             expected_balance = sum(each.amount for each in expected_proofs)
             expected_count = len(expected_proofs)
+            expected_identities = self._proof_identity_set(expected_proofs)
             old_filter = [{
                 'limit': RECORD_LIMIT,
                 'authors': [self.pubkey_hex],
@@ -5458,7 +5503,8 @@ class Acorn:
                 await self._load_proofs()
                 loaded_balance = sum(each.amount for each in self.proofs)
                 loaded_count = len(self.proofs)
-                if loaded_balance >= expected_balance and loaded_count >= expected_count:
+                loaded_identities = self._proof_identity_set(self.proofs)
+                if loaded_identities == expected_identities:
                     loaded_ok = True
                     break
                 await asyncio.sleep(0.4 * attempt)
@@ -5471,10 +5517,22 @@ class Acorn:
                     loaded_balance,
                     loaded_count,
                 )
-                # Emergency restore path: republish expected proofs and re-load.
-                if expected_proofs:
+                loaded_identities = self._proof_identity_set(self.proofs)
+                missing_identities = expected_identities - loaded_identities
+                unexpected_identities = loaded_identities - expected_identities
+                # Republish only when expected proofs are missing. Unexpected
+                # proofs must never be accepted by a balance/count comparison.
+                if unexpected_identities:
+                    self.proofs = expected_proofs
+                    self.balance = expected_balance
+                    raise RuntimeError(
+                        "Proof persistence verification found unexpected relay proofs"
+                    )
+                if expected_proofs and missing_identities:
                     restore_by_keyset = {}
                     for each in expected_proofs:
+                        if (str(each.id), str(each.secret)) not in missing_identities:
+                            continue
                         restore_by_keyset.setdefault(each.id, []).append(each)
                     for _, proof_group in restore_by_keyset.items():
                         await self.add_proofs_obj(proof_group)
@@ -5482,15 +5540,13 @@ class Acorn:
                     await self._load_proofs()
                     loaded_balance = sum(each.amount for each in self.proofs)
                     loaded_count = len(self.proofs)
-                    if loaded_balance < expected_balance or loaded_count < expected_count:
+                    if self._proof_identity_set(self.proofs) != expected_identities:
                         # Keep local state conservative for caller-side recovery decisions.
                         self.proofs = expected_proofs
                         self.balance = expected_balance
                         raise RuntimeError(
                             "Proof persistence verification failed after restore attempt"
                         )
-                elif loaded_balance != 0 or loaded_count != 0:
-                    raise RuntimeError("Unexpected proof state after writing empty proof set")
         except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as e:
             self.logger.error("op=write_proofs status=failed error=%s", e)
             raise RuntimeError(f"error writing proofs: {e}") from e
@@ -5737,6 +5793,78 @@ class Acorn:
             proof_key = (str(proof.id), str(proof.secret))
             unique.setdefault(proof_key, proof)
         return list(unique.values())
+
+    @staticmethod
+    def _proof_identity_set(proofs: List[Proof]) -> set[tuple[str, str]]:
+        return {
+            (str(proof.id), str(proof.secret))
+            for proof in proofs
+        }
+
+    async def _reconcile_spent_proofs_locked(self) -> dict:
+        """Remove only mint-confirmed spent proofs while the wallet lock is held."""
+        await self._load_proofs()
+        report = await self.check_proofs()
+        if report["status"] == "inconclusive":
+            raise RuntimeError(
+                "Mint proof state is inconclusive; no proofs were removed"
+            )
+
+        spent_ys: set[str] = set()
+        for keyset_report in report.get("keysets", []):
+            if keyset_report.get("states", {}).get("SPENT", {}).get("proof_count", 0):
+                keyset = str(keyset_report["keyset"])
+                mint_url = self.known_mints.get(keyset)
+                keyset_proofs = [proof for proof in self.proofs if str(proof.id) == keyset]
+                ys = [
+                    str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex())
+                    for proof in keyset_proofs
+                ]
+                async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+                    response = await client.post(
+                        url=f"{mint_url.rstrip('/')}/v1/checkstate",
+                        json={"Ys": ys},
+                        headers={"Content-Type": "application/json"},
+                    )
+                    response.raise_for_status()
+                    states = response.json().get("states", [])
+                if len(states) != len(keyset_proofs):
+                    raise RuntimeError("Mint proof-state response changed during reconciliation")
+                for proof, state_obj in zip(keyset_proofs, states):
+                    state = str(state_obj.get("state", "")).upper() if isinstance(state_obj, dict) else ""
+                    if state in {"PENDING", "UNKNOWN", ""}:
+                        raise RuntimeError(
+                            "Mint proof state became inconclusive; no proofs were removed"
+                        )
+                    if state == "SPENT":
+                        spent_ys.add(str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex()))
+
+        if not spent_ys:
+            return {"removed": 0, "amount": 0, "balance": self.balance}
+
+        retained: list[Proof] = []
+        removed_amount = 0
+        for proof in self.proofs:
+            proof_y = str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex())
+            if proof_y in spent_ys:
+                removed_amount += int(proof.amount)
+            else:
+                retained.append(proof)
+
+        self.proofs = retained
+        self.balance = sum(int(proof.amount) for proof in retained)
+        await self.write_proofs()
+        self.logger.warning(
+            "op=reconcile_spent_proofs status=removed proofs=%s amount=%s balance=%s",
+            len(spent_ys),
+            removed_amount,
+            self.balance,
+        )
+        return {
+            "removed": len(spent_ys),
+            "amount": removed_amount,
+            "balance": self.balance,
+        }
 
     def _proofs_by_keyset(self):
         all_proofs = {}
@@ -6577,7 +6705,9 @@ class Acorn:
         try:
             timeout = httpx.Timeout(30.0, connect=5.0)
             await self.acquire_lock()
+            await self._reconcile_spent_proofs_locked()
             await self._require_resolved_pending_melts()
+            keyset_proofs, keyset_amounts = self._proofs_by_keyset()
             callback, safebox, nonce = lightning_address_pay(amount, lnaddress,comment=comment)         
             pr = callback['pr'] 
             self.logger.debug("op=pay_multi status=lookup has_safebox=%s", bool(safebox))
@@ -7089,6 +7219,7 @@ class Acorn:
         melt_attempted = False
         try:
             await self.acquire_lock()
+            await self._reconcile_spent_proofs_locked()
             await self._require_resolved_pending_melts()
             timeout = httpx.Timeout(30.0, connect=5.0)
             decoded_invoice = bolt11.decode(lninvoice)
@@ -8418,7 +8549,10 @@ class Acorn:
         
         for each in proofs:
             pass
-            # print(each.amount)
+        # A successful swap has consumed its inputs at the mint. Persist every
+        # replacement before callers compact the wallet so an interrupted
+        # follow-up remains recoverable from relay state.
+        await self.add_proofs_obj(proofs, verify=True)
         # now need break out proofs for payment and proofs remaining
 
         return proofs
@@ -8613,7 +8747,10 @@ class Acorn:
                     "Cashu token must identify exactly one issuing mint"
                 )
             token_mint = next(iter(token_mints))
-              
+
+            await self.acquire_lock()
+            lock_acquired = True
+            await self._reconcile_spent_proofs_locked()
             swap_proofs = await self.swap_proofs(proof_obj_list)
             if not swap_proofs:
                 raise RuntimeError("Mint swap returned no refreshed proofs")
@@ -8628,8 +8765,6 @@ class Acorn:
                 len(swap_proofs),
             )
             
-            await self.acquire_lock()
-            lock_acquired = True
             await self.add_proofs_obj(swap_proofs, verify=True)
 
             self.proofs = self._deduplicate_proofs([*self.proofs, *swap_proofs])
@@ -8680,6 +8815,7 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._reconcile_spent_proofs_locked()
             await self._require_resolved_pending_melts()
             # print("issue token")
             available_amount = 0

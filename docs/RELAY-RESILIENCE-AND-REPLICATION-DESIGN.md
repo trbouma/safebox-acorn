@@ -476,10 +476,17 @@ for proofs already spent elsewhere.
 Therefore:
 
 - `balance` must remain read-only;
-- `repair-proofs` must be explicit;
+- mutating wallet operations may remove only mint-confirmed spent proofs;
+- explicit `repair-proofs` remains available for whole-wallet refresh;
 - proof repair should check the mint;
 - deletion events should replicate with proof events;
 - relay promotion should verify proof spend state before spending again.
+
+Mint-authoritative cleanup does not recover a replacement proof that was never
+replicated. Relay promotion must therefore copy and compare exact proof state
+from the freshest source while all wallet writers are stopped. Two instances
+using different home relays also use different leases, so they can otherwise
+create a split-brain wallet despite per-relay locking.
 
 See [Proof State and Relay Consistency](./PROOF-STATE-RELAY-CONSISTENCY.md).
 

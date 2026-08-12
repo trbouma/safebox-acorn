@@ -198,14 +198,18 @@ Before a pilot:
 
 ### Multi-instance concurrency
 
-The relay-backed wallet lock is useful but cannot by itself guarantee
-serializable updates across delayed or partitioned relays.
+Acorn now combines a process-local wallet mutex with an encrypted relay-backed
+owned lease. The lease has an ownership token and expiry, and a second actor no
+longer clears a live lock after a short wait. This closes the ordinary
+web-request and service-worker race, but no relay-backed lease can by itself
+guarantee serializable updates across delayed or partitioned relays.
 
 Before a stable release:
 
-- define the supported single-writer or multi-writer model;
+- define and enforce the supported single-writer or multi-writer model;
 - add state generations or optimistic concurrency checks;
-- test two Acorn instances acting on the same wallet;
+- extend fault-injection tests for two Acorn instances acting on the same
+  wallet across delayed and partitioned relays;
 - detect stale writers before destructive proof replacement;
 - document conflict recovery after relay divergence.
 

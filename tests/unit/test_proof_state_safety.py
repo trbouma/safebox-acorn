@@ -26,7 +26,132 @@ def wallet_with_key() -> Acorn:
     wallet.balance = 0
     wallet.events = 0
     wallet.logger = logging.getLogger("proof-state-safety-test")
+    wallet.handle = "proof-test-wallet"
+    wallet._lock_acquired_at = None
+    wallet._lock_owner = None
+    wallet._lock_token = None
+    wallet._lock_depth = 0
+    wallet._process_wallet_lock = None
     return wallet
+
+
+@pytest.mark.asyncio
+async def test_owned_wallet_lock_cannot_be_stolen_by_second_actor(monkeypatch):
+    acorn_module._PROCESS_WALLET_LOCKS.clear()
+    first = wallet_with_key()
+    second = wallet_with_key()
+    relay_state = {"lock": "FALSE"}
+
+    async def get_wallet_info(label):
+        return relay_state[label]
+
+    async def set_wallet_info(label, label_info, **kwargs):
+        relay_state[label] = label_info
+        return {"status": "OK"}
+
+    first.get_wallet_info = AsyncMock(side_effect=get_wallet_info)
+    second.get_wallet_info = AsyncMock(side_effect=get_wallet_info)
+    first.set_wallet_info = AsyncMock(side_effect=set_wallet_info)
+    second.set_wallet_info = AsyncMock(side_effect=set_wallet_info)
+
+    await first.acquire_lock(attempts=1)
+    with pytest.raises(RuntimeError, match="Wallet is busy"):
+        await second.acquire_lock(attempts=1)
+
+    assert first._lock_token
+    assert Acorn._parse_wallet_lock(relay_state["lock"])["active"] is True
+    await first.release_lock()
+    assert relay_state["lock"] == "FALSE"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_spent_proofs_removes_only_mint_confirmed_spent(monkeypatch):
+    wallet = wallet_with_key()
+    keyset = "test-keyset"
+    mint = "https://mint.example"
+    spent = Proof(amount=2, id=keyset, secret="spent", C="spent-c", Y="spent-y")
+    unspent = Proof(amount=4, id=keyset, secret="unspent", C="unspent-c", Y="unspent-y")
+    wallet.proofs = [spent, unspent]
+    wallet.balance = 6
+    wallet.known_mints = {keyset: mint}
+    wallet._load_proofs = AsyncMock()
+    wallet.write_proofs = AsyncMock()
+    wallet.check_proofs = AsyncMock(return_value={
+        "status": "repair-recommended",
+        "keysets": [{
+            "keyset": keyset,
+            "states": {"SPENT": {"proof_count": 1, "amount": 2}},
+        }],
+    })
+
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"states": [{"state": "SPENT"}, {"state": "UNSPENT"}]}
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, *args, **kwargs):
+            return Response()
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
+
+    result = await wallet._reconcile_spent_proofs_locked()
+
+    assert result == {"removed": 1, "amount": 2, "balance": 4}
+    assert wallet.proofs == [unspent]
+    wallet.write_proofs.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_write_proofs_rejects_same_balance_with_wrong_proof_identity():
+    wallet = wallet_with_key()
+    keyset = "test-keyset"
+    expected = Proof(amount=4, id=keyset, secret="expected", C="expected-c", Y="expected-y")
+    unexpected = Proof(amount=4, id=keyset, secret="unexpected", C="unexpected-c", Y="unexpected-y")
+    wallet.proofs = [expected]
+    wallet.balance = 4
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
+    wallet._async_delete_events_by_ids = AsyncMock()
+
+    class MemoryPool:
+        def __init__(self, relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, filters):
+            return []
+
+    async def load_unexpected():
+        wallet.proofs = [unexpected]
+        wallet.balance = 4
+
+    wallet._load_proofs = AsyncMock(side_effect=load_unexpected)
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+        monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+        with pytest.raises(RuntimeError, match="unexpected relay proofs"):
+            await wallet.write_proofs()
+
+    assert wallet.proofs == [expected]
+    assert wallet.balance == 4
 
 
 @pytest.mark.asyncio

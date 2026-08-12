@@ -134,11 +134,20 @@ adds a read-only mint-state check and reports the mint-confirmed spendable
 total. JSON output includes `balance_basis`, `relay_visible_balance`, and,
 when requested, `mint_confirmed_balance` and the complete verification report.
 
-Proof mutation remains an explicit operator decision:
+Read-only inspection never changes proof state. Explicit whole-wallet refresh
+and consolidation remain operator decisions:
 
 ```sh
 acorn repair-proofs
 ```
+
+Payment, token issuance, and token acceptance are already mutating operations.
+Before they select or add value, Acorn reloads proof state and automatically
+removes only proofs that the mint definitively reports as `SPENT`. It preserves
+`PENDING` and `UNKNOWN` proofs and stops if mint state is unreachable or
+inconclusive. This narrow safety reconciliation prevents known-invalid relay
+history from being counted in a new operation; it is not automatic background
+repair.
 
 ## Lightning payment recovery
 

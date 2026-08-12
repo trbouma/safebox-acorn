@@ -10,8 +10,10 @@ Acorn proof state lives at the intersection of two systems:
 Relays are storage and transport. They are not the source of truth for proof
 spend status. The mint is the authority for whether a proof is unspent.
 
-Relay migration exposed an important design lesson: read-only commands must not
-mutate wallet proof state, and proof repair must remain explicit.
+Relay migration exposed two important design lessons: read-only commands must
+not mutate wallet proof state, and mint-mutating operations must reconcile
+known-spent relay proofs before selecting value. Whole-wallet refresh and
+consolidation remain explicit maintenance operations.
 
 ## What happened in testing
 
@@ -92,7 +94,7 @@ balance/read commands may load and report state;
 they must not swap, repair, consolidate, delete, or rewrite proofs.
 ```
 
-Proof mutation should happen only through explicit commands such as:
+Proof mutation should happen only through explicit user operations such as:
 
 ```sh
 acorn repair-proofs
@@ -108,6 +110,13 @@ Receive-side proof maintenance is therefore disabled by default. Deposits and
 token acceptance persist their newly issued proofs but do not automatically
 swap or consolidate the rest of the wallet. Maintenance remains an explicit
 operator action.
+
+There is one narrow automatic safety action. Before payment, token issuance,
+or token acceptance, Acorn reloads relay-backed proof state and asks the mint
+about spend state. Proofs reported definitively as `SPENT` are removed before
+the requested operation continues. This is reconciliation within an already
+mutating operation, not background maintenance. Proofs reported as `PENDING`
+or `UNKNOWN`, and proofs whose mint cannot be reached, are never discarded.
 
 ## August 2026 stale-balance incident
 
@@ -165,7 +174,7 @@ This is why `receive-ecash` is explicit and mutating. It turns received transfer
 material into current wallet proof state. In contrast, `balance` must remain a
 read-only inspection command.
 
-## Explicit repair model
+## Inspection, automatic reconciliation, and explicit repair
 
 Before repair, the operator can perform a read-only mint-state check:
 
@@ -183,7 +192,12 @@ deletion, proof rewrite, or transaction-history update. `PENDING`, `UNKNOWN`,
 and network-error results are inconclusive; the operator should recheck or
 investigate rather than assume that repair is safe.
 
-`repair-proofs` is the appropriate tool for reconciling stale relay proof state.
+For an operator-initiated audit or whole-wallet refresh, `repair-proofs` is the
+appropriate tool. Acorn also performs a narrower reconciliation automatically
+at the start of mint-mutating payment, issuance, and acceptance operations.
+That automatic path removes only proofs the mint definitively reports as
+`SPENT`; it stops without removing value if any relevant result is pending,
+unknown, malformed, or unreachable.
 
 It should:
 
@@ -204,15 +218,32 @@ are expected when stale relay events are being cleaned.
 
 ## Migration consistency pattern
 
+Automatic removal of mint-confirmed spent proofs is necessary but not
+sufficient for relay migration. It removes stale inputs visible on the
+destination, but it cannot recover replacement proof secrets that exist only
+on another relay. The mint knows whether presented proofs are spent; it does
+not act as a backup of the wallet's replacement proofs.
+
+Migration is therefore a controlled single-writer operation. All Acorn and web
+instances using the wallet must stop mutating it while the freshest source is
+replicated, verified, and promoted. Relay-backed leases on two different home
+relays do not coordinate with one another and cannot prevent split-brain
+wallet mutation.
+
 If spending occurs while pointed at a replicated relay, the safest convergence
 pattern is:
 
 ```text
+stop all wallet writers
+  -> identify the freshest relay
 fresh relay proof state
   -> replicate kinds 5,7375
-  -> original relay
-  -> repair-proofs
-  -> balance
+  -> verify destination event and proof visibility
+  -> switch home relay
+  -> check-proofs
+  -> repair-proofs when a whole-wallet refresh is needed
+  -> balance --verify
+  -> resume one writer
 ```
 
 Example:
@@ -224,8 +255,9 @@ acorn replicate \
   --kinds 5,7375
 
 acorn set --home wss://relay.getsafebox.app
+acorn check-proofs
 acorn repair-proofs
-acorn balance
+acorn balance --verify
 ```
 
 ## Design implications
@@ -244,6 +276,11 @@ Acorn should assume that relays can be:
 ### The mint is the spend-state authority
 
 For Cashu value, the mint's `checkstate` and swap responses are decisive.
+When the mint reports `SPENT`, Acorn removes that proof from its current wallet
+view automatically before another mint mutation. Relay presence cannot restore
+spendability. By contrast, absence of a decisive mint response is not evidence
+that a proof is spent, so Acorn preserves uncertain proofs and stops the
+operation.
 Lightning melt quotes are also authoritative when a payment response is lost.
 Acorn persists post-swap proofs and a pending-melt journal before submission,
 then uses quote lookup rather than repeating an ambiguous melt request. See
@@ -252,7 +289,9 @@ then uses quote lookup rather than repeating an ambiguous melt request. See
 ### Proof writes need verification
 
 After rewriting proof events, Acorn should verify that the expected proof state
-can be loaded back from the relay.
+can be loaded back from the relay. Verification compares exact proof identities
+(keyset and secret), not only total balance or proof count. A same-value proof
+set containing an unexpected historical proof is a failed verification.
 
 Every successful swap consumes bearer inputs immediately at the mint. Acorn
 must therefore publish and verify each replacement batch before attempting the
@@ -260,6 +299,26 @@ next independent input or keyset. Only after every replacement is durable may
 it publish a deletion request for the source proof events. If a later swap
 fails, already-created replacements remain recoverable from the relay and the
 old historical events remain available for diagnosis.
+
+### Wallet mutations need owned serialization
+
+Mint swaps, melts, issuance, and acceptance must not operate concurrently on
+the same wallet snapshot. Acorn uses two complementary controls:
+
+- a process-local mutex keyed by wallet public key serializes concurrent web,
+  service-worker, and component calls within one process; and
+- an encrypted relay-backed owned lease coordinates independent Acorn
+  instances using the same wallet.
+
+The lease contains a random ownership token and an expiry. A caller releases
+only the lease it owns. Another operation must not clear a live lease merely
+because a mint or relay call takes longer than expected. Legacy boolean locks,
+which had neither ownership nor expiry, are migrated into this owned-lease
+model.
+
+The relay lease reduces accidental concurrent mutation but does not turn an
+eventually consistent relay into a transactional database. Multi-device and
+partitioned-relay behavior therefore remains a release-hardening concern.
 
 ### Replication needs verification
 
@@ -312,7 +371,8 @@ When in doubt:
 
 ```text
 replicate events;
-repair proofs explicitly;
 trust the mint for spend state;
+allow mutating operations to remove mint-confirmed spent proofs;
+use repair-proofs for an explicit whole-wallet refresh;
 verify balance before spending again.
 ```
