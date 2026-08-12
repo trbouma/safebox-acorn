@@ -154,6 +154,106 @@ The app can hardcode **Connected Mode** at first. Later releases can determine
 mode from actual service reachability, local pairing state, bridge state, and
 community mesh participation.
 
+## Continuity Payments
+
+**Continuity Payments** are a powerful future Lockbox capability: Acorns should
+be able to keep making local payments to one another when the wider network,
+Lightning, or Cashu mints are unavailable.
+
+The user-facing idea is simple:
+
+```text
+When ordinary payment infrastructure is unavailable, nearby Acorns can still
+transfer previously issued ecash locally and reconcile with mints later.
+```
+
+Under the hood, this is an in-kind ecash transfer. The payment object itself is
+transferred: previously issued Cashu proofs move from one Acorn to another
+rather than being settled immediately through Lightning or refreshed at the
+mint.
+
+This creates a useful continuity path for individuals, organizations, and
+communities:
+
+- a remote community can keep local commerce moving during a satellite or
+  upstream internet outage;
+- a ship, camp, clinic, or field operation can keep ordinary small payments
+  working while its upstream link is blocked, expensive, or intermittent;
+- an organization can continue limited local operations while payment
+  infrastructure is degraded;
+- two Acorns can exchange bearer proof material through local network, mesh, or
+  appliance-mediated transport;
+- Spurline can preserve the local payment events and evidence;
+- when connectivity returns, Acorn can contact the relevant mints to refresh or
+  swap received proofs and determine finality.
+
+### Scenario: local commerce during intermittent connectivity
+
+Imagine a community that normally uses a Cashu mint connected to global payment
+infrastructure. In ordinary **Connected Mode**, people can deposit, pay,
+receive, and reconcile normally. Their Acorns hold spendable proofs issued by
+the mint, and the mint provides final spend-state confirmation.
+
+Now the upstream link becomes unreliable. A cruise ship may lose or ration its
+satellite connection. A remote community may have a shared satellite service
+that is sketchy at best. An emergency site may retain a local network while
+internet, mobile service, banks, and Lightning routes are unavailable.
+
+Inside the local environment, people are not isolated from each other. They may
+still have Wi-Fi, local Ethernet, Bluetooth, LoRa, a mesh network, or a
+Lockbox-hosted Spurline relay. Continuity Payments let participating Acorns
+continue small local transfers using ecash they already hold:
+
+```text
+connected period
+  -> wallets receive mint-issued proofs
+link degraded or blocked
+  -> local Acorns transfer selected proofs to each other
+  -> Spurline preserves payment events and evidence
+connectivity restored
+  -> receiving Acorns refresh or swap proofs with the mint
+  -> final spend state is reconciled
+```
+
+This does not make Lockbox a mint, bank, or global settlement network. It gives
+the community a practical local payment continuity layer while the global
+payment path is unavailable. The user app should keep that boundary visible:
+local transfer now, mint finality later.
+
+Continuity Payments are not the same as final mint settlement. Until the mint
+is reachable, the receiver cannot know with mint-level certainty that the
+proofs have not also been spent or transferred elsewhere. Lockbox should make
+that state explicit:
+
+```text
+local transfer accepted
+mint finality pending
+reconciliation required when connected
+```
+
+The product should also handle non-exact payments. When the mint is offline,
+Acorn may not be able to swap proofs to make exact change. The user app should
+calculate the closest transferable proof set and ask for explicit approval:
+
+```text
+Requested: 100 sats
+Transferable now: 96 sats
+Difference: -4 sats
+Status: provisional until mint refresh
+```
+
+or:
+
+```text
+Requested: 100 sats
+Transferable now: 104 sats
+Difference: +4 sats
+Status: provisional until mint refresh
+```
+
+That keeps the user in control and avoids pretending that local continuity is
+the same as external finality.
+
 ## Component roles inside Lockbox
 
 ### Safebox Web

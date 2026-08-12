@@ -100,6 +100,39 @@ The current Safebox Web app can start by showing **Connected Mode**. Later
 versions can determine mode from service reachability, local pairing, bridge
 state, and community mesh participation.
 
+## Continuity Payments
+
+Continuity Payments are a future Lockbox capability for local commerce when
+normal payment infrastructure is unavailable.
+
+If a mint, Lightning path, hosted service, or upstream internet connection is
+temporarily unreachable, nearby Acorns should still be able to transfer
+previously issued ecash to one another. The receiving Acorn can hold that value
+as provisional local payment material, and refresh or swap the proofs with the
+mint when connectivity returns.
+
+This is especially important for community continuity. A remote community might
+lose satellite connectivity while still having a local network, local devices,
+and local Lockbox services. Continuity Payments let local activity continue
+with clear settlement boundaries:
+
+- local transfer can happen now;
+- mint finality is pending;
+- reconciliation happens when the mint is reachable again.
+
+A practical example is a cruise ship, remote community, or emergency response
+site that normally uses a mint connected to global payments. If the satellite
+link is blocked, rationed, or unreliable, the people nearby may still be able
+to reach each other over a local network or mesh. Continuity Payments would let
+them keep making small local payments from ecash already held by their Acorns,
+then refresh or reconcile those proofs with the mint when the global link
+returns.
+
+When the mint is offline, a payment may not be exact because proofs cannot be
+swapped for change. Safebox Web should show the closest transferable amount,
+the difference from the requested amount, and ask the user to approve the
+provisional transfer.
+
 ## Product roles
 
 Acorn is the protocol authority layer. It coordinates keys, signing, encrypted

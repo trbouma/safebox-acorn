@@ -93,6 +93,19 @@ available without an internet connection. Nearby Safeboxes and participating
 devices can provide local access and carry payment messages across a direct,
 community-operated mesh.
 
+The user-facing name for this capability is **Continuity Payments**. The phrase
+keeps the emphasis on what people need in a disruption: enough local payment
+continuity for households, organizations, and communities to keep operating
+while final mint reconciliation is temporarily unavailable.
+
+For example, a cruise ship might normally use a mint that enables global
+payments, but lose reliable satellite access for hours. A remote community may
+have a local network but only intermittent satellite service. An emergency
+site may keep local communications running after internet, mobile service,
+bank terminals, or Lightning routes have failed. In each case, people are not
+fully disconnected from one another; they are locally connected while globally
+cut off.
+
 > **One Safebox can preserve emergency funds. A mesh of Safeboxes can help a
 > community continue exchanging value during disruption.**
 

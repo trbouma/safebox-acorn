@@ -124,15 +124,16 @@ Before Lockbox reconnects to the mint, the system may have:
 
 That can create competing control graphs.
 
-## In-kind payments
+## Continuity Payments
 
 The term "offline payment" can be misleading. A community may be offline from
 the global network while still being online locally. For example, a remote
 community may lose satellite connectivity but retain a local network, local
 devices, and a local Lockbox appliance.
 
-In that setting, the fallback is better described as an **in-kind payment** or
-**in-kind clearing** flow.
+In that setting, the user-facing capability is better described as
+**Continuity Payments**. The underlying mechanism is an **in-kind ecash
+transfer** or **in-kind clearing** flow.
 
 The phrase borrows from the idea of exchanging an asset for the same kind of
 asset rather than settling through an intermediate cash or account layer. In
@@ -155,11 +156,54 @@ the ordinary sense. It may still be able to:
 - defer mint, relay, or external registry reconciliation until global
   connectivity returns.
 
-In-kind payment language emphasizes the local clearing mechanism rather than
-the connectivity failure. It also keeps the settlement boundary visible:
-Lockbox can help transfer and preserve the payment material locally, but the
+Continuity Payments emphasize the reason this capability matters: people and
+communities can keep operating locally when wider infrastructure is degraded.
+In-kind ecash transfer describes the mechanism: payment material moves locally
+as payment material. Together, the terms keep the settlement boundary visible.
+Lockbox can help transfer and preserve payment material locally, but the
 external mint, issuer, registry, or counterparty still decides what it
 recognizes when the wider network is reachable again.
+
+### Scenario: a global mint with a blocked local link
+
+A community may normally rely on a mint that enables global payments. During
+ordinary operation, Acorns deposit, pay, receive, and refresh proofs through
+that mint. The mint provides the final spend-state check, while local Acorns
+hold the issued bearer proofs.
+
+The failure may be local rather than global. A cruise ship may have a blocked
+or rationed satellite link. A remote community may have intermittent satellite
+service. An emergency response site may retain a local network but lose
+internet, mobile service, bank terminals, Lightning routes, and access to the
+mint.
+
+In that situation, the community is globally disconnected but locally online.
+Lockbox can support local payment continuity:
+
+- Acorns use previously issued proofs already held by their wallets;
+- local network, mesh, or appliance transport carries encrypted payment
+  transfers;
+- Spurline preserves signed local payment events and evidence;
+- the receiving Acorn marks the payment as provisional;
+- when the mint becomes reachable, the receiver checks, refreshes, or swaps
+  the proofs to establish finality.
+
+This is useful for small, bounded local payments: meals and supplies on a ship,
+community store purchases, clinic logistics, local transport, emergency fuel,
+or temporary mutual-aid activity. It should not be presented as unconditional
+settlement. It is a continuity mechanism for payment material until the
+external mint can be consulted again.
+
+When mints are unavailable, a payment may not be exact. Without mint access,
+the sending Acorn may not be able to swap proofs into exact denominations. The
+user app should calculate a close transferable amount and ask the user to
+approve the difference before sending:
+
+- requested amount;
+- transferable amount available now;
+- overage or shortfall;
+- pending mint-finality status;
+- reconciliation action when the mint becomes reachable.
 
 ## Competing control graphs
 
