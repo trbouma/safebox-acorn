@@ -94,6 +94,12 @@ PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
 ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
+
+
+class MalformedIncomingTransfer(ValueError):
+    """An incoming transfer is structurally invalid and safe to skip."""
+
+
 BURN_DEFAULT_KINDS: List[int] = [0, 5, 37375, 37376, 7375, ECASH_TRANSFER_KIND, 30000, 30001, 30002]
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
     "RECEIVE_PROOF_MAINTENANCE_ENABLED",
@@ -4071,6 +4077,96 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+    @staticmethod
+    def _token_already_spent_error(error: object) -> bool:
+        """Return whether a mint conclusively rejected a bearer token as spent."""
+
+        normalized = str(error or "").lower()
+        return "token already spent" in normalized or (
+            "11001" in normalized and "spent" in normalized
+        )
+
+    async def _record_terminal_continuity_error(
+        self,
+        receipt: Dict[str, Any],
+        reason: str,
+    ) -> Dict[str, Any]:
+        """Journal one non-credit receipt failure and retire its bearer token."""
+
+        event_id = str(receipt.get("event_id") or "")
+        amount = int(receipt.get("amount") or 0)
+        marker = f"cashu-receipt-error:{event_id}"
+        history = await self.get_tx_history()
+        if not any(
+            str(entry.get("description_hash") or "") == marker
+            for entry in history
+            if isinstance(entry, dict)
+        ):
+            await self.add_tx_history(
+                tx_type="X",
+                amount=amount,
+                comment=(
+                    "Incoming ecash was not credited: the issuing mint reports "
+                    f"the token was already spent. Event {event_id[:12]}."
+                ),
+                tendered_amount=amount,
+                tendered_currency=str(receipt.get("unit") or "sat").upper(),
+                description_hash=marker,
+            )
+        await self._update_continuity_receipt(
+            event_id,
+            status="terminal-error",
+            terminal_at=int(time()),
+            token=None,
+            last_error=reason,
+        )
+        return {
+            "event_id": event_id,
+            "amount": amount,
+            "reason": reason,
+            "status": "terminal-error",
+        }
+
+    async def _record_incoming_transfer_error(
+        self,
+        *,
+        event_id: str,
+        sender_pubkey: str,
+        timestamp: int,
+        reason: object,
+    ) -> Dict[str, Any]:
+        """Journal one malformed incoming transfer before advancing its cursor."""
+
+        normalized_reason = " ".join(str(reason or "unknown processing error").split())
+        if len(normalized_reason) > 240:
+            normalized_reason = normalized_reason[:237] + "..."
+        marker = f"cashu-transfer-error:{event_id}"
+        history = await self.get_tx_history()
+        if not any(
+            str(entry.get("description_hash") or "") == marker
+            for entry in history
+            if isinstance(entry, dict)
+        ):
+            await self.add_tx_history(
+                tx_type="X",
+                amount=0,
+                comment=(
+                    "Incoming ecash message was malformed and was skipped. "
+                    f"Event {str(event_id)[:12]}. Error: {normalized_reason}"
+                ),
+                tendered_amount=0,
+                tendered_currency="SAT",
+                description_hash=marker,
+            )
+        return {
+            "event_id": str(event_id),
+            "sender_pubkey": str(sender_pubkey),
+            "timestamp": int(timestamp),
+            "reason": normalized_reason,
+            "status": "terminal-error",
+            "error_logged": True,
+        }
+
     async def reconcile_continuity_receipts(self) -> Dict[str, Any]:
         """Finalize pending receipt proofs with their mints when available."""
 
@@ -4080,6 +4176,7 @@ class Acorn:
         )
         confirmed: List[Dict[str, Any]] = []
         pending: List[Dict[str, Any]] = []
+        terminal_errors: List[Dict[str, Any]] = []
         for receipt in receipts:
             event_id = str(receipt.get("event_id") or "")
             token = str(receipt.get("token") or "")
@@ -4123,6 +4220,37 @@ class Acorn:
                 })
             except Exception as exc:
                 reason = str(exc).strip()
+                if self._token_already_spent_error(reason):
+                    try:
+                        terminal_error = await self._record_terminal_continuity_error(
+                            receipt,
+                            reason,
+                        )
+                    except Exception as journal_exc:
+                        journal_reason = (
+                            "token is already spent, but terminal error journaling "
+                            f"failed: {journal_exc}"
+                        )
+                        self.logger.warning(
+                            "op=reconcile_continuity_receipt status=pending "
+                            "event_id=%s error=%s",
+                            event_id,
+                            journal_reason,
+                        )
+                        pending.append({
+                            "event_id": event_id,
+                            "amount": int(receipt.get("amount") or 0),
+                            "reason": journal_reason,
+                        })
+                    else:
+                        self.logger.error(
+                            "op=reconcile_continuity_receipt status=terminal_error "
+                            "event_id=%s amount=%s reason=token_already_spent",
+                            event_id,
+                            terminal_error["amount"],
+                        )
+                        terminal_errors.append(terminal_error)
+                    continue
                 self.logger.warning(
                     "op=reconcile_continuity_receipt status=pending event_id=%s error=%s",
                     event_id,
@@ -4135,7 +4263,7 @@ class Acorn:
                 })
 
         return {
-            "status": "OK" if not pending else "PARTIAL",
+            "status": "OK" if not pending and not terminal_errors else "PARTIAL",
             "examined_count": len(receipts),
             "confirmed": confirmed,
             "confirmed_count": len(confirmed),
@@ -4143,6 +4271,9 @@ class Acorn:
             "pending": pending,
             "pending_count": len(pending),
             "pending_amount": sum(item["amount"] for item in pending),
+            "terminal_errors": terminal_errors,
+            "terminal_error_count": len(terminal_errors),
+            "terminal_error_amount": sum(item["amount"] for item in terminal_errors),
         }
 
     async def sweep_ecash_transfers(
@@ -4255,15 +4386,19 @@ class Acorn:
                     try:
                         decrypted = receive_enc.decrypt(each_event.content, each_event.pub_key)
                     except Exception as decrypt_exc:
-                        failed.append({
-                            "event_id": each_event.id,
-                            "reason": "decrypt_failed",
-                            "timestamp": event_ts,
-                            "error": str(decrypt_exc),
-                        })
-                        latest_processed = max(latest_processed, event_ts)
-                        continue
-                payload = json.loads(decrypted)
+                        raise MalformedIncomingTransfer(
+                            f"incoming transfer decryption failed: {decrypt_exc}"
+                        ) from decrypt_exc
+                try:
+                    payload = json.loads(decrypted)
+                except (json.JSONDecodeError, TypeError) as payload_exc:
+                    raise MalformedIncomingTransfer(
+                        f"incoming transfer payload is not valid JSON: {payload_exc}"
+                    ) from payload_exc
+                if not isinstance(payload, dict):
+                    raise MalformedIncomingTransfer(
+                        "incoming transfer payload must be a JSON object"
+                    )
                 if payload.get("type") != "cashu-token":
                     skipped.append({
                         "event_id": each_event.id,
@@ -4275,13 +4410,22 @@ class Acorn:
 
                 token = payload.get("token")
                 if not token:
-                    skipped.append({
-                        "event_id": each_event.id,
-                        "reason": "missing_token",
-                        "timestamp": event_ts,
-                    })
-                    latest_processed = max(latest_processed, event_ts)
-                    continue
+                    raise MalformedIncomingTransfer(
+                        "incoming transfer payload is missing its Cashu token"
+                    )
+
+                try:
+                    token_obj = TokenV4.deserialize(str(token))
+                    token_amount = sum(int(proof.amount) for proof in token_obj.proofs)
+                    claimed_amount = int(payload.get("amount", token_amount))
+                except Exception as token_exc:
+                    raise MalformedIncomingTransfer(
+                        f"incoming transfer contains an invalid Cashu token: {token_exc}"
+                    ) from token_exc
+                if token_amount <= 0 or claimed_amount != token_amount:
+                    raise MalformedIncomingTransfer(
+                        "incoming transfer amount does not match its proofs"
+                    )
 
                 comment = payload.get("comment") or "ecash transfer received"
                 payment_mode = str(payload.get("payment_mode") or "confirmed").lower()
@@ -4362,6 +4506,49 @@ class Acorn:
                     "provisional": provisional,
                 })
                 latest_processed = max(latest_processed, event_ts)
+            except MalformedIncomingTransfer as exc:
+                if preview_only:
+                    failed.append({
+                        "event_id": each_event.id,
+                        "sender_pubkey": each_event.pub_key,
+                        "timestamp": event_ts,
+                        "reason": str(exc),
+                        "error_logged": False,
+                    })
+                    continue
+                try:
+                    terminal_error = await self._record_incoming_transfer_error(
+                        event_id=each_event.id,
+                        sender_pubkey=sender_pubkey,
+                        timestamp=event_ts,
+                        reason=exc,
+                    )
+                except Exception as journal_exc:
+                    failed.append({
+                        "event_id": each_event.id,
+                        "sender_pubkey": each_event.pub_key,
+                        "timestamp": event_ts,
+                        "reason": str(exc),
+                        "error_logged": False,
+                        "journal_error": str(journal_exc),
+                    })
+                    self.logger.error(
+                        "op=sweep_ecash_transfers status=error_journal_failed "
+                        "event_id=%s error=%s journal_error=%s",
+                        each_event.id,
+                        exc,
+                        journal_exc,
+                    )
+                    break
+                failed.append(terminal_error)
+                latest_processed = max(latest_processed, event_ts)
+                self.logger.error(
+                    "op=sweep_ecash_transfers status=terminal_error "
+                    "event_id=%s error=%s",
+                    each_event.id,
+                    exc,
+                )
+                continue
             except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
                 failed.append({
                     "event_id": each_event.id,

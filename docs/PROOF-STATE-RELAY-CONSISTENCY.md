@@ -174,6 +174,28 @@ This is why `receive-ecash` is explicit and mutating. It turns received transfer
 material into current wallet proof state. In contrast, `balance` must remain a
 read-only inspection command.
 
+If the issuing mint conclusively rejects a pending receipt token with Cashu
+error `11001` (`Token already spent`), Acorn cannot credit that value and must
+not retry it indefinitely. Reconciliation writes an idempotent transaction
+history entry with type `X`, amount and event reference, marks the encrypted
+receipt `terminal-error`, removes its bearer token, and continues with later
+receipts. The entry is an error record, not a credit, and the wallet balance is
+unchanged. Timeouts, unavailable mints, pending states, and other ambiguous
+failures remain pending rather than being discarded.
+
+Structurally malformed incoming transfer events are terminal for cursor
+processing. This category is intentionally narrow: payloads that cannot be
+decrypted or parsed, invalid Cashu tokens, and proof/amount mismatches. Acorn
+writes an idempotent type `X` transaction-history entry containing the event
+reference and a bounded error description, advances the receive cursor, and
+continues with later messages. A malformed event therefore cannot indefinitely
+block valid payments behind it.
+
+Operational failures are different. If Acorn cannot write the error entry,
+persist the provisional receipt, or update relay-backed state, it does not
+advance past the affected event. This preserves retryability and prevents a
+temporary infrastructure problem from silently discarding valid funds.
+
 ## Inspection, automatic reconciliation, and explicit repair
 
 Before repair, the operator can perform a read-only mint-state check:

@@ -245,6 +245,68 @@ async def test_reconcile_continuity_receipts_keeps_unavailable_mint_pending() ->
 
 
 @pytest.mark.asyncio
+async def test_reconcile_spent_token_records_terminal_error_and_clears_receipt() -> None:
+    acorn = wallet()
+    receipt = {
+        "event_id": "event-spent",
+        "amount": 21,
+        "unit": "sat",
+        "status": "provisional",
+        "token": "cashuB-spent",
+    }
+    acorn.get_continuity_receipts = AsyncMock(return_value=[receipt])
+    acorn.accept_token = AsyncMock(
+        side_effect=RuntimeError(
+            'Unable to accept token safely: {"detail":"Token already spent.","code":11001}'
+        )
+    )
+    acorn.get_tx_history = AsyncMock(return_value=[])
+    acorn.add_tx_history = AsyncMock()
+    acorn._update_continuity_receipt = AsyncMock(return_value={})
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 0
+    assert result["pending_count"] == 0
+    assert result["terminal_error_count"] == 1
+    assert result["terminal_error_amount"] == 21
+    history = acorn.add_tx_history.await_args.kwargs
+    assert history["tx_type"] == "X"
+    assert history["amount"] == 21
+    assert "was not credited" in history["comment"]
+    assert history["description_hash"] == "cashu-receipt-error:event-spent"
+    update = acorn._update_continuity_receipt.await_args
+    assert update.args == ("event-spent",)
+    assert update.kwargs["status"] == "terminal-error"
+    assert update.kwargs["token"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_spent_token_does_not_duplicate_existing_error_history() -> None:
+    acorn = wallet()
+    receipt = {
+        "event_id": "event-spent",
+        "amount": 21,
+        "unit": "sat",
+        "status": "provisional",
+        "token": "cashuB-spent",
+    }
+    acorn.get_continuity_receipts = AsyncMock(return_value=[receipt])
+    acorn.accept_token = AsyncMock(side_effect=RuntimeError("Token already spent"))
+    acorn.get_tx_history = AsyncMock(
+        return_value=[{"description_hash": "cashu-receipt-error:event-spent"}]
+    )
+    acorn.add_tx_history = AsyncMock()
+    acorn._update_continuity_receipt = AsyncMock(return_value={})
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["terminal_error_count"] == 1
+    acorn.add_tx_history.assert_not_awaited()
+    assert acorn._update_continuity_receipt.await_args.kwargs["token"] is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_standard_receipt_keeps_unavailable_mint_pending() -> None:
     acorn = wallet()
     acorn.get_continuity_receipts = AsyncMock(
@@ -434,3 +496,93 @@ async def test_sweep_can_collect_standard_payment_without_contacting_mint(
     assert result["provisional_count"] == 1
     acorn._store_continuity_receipt.assert_awaited_once()
     acorn.accept_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_journals_malformed_event_and_continues_to_later_transfer(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    malformed = Event(
+        id="c" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_KIND,
+        content="not-json",
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="22" * 32,
+        created_at=125,
+    )
+    valid = Event(
+        id="d" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "cashu-token",
+                "token": serialized_token([proof(1, "1")]),
+                "amount": 1,
+                "unit": "sat",
+                "payment_mode": "confirmed",
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="33" * 32,
+        created_at=126,
+    )
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [valid, malformed]
+
+    class PlaintextNip44:
+        def __init__(self, _keys):
+            pass
+
+        def decrypt(self, content, _pubkey):
+            return content
+
+    class NoGiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            raise ValueError("not gift wrapped")
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", NoGiftWrap)
+    acorn.get_tx_history = AsyncMock(return_value=[])
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={"amount": 1, "status": "provisional"}
+    )
+
+    result = await acorn.sweep_ecash_transfers(finalize=False)
+
+    assert result["status"] == "PARTIAL"
+    assert result["accepted_count"] == 1
+    assert len(result["failed"]) == 1
+    assert result["failed"][0]["event_id"] == malformed.id
+    assert result["failed"][0]["status"] == "terminal-error"
+    assert result["failed"][0]["error_logged"] is True
+    assert result["latest_processed"] == 126
+    history = acorn.add_tx_history.await_args.kwargs
+    assert history["tx_type"] == "X"
+    assert history["amount"] == 0
+    assert history["description_hash"] == f"cashu-transfer-error:{malformed.id}"
+    assert "malformed and was skipped" in history["comment"]
+    acorn._store_continuity_receipt.assert_awaited_once()
+    assert acorn.set_wallet_info.await_args_list[-1].args == (
+        ECASH_TRANSFER_CURSOR_LABEL,
+        "126",
+    )
