@@ -8646,13 +8646,25 @@ class Acorn:
         finally:
             if lock_acquired:
                 await self.release_lock()
-        await self.add_tx_history(
-            tx_type='C',
-            amount=token_amount,
-            comment=comment,
-            tendered_amount=tendered_amount,
-            tendered_currency=tendered_currency,
-        )
+        try:
+            await self.add_tx_history(
+                tx_type='C',
+                amount=token_amount,
+                comment=comment,
+                tendered_amount=tendered_amount,
+                tendered_currency=tendered_currency,
+            )
+        except Exception as exc:
+            self.logger.error(
+                "op=accept_token status=tx_history_failed amount=%s error=%s",
+                token_amount,
+                exc,
+            )
+            raise RuntimeError(
+                "Token proofs were accepted, but transaction history could not "
+                "be persisted. Review wallet balance and transaction history "
+                "before retrying."
+            ) from exc
         return f'Successfully accepted {token_amount} sats!', token_amount
 
 
