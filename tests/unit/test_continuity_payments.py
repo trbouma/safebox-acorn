@@ -156,3 +156,24 @@ async def test_store_continuity_receipt_refuses_unreadable_existing_journal() ->
 
     acorn.set_wallet_info.assert_not_awaited()
     acorn.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_get_continuity_receipts_hides_bearer_tokens_and_sorts_newest() -> None:
+    acorn = wallet()
+    acorn.get_wallet_info = AsyncMock(
+        return_value=json.dumps(
+            [
+                {"event_id": "older", "amount": 2, "timestamp": 10, "token": "secret-a"},
+                {"event_id": "newer", "amount": 4, "timestamp": 20, "token": "secret-b"},
+            ]
+        )
+    )
+
+    receipts = await acorn.get_continuity_receipts()
+
+    assert [receipt["event_id"] for receipt in receipts] == ["newer", "older"]
+    assert all("token" not in receipt for receipt in receipts)
+
+    receipts_with_tokens = await acorn.get_continuity_receipts(include_tokens=True)
+    assert receipts_with_tokens[0]["token"] == "secret-b"

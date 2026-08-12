@@ -3997,6 +3997,37 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+    async def get_continuity_receipts(
+        self,
+        *,
+        include_tokens: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Return persisted provisional receipts without changing wallet balance."""
+
+        raw_receipts = await self.get_wallet_info(CONTINUITY_RECEIPTS_LABEL)
+        if not raw_receipts:
+            return []
+        try:
+            receipts = json.loads(raw_receipts)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Continuity receipt journal is unreadable") from exc
+        if not isinstance(receipts, list) or not all(
+            isinstance(item, dict) for item in receipts
+        ):
+            raise RuntimeError("Continuity receipt journal has an invalid format")
+
+        visible_receipts: List[Dict[str, Any]] = []
+        for receipt in receipts:
+            visible = dict(receipt)
+            if not include_tokens:
+                visible.pop("token", None)
+            visible_receipts.append(visible)
+        return sorted(
+            visible_receipts,
+            key=lambda item: (int(item.get("timestamp") or 0), str(item.get("event_id") or "")),
+            reverse=True,
+        )
+
     async def sweep_ecash_transfers(
         self,
         since: int | None = None,
