@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title desc">
+  <title id="title">Mainstay logo</title>
+  <desc id="desc">A blue trail shelter containing a grounded signpost with a warm amber waypoint marker.</desc>
+  <path fill="#2f66d8" d="M64 205 256 66l192 139v73l-48-35v135h-48V208l-96-70-96 70v170h-48V243l-48 35z"/>
+  <path fill="#173b78" d="M64 394h168V198l24-24 24 24v196h168v52H64z"/>
+  <path fill="#e4a53a" d="M280 246h96l38 34-38 34h-96z"/>
+</svg>

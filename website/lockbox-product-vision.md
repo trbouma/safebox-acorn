@@ -1,24 +1,48 @@
 ---
-title: Lockbox Product Vision
-description: How Acorn, Safebox Web, Grove, and Spurline fit together as a local-first appliance family.
+title: Mainstay and Lockbox Product Vision
+description: How the Mainstay application and Lockbox appliance bring Acorn, Safebox Web, Grove, and Spurline together.
 ---
 
-# Lockbox Product Vision
+# Mainstay and Lockbox Product Vision
 
-Lockbox is the long-term appliance direction for the Acorn stack: a local-first
-runtime that brings together custody, records, storage, and relay continuity
-under local control.
+**Mainstay** is the future unified local-first application for records,
+identity, payments, and continuity. **Lockbox** is the hardware-first appliance
+that gives Mainstay and its supporting services a dedicated local home.
 
 The product family is intentionally made of sibling projects. Each one should
 remain useful on its own, while also fitting into a larger local appliance
 profile.
 
 The user path should remain simple. In ordinary conditions, someone can use a
-web-connected Safebox Web service. If the hosted service, provider, or wider
-internet is unavailable, the same user app should be able to fall back to local
-Lockbox services.
+web-connected service. If the hosted service, provider, or wider internet is
+unavailable, Mainstay should be able to fall back to local Lockbox services
+without becoming a separate emergency-only app.
 
-![Lockbox family architecture](assets/images/lockbox-family-architecture.svg)
+The existing sibling architecture is the foundation Mainstay will unify:
+
+![Current Lockbox component architecture](assets/images/lockbox-family-architecture.svg)
+
+## Continuity at a glance
+
+The letter-sized poster summarizes the application, appliance, component roles,
+and what to do when external services are unavailable.
+
+![Mainstay and Lockbox continuity poster](assets/images/mainstay-lockbox-continuity-poster.png)
+
+[Download the print-ready PDF](assets/images/mainstay-lockbox-continuity-poster.pdf){ .md-button .md-button--primary }
+[Open the vector version](assets/images/mainstay-lockbox-continuity-poster.svg){ .md-button }
+
+## The product model
+
+- **Mainstay** is the unified application and primary user entry point.
+- **Lockbox** is the dedicated local appliance that runs Mainstay and its
+  supporting services.
+- **Continuity** is the capability: records and payments keep working across
+  connected, local, mobile, and community conditions.
+
+Mainstay can also run without dedicated Lockbox hardware. Lockbox is the
+integrated deployment for people and communities that want durable local
+operation, hardware-backed controls, and appliance simplicity.
 
 ## The family
 
@@ -39,8 +63,8 @@ stack.
 
 ### Safebox Web
 
-The user app for custody, records, offers, grants, payments, handles, and
-workflows.
+The current standalone app for custody, records, payments, handles, and
+workflows, and an important foundation for Mainstay.
 
 [Safebox Web source](https://github.com/trbouma/safebox-web)
 
@@ -71,6 +95,12 @@ mesh synchronization.
 </article>
 
 </div>
+
+### Mainstay
+
+Mainstay will provide one coherent entry point across these sibling products.
+It does not replace their protocol boundaries or prevent them from remaining
+independently useful.
 
 ## The appliance direction
 
@@ -135,11 +165,15 @@ provisional transfer.
 
 ## Product roles
 
+Mainstay is the unified application. It coordinates records, identity,
+payments, synchronization, and continuity modes without becoming the system of
+record.
+
 Acorn is the protocol authority layer. It coordinates keys, signing, encrypted
 records, wallet state, transfer flows, and recovery material.
 
-Safebox Web is the user app. It gives people browser-based workflows without
-becoming the system of record.
+Safebox Web is the current user app and foundation for Mainstay. It gives
+people browser-based workflows without becoming the system of record.
 
 Grove is the blob-storage service. It stores opaque bytes and attachments
 without needing to understand plaintext records.
@@ -148,9 +182,9 @@ Spurline is the relay service. It preserves relevant Nostr events locally and
 creates a base for local continuity, network synchronization, and future mesh
 operation.
 
-Lockbox is the appliance packaging. It runs the family locally with predictable
-services, durable local storage, health checks, hardware-backed controls, and a
-clear operator experience.
+Lockbox is the hardware-first appliance. It runs Mainstay and the family
+locally with predictable services, durable local storage, health checks,
+hardware-backed controls, and a clear operator experience.
 
 ## Why this matters
 
@@ -162,9 +196,10 @@ credible local home for keys, records, funds, storage, and relay state without
 being trapped by any single application, hosted operator, relay, or storage
 provider.
 
-Acorn gives the stack portable protocol authority. Safebox Web makes it usable.
-Grove preserves encrypted blobs. Spurline preserves events. Lockbox brings
-them together as a local appliance.
+Acorn gives the stack portable protocol authority. Safebox Web provides the
+current application foundation. Grove preserves encrypted blobs. Spurline
+preserves events. Mainstay becomes the unified entry point, and Lockbox brings
+the complete experience together as a local appliance.
 
 [Read the detailed product note](https://github.com/trbouma/safebox-acorn/blob/main/docs/LOCKBOX-PRODUCT-VISION.md){ .md-button .md-button--primary }
 [How Acorn works](how-acorn-works.md){ .md-button }

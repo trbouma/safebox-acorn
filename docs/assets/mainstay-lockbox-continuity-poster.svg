@@ -1,0 +1,144 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1700 2200" role="img" aria-labelledby="title desc">
+  <title id="title">Mainstay product architecture and continuity poster</title>
+  <desc id="desc">A letter-sized poster showing Mainstay as the unified application, Safebox, Acorn, Grove, and Spurline as supporting components inside the Lockbox local appliance, and a three-stage continuity workflow.</desc>
+  <defs>
+    <style>
+      .eyebrow { font: 700 25px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 3px; }
+      .display { font: 800 104px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .lead { font: 600 34px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .section { font: 800 31px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .name { font: 800 32px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .role { font: 700 19px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 1px; }
+      .body { font: 500 23px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .small { font: 500 19px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .step { font: 800 25px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .signal { font: 800 23px Inter, "Helvetica Neue", Arial, sans-serif; letter-spacing: 0; }
+      .white { fill: #fff; }
+      .ink { fill: #132033; }
+      .muted { fill: #506078; }
+      .blue { fill: #2459d3; }
+      .green { fill: #236b46; }
+      .amber { fill: #9a5b00; }
+      .panel { fill: #fff; stroke: #d6deea; stroke-width: 2; }
+      .line { fill: none; stroke: #8593a7; stroke-width: 4; stroke-linecap: round; stroke-linejoin: round; }
+      .arrow { fill: #8593a7; }
+    </style>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="150%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#14243b" flood-opacity="0.10"/>
+    </filter>
+    <clipPath id="safeClip"><rect x="183" y="833" width="190" height="190" rx="20"/></clipPath>
+    <clipPath id="acornClip"><rect x="578" y="833" width="190" height="190" rx="20"/></clipPath>
+    <clipPath id="groveClip"><rect x="973" y="833" width="190" height="190" rx="20"/></clipPath>
+  </defs>
+
+  <rect width="1700" height="2200" fill="#f4f7fb"/>
+
+  <rect width="1700" height="410" fill="#14243b"/>
+  <rect y="400" width="1700" height="10" fill="#e4a53a"/>
+  <text x="110" y="88" class="eyebrow" fill="#c9d5e5">LOCAL-FIRST CONTINUITY</text>
+  <text x="110" y="213" class="display white">Mainstay</text>
+  <text x="110" y="282" class="lead white">Records and payments that keep working.</text>
+  <text x="110" y="342" class="body" fill="#c9d5e5">The unified application for individuals and communities.</text>
+  <rect x="1260" y="50" width="320" height="320" rx="30" fill="#fff"/>
+  <image x="1288" y="78" width="264" height="264" xlink:href="mainstay-logo.svg" href="mainstay-logo.svg" preserveAspectRatio="xMidYMid meet"/>
+
+  <text x="110" y="492" class="eyebrow blue">HOW THE PIECES FIT TOGETHER</text>
+  <line x1="110" y1="520" x2="1590" y2="520" stroke="#c9d3e2" stroke-width="2"/>
+
+  <rect x="170" y="565" width="1360" height="154" rx="18" fill="#2459d3" filter="url(#shadow)"/>
+  <rect x="194" y="580" width="126" height="126" rx="14" fill="#fff"/>
+  <image x="204" y="591" width="104" height="104" xlink:href="mainstay-logo.svg" href="mainstay-logo.svg" preserveAspectRatio="xMidYMid meet"/>
+  <text x="340" y="621" class="eyebrow white">MAINSTAY</text>
+  <text x="340" y="674" class="section white">One app for records, identity, payments, and recovery</text>
+  <rect x="1280" y="589" width="205" height="106" rx="12" fill="#fff" opacity="0.14"/>
+  <text x="1382" y="630" text-anchor="middle" class="role white">CURRENT MODE</text>
+  <text x="1382" y="672" text-anchor="middle" class="step white">Connected</text>
+
+  <path d="M850 719v54" class="line"/>
+  <path d="M850 773H278v42m572-42H673v42m177-42h218v42m-218-42h613v42" class="line"/>
+  <path d="M270 806l8 14 8-14zM665 806l8 14 8-14zM1060 806l8 14 8-14zM1455 806l8 14 8-14z" class="arrow"/>
+
+  <rect x="85" y="790" width="1530" height="625" rx="22" fill="#eaf0f7" stroke="#aebbd0" stroke-width="3"/>
+  <rect x="115" y="806" width="404" height="44" rx="8" fill="#14243b"/>
+  <text x="135" y="837" class="role white">LOCKBOX LOCAL APPLIANCE</text>
+  <text x="1575" y="838" text-anchor="end" class="small muted">FreeBSD · local storage · keypad · hardware security</text>
+
+  <g filter="url(#shadow)">
+    <rect x="125" y="875" width="305" height="440" rx="16" class="panel"/>
+    <rect x="183" y="913" width="190" height="190" rx="20" fill="#edf2ff"/>
+    <image x="183" y="913" width="190" height="190" xlink:href="safebox-logo.png" href="safebox-logo.png" preserveAspectRatio="xMidYMid slice"/>
+    <text x="278" y="1155" text-anchor="middle" class="name ink">Safebox</text>
+    <text x="278" y="1192" text-anchor="middle" class="role blue">USER WORKFLOWS</text>
+    <text x="278" y="1240" text-anchor="middle" class="body muted">Makes records and</text>
+    <text x="278" y="1274" text-anchor="middle" class="body muted">payments approachable.</text>
+
+    <rect x="520" y="875" width="305" height="440" rx="16" class="panel"/>
+    <rect x="578" y="913" width="190" height="190" rx="20" fill="#fbf5e9"/>
+    <image x="578" y="913" width="190" height="190" xlink:href="acorn-logo.png" href="acorn-logo.png" preserveAspectRatio="xMidYMid slice"/>
+    <text x="673" y="1155" text-anchor="middle" class="name ink">Acorn</text>
+    <text x="673" y="1192" text-anchor="middle" class="role amber">PORTABLE AUTHORITY</text>
+    <text x="673" y="1240" text-anchor="middle" class="body muted">Keys, funds, records,</text>
+    <text x="673" y="1274" text-anchor="middle" class="body muted">signing, and recovery.</text>
+
+    <rect x="915" y="875" width="305" height="440" rx="16" class="panel"/>
+    <rect x="973" y="913" width="190" height="190" rx="20" fill="#f3f6e8"/>
+    <image x="973" y="913" width="190" height="190" xlink:href="grove-logo.png" href="grove-logo.png" preserveAspectRatio="xMidYMid slice"/>
+    <text x="1068" y="1155" text-anchor="middle" class="name ink">Grove</text>
+    <text x="1068" y="1192" text-anchor="middle" class="role green">ENCRYPTED STORAGE</text>
+    <text x="1068" y="1240" text-anchor="middle" class="body muted">Durable blobs and</text>
+    <text x="1068" y="1274" text-anchor="middle" class="body muted">private attachments.</text>
+
+    <rect x="1310" y="875" width="305" height="440" rx="16" class="panel"/>
+    <rect x="1368" y="913" width="190" height="190" rx="20" fill="#edf2ff"/>
+    <image x="1368" y="913" width="190" height="190" xlink:href="spurline-logo.svg" href="spurline-logo.svg" preserveAspectRatio="xMidYMid meet"/>
+    <text x="1463" y="1155" text-anchor="middle" class="name ink">Spurline</text>
+    <text x="1463" y="1192" text-anchor="middle" class="role blue">LOCAL EVENT RELAY</text>
+    <text x="1463" y="1240" text-anchor="middle" class="body muted">Local events, sync,</text>
+    <text x="1463" y="1274" text-anchor="middle" class="body muted">and mesh continuity.</text>
+  </g>
+
+  <rect x="125" y="1340" width="1460" height="48" rx="8" fill="#dbe4f0"/>
+  <text x="855" y="1372" text-anchor="middle" class="small muted">Mainstay can also use hosted or independently deployed versions of these components.</text>
+
+  <text x="110" y="1503" class="eyebrow blue">CONTINUITY IN THREE STEPS</text>
+  <line x1="110" y1="1532" x2="1590" y2="1532" stroke="#c9d3e2" stroke-width="2"/>
+
+  <circle cx="210" cy="1625" r="58" fill="#e4f3ea"/>
+  <text x="210" y="1635" text-anchor="middle" class="section green">1</text>
+  <text x="300" y="1606" class="step ink">CONNECTED</text>
+  <text x="300" y="1646" class="body muted">Use available services.</text>
+  <text x="300" y="1681" class="body muted">Sync and finalize normally.</text>
+  <path d="M560 1625h90" class="line"/><path d="M640 1615l18 10-18 10z" class="arrow"/>
+
+  <circle cx="750" cy="1625" r="58" fill="#fff0d6"/>
+  <text x="750" y="1635" text-anchor="middle" class="section amber">2</text>
+  <text x="840" y="1606" class="step ink">DISRUPTED</text>
+  <text x="840" y="1646" class="body muted">Keep records and payments local.</text>
+  <text x="840" y="1681" class="body muted">Received value remains pending.</text>
+  <path d="M1150 1625h90" class="line"/><path d="M1230 1615l18 10-18 10z" class="arrow"/>
+
+  <circle cx="1315" cy="1625" r="58" fill="#e7edf8"/>
+  <text x="1315" y="1635" text-anchor="middle" class="section blue">3</text>
+  <text x="1405" y="1606" class="step ink">RESTORED</text>
+  <text x="1405" y="1646" class="small muted">Sync local activity.</text>
+  <text x="1405" y="1681" class="small muted">Finalize pending transactions.</text>
+
+  <rect x="110" y="1765" width="1480" height="210" rx="18" fill="#fff" stroke="#c9d3e2" stroke-width="2" filter="url(#shadow)"/>
+  <rect x="110" y="1765" width="18" height="210" rx="9" fill="#e4a53a"/>
+  <text x="170" y="1825" class="eyebrow amber">WHEN CONNECTIONS FAIL</text>
+  <text x="170" y="1882" class="step ink">Stay in Mainstay. Keep working locally. Finalize when services return.</text>
+  <text x="170" y="1935" class="body muted">The app keeps confirmed balance and pending value clearly separated.</text>
+
+  <rect x="110" y="2035" width="705" height="92" rx="12" fill="#e4f3ea"/>
+  <circle cx="165" cy="2081" r="17" fill="#236b46"/>
+  <path d="m156 2081 7 7 14-17" fill="none" stroke="#fff" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+  <text x="205" y="2090" class="signal green">CONFIRMED = finalized and spendable</text>
+
+  <rect x="885" y="2035" width="705" height="92" rx="12" fill="#fff0d6"/>
+  <circle cx="940" cy="2081" r="17" fill="#c77a08"/>
+  <path d="M940 2070v14m0 7v2" stroke="#fff" stroke-width="5" stroke-linecap="round"/>
+  <text x="980" y="2090" class="signal amber">PENDING = preserved, awaiting finality</text>
+
+  <text x="110" y="2180" class="small muted">Mainstay is the application. Lockbox is the appliance. Continuity is the capability.</text>
+  <text x="1590" y="2180" text-anchor="end" class="small muted">Product concept · August 2026</text>
+</svg>
