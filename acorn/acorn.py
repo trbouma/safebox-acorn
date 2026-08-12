@@ -3826,7 +3826,7 @@ class Acorn:
         amount: int,
         recipient: str,
         relay: str | None = None,
-        comment: str = "ecash transfer",
+        comment: str = "funds transfer",
         nonce: str | None = None,
         direct: bool = False,
         expiration: int | None = None,
@@ -3850,7 +3850,7 @@ class Acorn:
         transfer_relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
         transfer_relays = self._normalize_relays(transfer_relay_candidates)
         if not transfer_relays:
-            raise ValueError("No relay available for ecash transfer")
+            raise ValueError("No relay available for funds transfer")
         nonce = nonce or secrets.token_hex(16)
 
         payment_mode = str(payment_mode).strip().lower()
@@ -4106,7 +4106,7 @@ class Acorn:
                 tx_type="X",
                 amount=amount,
                 comment=(
-                    "Incoming ecash was not credited: the issuing mint reports "
+                    "Incoming funds were not credited: the issuing mint reports "
                     f"the token was already spent. Event {event_id[:12]}."
                 ),
                 tendered_amount=amount,
@@ -4151,7 +4151,7 @@ class Acorn:
                 tx_type="X",
                 amount=0,
                 comment=(
-                    "Incoming ecash message was malformed and was skipped. "
+                    "Incoming funds transfer was malformed and was skipped. "
                     f"Event {str(event_id)[:12]}. Error: {normalized_reason}"
                 ),
                 tendered_amount=0,
@@ -4197,7 +4197,7 @@ class Acorn:
                 else:
                     sender_pubkey = str(receipt.get("sender_pubkey") or "")
                     history_comment = (
-                        f"ecash transfer received from {sender_pubkey[:12]}: "
+                        f"funds transfer received from {sender_pubkey[:12]}: "
                         + str(receipt.get("comment") or "incoming payment")
                     )
                 message, amount = await self.accept_token(
@@ -4427,7 +4427,7 @@ class Acorn:
                         "incoming transfer amount does not match its proofs"
                     )
 
-                comment = payload.get("comment") or "ecash transfer received"
+                comment = payload.get("comment") or "funds transfer received"
                 payment_mode = str(payload.get("payment_mode") or "confirmed").lower()
                 if preview_only:
                     if token.startswith("cashuB"):
@@ -4463,7 +4463,7 @@ class Acorn:
                         "mint finalization is pending."
                     )
                 else:
-                    history_comment = f"ecash transfer received from {sender_pubkey[:12]}: {comment}"
+                    history_comment = f"funds transfer received from {sender_pubkey[:12]}: {comment}"
                     try:
                         msg_out, token_amount = await self.accept_token(
                             cashu_token=token,

@@ -273,7 +273,7 @@ async def test_reconcile_spent_token_records_terminal_error_and_clears_receipt()
     history = acorn.add_tx_history.await_args.kwargs
     assert history["tx_type"] == "X"
     assert history["amount"] == 21
-    assert "was not credited" in history["comment"]
+    assert "were not credited" in history["comment"]
     assert history["description_hash"] == "cashu-receipt-error:event-spent"
     update = acorn._update_continuity_receipt.await_args
     assert update.args == ("event-spent",)
@@ -333,7 +333,7 @@ async def test_reconcile_standard_receipt_keeps_unavailable_mint_pending() -> No
     assert result["pending_amount"] == 5
     acorn.accept_token.assert_awaited_once_with(
         cashu_token="cashuB-test",
-        comment="ecash transfer received from 222222222222: invoice payment",
+        comment="funds transfer received from 222222222222: invoice payment",
         tendered_amount=5,
         tendered_currency="SAT",
     )

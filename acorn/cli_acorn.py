@@ -287,7 +287,11 @@ def _format_tx_history_entry(entry: dict) -> str:
     tendered_amount = entry.get("tendered_amount")
     tendered_currency = entry.get("tendered_currency") or "SAT"
     current_balance = entry.get("current_balance")
-    comment = entry.get("comment") or ""
+    comment = str(entry.get("comment") or "")
+    # Keep stored history intact while presenting protocol-neutral wording.
+    comment = comment.replace("ecash transfer received", "funds transfer received")
+    comment = comment.replace("Ecash transfer received", "Funds transfer received")
+    comment = comment.replace("Incoming ecash", "Incoming funds")
     fees = entry.get("fees") or 0
 
     lines = [
@@ -1575,8 +1579,8 @@ def delete_kind(kind):
     click.echo(out_info)
 
 @click.command("burn", help="Burn this wallet's relay data and remove local wallet config")
-@click.option("--send-to", default=None, help="NIP-05/npub/pubkey recipient for remaining ecash before burn")
-@click.option("--send-relay", default=None, help="Relay to publish the optional ecash sweep transfer")
+@click.option("--send-to", default=None, help="NIP-05/npub/pubkey recipient for remaining funds before burn")
+@click.option("--send-relay", default=None, help="Relay to publish the optional funds sweep transfer")
 @click.option("--pay-to", default=None, help="Lightning address recipient for remaining funds before burn")
 @click.option("--pay-amount", default=None, type=int, help="Lightning amount in sats; defaults to the maximum amount that fits mint fees")
 @click.option("--relay", "relays", default=None, help="Comma-separated relays to burn from; defaults to home relay")
@@ -1591,7 +1595,7 @@ def burn(send_to, send_relay, pay_to, pay_amount, relays, kinds, allow_funded, k
     burn_kinds = [int(each) for each in _split_csv(kinds)] if kinds else None
     transfer_relay = _normalize_relay(send_relay) if send_relay else None
     if send_to and pay_to:
-        raise click.ClickException("Use only one of --send-to for Acorn ecash or --pay-to for Lightning.")
+        raise click.ClickException("Use only one of --send-to for an Acorn funds transfer or --pay-to for Lightning.")
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, home_relay=HOME_RELAY, mints=MINTS, logging_level=LOGGING_LEVEL)
 
     try:
@@ -1822,8 +1826,8 @@ def balance(json_output, show_mints, verify_mint_state):
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))
 
-@click.command("receive-ecash", help="Receive Acorn ecash transfers into this Acorn")
-@click.option("--since", default=None, type=int, help="Override incoming ecash transfer cursor.")
+@click.command("receive-ecash", help="Receive incoming funds transfers into this Acorn")
+@click.option("--since", default=None, type=int, help="Override the incoming funds transfer cursor.")
 @click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps or direct kind 7378 transfers.")
 @click.option("--receive-key", is_flag=True, help="Prompt privately for a transient receiving nsec; it is not stored.")
 @click.option("--receive-nsec-file", default=None, metavar="PATH", help="Read a transient receiving nsec from a chmod-600 file, or '-' for stdin.")
@@ -1854,7 +1858,7 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
         if json_output:
             _emit_json({"status": "ERROR", "error": str(exc)})
             return
-        raise click.ClickException(f"Receive ecash failed: {exc}") from exc
+        raise click.ClickException(f"Receive funds failed: {exc}") from exc
 
     if json_output:
         _emit_json(result)
@@ -1877,7 +1881,7 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
     if confirmed_count:
         click.echo(
             f"Accepted {result['accepted_amount']} sats from "
-            f"{confirmed_count} incoming ecash transfer(s)."
+            f"{confirmed_count} incoming funds transfer(s)."
         )
     if provisional_count:
         click.echo(
@@ -1886,7 +1890,7 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
             "mint reconciliation is pending."
         )
     if not confirmed_count and not provisional_count:
-        click.echo("No incoming ecash accepted.")
+        click.echo("No incoming funds accepted.")
     if result.get("failed"):
         click.echo(f"Stopped after {len(result['failed'])} failed transfer event(s).")
 
@@ -1948,11 +1952,11 @@ def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_outp
     else:
         click.echo("No delete request published.")
 
-@click.command("ecash-transfer", help="Send ecash to another Acorn using NIP-59 gift wrap with inner kind 7378")
+@click.command("ecash-transfer", help="Send funds to another Acorn")
 @click.argument('amount', type=int)
 @click.argument('recipient')
 @click.option('--relay', '-r', default=None, help='relay to publish the transfer to; defaults to home relay')
-@click.option('--comment', '-c', default='ecash transfer', help='transfer comment')
+@click.option('--comment', '-c', default='funds transfer', help='transfer comment')
 @click.option('--direct', is_flag=True, help='Publish direct sender-authored NIP-44 event instead of default gift-wrapped event')
 @click.option('--expires-in', type=click.IntRange(min=1), default=None, help='Add a NIP-40 expiration tag this many seconds from now')
 @click.option('--json', "json_output", is_flag=True, help="Emit JSON output.")
@@ -1975,13 +1979,13 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
         if json_output:
             _emit_json({"status": "ERROR", "error": str(exc)})
             return
-        raise click.ClickException(f"Ecash transfer failed: {exc}") from exc
+        raise click.ClickException(f"Funds transfer failed: {exc}") from exc
 
     if json_output:
         _emit_json(result)
         return
 
-    click.echo("Ecash transfer published.")
+    click.echo("Funds transfer published.")
     click.echo(f"Kind: {result['kind']}")
     if result.get("transfer_kind") and result["transfer_kind"] != result["kind"]:
         click.echo(f"Inner transfer kind: {result['transfer_kind']}")

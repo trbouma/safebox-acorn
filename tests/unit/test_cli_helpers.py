@@ -801,7 +801,7 @@ def test_format_tx_history_entry_credit(monkeypatch, tmp_path):
     assert "Credit" in rendered
     assert "+3 sats" in rendered
     assert "balance: 25 sats" in rendered
-    assert "ecash transfer received" in rendered
+    assert "funds transfer received" in rendered
 
 
 def test_format_tx_history_entry_debit(monkeypatch, tmp_path):
