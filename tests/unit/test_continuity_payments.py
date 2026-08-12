@@ -6,8 +6,14 @@ from unittest.mock import AsyncMock
 
 import pytest
 from monstr.encrypt import Keys
+from monstr.event.event import Event
 
-from acorn.acorn import Acorn, CONTINUITY_RECEIPTS_LABEL
+from acorn.acorn import (
+    Acorn,
+    CONTINUITY_RECEIPTS_LABEL,
+    ECASH_TRANSFER_CURSOR_LABEL,
+    ECASH_TRANSFER_KIND,
+)
 from acorn.models import Proof, TokenV3, TokenV3Token, TokenV4
 
 
@@ -129,6 +135,7 @@ async def test_store_continuity_receipt_quarantines_token_idempotently() -> None
 
     assert receipt["status"] == "provisional"
     assert receipt["amount"] == 5
+    assert receipt["payment_mode"] == "confirmed"
     assert len(stored) == 1
     acorn.set_wallet_info.assert_awaited_once_with(
         CONTINUITY_RECEIPTS_LABEL,
@@ -235,3 +242,195 @@ async def test_reconcile_continuity_receipts_keeps_unavailable_mint_pending() ->
     assert result["pending_amount"] == 5
     assert "mint unavailable" in result["pending"][0]["reason"]
     acorn._update_continuity_receipt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_standard_receipt_keeps_unavailable_mint_pending() -> None:
+    acorn = wallet()
+    acorn.get_continuity_receipts = AsyncMock(
+        return_value=[
+            {
+                "event_id": "event-1",
+                "sender_pubkey": "22" * 32,
+                "amount": 5,
+                "unit": "sat",
+                "comment": "invoice payment",
+                "payment_mode": "confirmed",
+                "status": "provisional",
+                "token": "cashuB-test",
+            }
+        ]
+    )
+    acorn.accept_token = AsyncMock(side_effect=RuntimeError("mint unavailable"))
+    acorn._update_continuity_receipt = AsyncMock()
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 0
+    assert result["pending_count"] == 1
+    assert result["pending_amount"] == 5
+    acorn.accept_token.assert_awaited_once_with(
+        cashu_token="cashuB-test",
+        comment="ecash transfer received from 222222222222: invoice payment",
+        tendered_amount=5,
+        tendered_currency="SAT",
+    )
+    acorn._update_continuity_receipt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_persists_standard_payment_before_unavailable_mint(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    token = serialized_token([proof(1, "1"), proof(4, "4")])
+    event = Event(
+        id="a" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "cashu-token",
+                "token": token,
+                "amount": 5,
+                "unit": "sat",
+                "comment": "invoice payment",
+                "payment_mode": "confirmed",
+                "settlement": "mint-confirmed",
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="22" * 32,
+        created_at=123,
+    )
+    operations = []
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [event]
+
+    class PlaintextNip44:
+        def __init__(self, _keys):
+            pass
+
+        def decrypt(self, content, _pubkey):
+            return content
+
+    class NoGiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            raise ValueError("not gift wrapped")
+
+    async def save(label, value, **_kwargs):
+        operations.append(("store", label, value))
+        return {"status": "OK"}
+
+    async def unavailable_mint(**_kwargs):
+        operations.append(("mint",))
+        raise RuntimeError("mint unavailable")
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", NoGiftWrap)
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+    acorn.accept_token = AsyncMock(side_effect=unavailable_mint)
+    acorn._update_continuity_receipt = AsyncMock()
+
+    result = await acorn.sweep_ecash_transfers()
+
+    assert result["status"] == "OK"
+    assert result["confirmed_count"] == 0
+    assert result["provisional_count"] == 1
+    assert result["provisional_amount"] == 5
+    assert result["failed"] == []
+    assert operations[0][0:2] == ("store", CONTINUITY_RECEIPTS_LABEL)
+    stored_receipts = json.loads(operations[0][2])
+    assert stored_receipts[0]["payment_mode"] == "confirmed"
+    assert stored_receipts[0]["token"] == token
+    assert operations[1] == ("mint",)
+    assert operations[2][0:2] == ("store", ECASH_TRANSFER_CURSOR_LABEL)
+    assert operations[2][2] == "123"
+    acorn._update_continuity_receipt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_can_collect_standard_payment_without_contacting_mint(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    token = serialized_token([proof(1, "1")])
+    event = Event(
+        id="b" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "cashu-token",
+                "token": token,
+                "amount": 1,
+                "unit": "sat",
+                "payment_mode": "confirmed",
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="22" * 32,
+        created_at=124,
+    )
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [event]
+
+    class PlaintextNip44:
+        def __init__(self, _keys):
+            pass
+
+        def decrypt(self, content, _pubkey):
+            return content
+
+    class NoGiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            raise ValueError("not gift wrapped")
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", NoGiftWrap)
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={"amount": 1, "status": "provisional"}
+    )
+    acorn.accept_token = AsyncMock()
+
+    result = await acorn.sweep_ecash_transfers(finalize=False)
+
+    assert result["finalize"] is False
+    assert result["confirmed_count"] == 0
+    assert result["provisional_count"] == 1
+    acorn._store_continuity_receipt.assert_awaited_once()
+    acorn.accept_token.assert_not_awaited()

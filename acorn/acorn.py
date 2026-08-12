@@ -3947,7 +3947,7 @@ class Acorn:
         payload: Dict[str, Any],
         timestamp: int,
     ) -> Dict[str, Any]:
-        """Quarantine a provisional receipt without consulting its mint."""
+        """Persist an incoming token as pending without consulting its mint."""
 
         token_obj = TokenV4.deserialize(token)
         token_amount = sum(int(proof.amount) for proof in token_obj.proofs)
@@ -3983,6 +3983,8 @@ class Acorn:
                     "unit": "sat",
                     "comment": str(payload.get("comment") or ""),
                     "nonce": payload.get("nonce"),
+                    "payment_mode": str(payload.get("payment_mode") or "confirmed").lower(),
+                    "settlement": str(payload.get("settlement") or "mint-confirmed"),
                     "timestamp": int(timestamp),
                     "status": "provisional",
                 }
@@ -4003,7 +4005,7 @@ class Acorn:
         include_tokens: bool = False,
         status: str | None = None,
     ) -> List[Dict[str, Any]]:
-        """Return persisted provisional receipts without changing wallet balance."""
+        """Return persisted pending receipts without changing wallet balance."""
 
         raw_receipts = await self.get_wallet_info(CONTINUITY_RECEIPTS_LABEL)
         if not raw_receipts:
@@ -4070,7 +4072,7 @@ class Acorn:
                 await self.release_lock()
 
     async def reconcile_continuity_receipts(self) -> Dict[str, Any]:
-        """Refresh provisional receipt proofs with their mints when available."""
+        """Finalize pending receipt proofs with their mints when available."""
 
         receipts = await self.get_continuity_receipts(
             include_tokens=True,
@@ -4089,12 +4091,21 @@ class Acorn:
                 })
                 continue
             try:
-                message, amount = await self.accept_token(
-                    cashu_token=token,
-                    comment=(
+                payment_mode = str(receipt.get("payment_mode") or "continuity").lower()
+                if payment_mode == "continuity":
+                    history_comment = (
                         "continuity payment confirmed: "
                         + str(receipt.get("comment") or "incoming payment")
-                    ),
+                    )
+                else:
+                    sender_pubkey = str(receipt.get("sender_pubkey") or "")
+                    history_comment = (
+                        f"ecash transfer received from {sender_pubkey[:12]}: "
+                        + str(receipt.get("comment") or "incoming payment")
+                    )
+                message, amount = await self.accept_token(
+                    cashu_token=token,
+                    comment=history_comment,
                     tendered_amount=receipt.get("amount"),
                     tendered_currency=str(receipt.get("unit") or "sat").upper(),
                 )
@@ -4142,6 +4153,8 @@ class Acorn:
         advance_cursor: bool = True,
         receive_nsec: str | None = None,
         event_id: str | None = None,
+        preview_only: bool = False,
+        finalize: bool = True,
     ) -> Dict[str, Any]:
         """Accept Acorn ecash transfers addressed to this wallet.
 
@@ -4206,6 +4219,7 @@ class Acorn:
         receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND)
         legacy_receive_gift = KindOtherGiftWrap(BasicKeySigner(receive_key), kind_gift_wrap=ECASH_TRANSFER_KIND)
         accepted: List[Dict[str, Any]] = []
+        previewed: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
         latest_processed = cursor
@@ -4271,27 +4285,66 @@ class Acorn:
 
                 comment = payload.get("comment") or "ecash transfer received"
                 payment_mode = str(payload.get("payment_mode") or "confirmed").lower()
-                if payment_mode == "continuity":
-                    receipt = await self._store_continuity_receipt(
-                        event_id=each_event.id,
-                        sender_pubkey=sender_pubkey,
-                        token=token,
-                        payload=payload,
-                        timestamp=event_ts,
-                    )
-                    token_amount = int(receipt["amount"])
+                if preview_only:
+                    if token.startswith("cashuB"):
+                        token_amount = int(TokenV4.deserialize(token).amount)
+                    elif token.startswith("cashuA"):
+                        token_amount = int(TokenV3.deserialize(token).get_amount())
+                    else:
+                        raise ValueError("Not a valid cashu token format")
+                    claimed_amount = int(payload.get("amount", token_amount))
+                    if token_amount <= 0 or claimed_amount != token_amount:
+                        raise ValueError("Incoming payment amount does not match its proofs")
+                    previewed.append({
+                        "event_id": each_event.id,
+                        "sender_pubkey": sender_pubkey,
+                        "timestamp": event_ts,
+                        "amount": token_amount,
+                        "unit": str(payload.get("unit") or "sat").lower(),
+                        "payment_mode": payment_mode,
+                    })
+                    continue
+                receipt = await self._store_continuity_receipt(
+                    event_id=each_event.id,
+                    sender_pubkey=sender_pubkey,
+                    token=token,
+                    payload=payload,
+                    timestamp=event_ts,
+                )
+                token_amount = int(receipt["amount"])
+                provisional = True
+                if payment_mode == "continuity" or not finalize:
                     msg_out = (
-                        f"Received a provisional Continuity Payment of "
-                        f"{token_amount} sats; mint reconciliation is pending."
+                        f"Stored a pending payment of {token_amount} sats; "
+                        "mint finalization is pending."
                     )
                 else:
                     history_comment = f"ecash transfer received from {sender_pubkey[:12]}: {comment}"
-                    msg_out, token_amount = await self.accept_token(
-                        cashu_token=token,
-                        comment=history_comment,
-                        tendered_amount=payload.get("amount"),
-                        tendered_currency=payload.get("unit", "SAT").upper(),
-                    )
+                    try:
+                        msg_out, token_amount = await self.accept_token(
+                            cashu_token=token,
+                            comment=history_comment,
+                            tendered_amount=payload.get("amount"),
+                            tendered_currency=payload.get("unit", "SAT").upper(),
+                        )
+                        await self._update_continuity_receipt(
+                            each_event.id,
+                            status="mint-confirmed",
+                            confirmed_at=int(time()),
+                            token=None,
+                            last_error=None,
+                        )
+                        provisional = False
+                    except Exception as exc:
+                        msg_out = (
+                            f"Stored a pending payment of {token_amount} sats; "
+                            "mint finalization is pending."
+                        )
+                        self.logger.warning(
+                            "op=sweep_ecash_transfers status=pending event_id=%s error=%s",
+                            each_event.id,
+                            exc,
+                        )
                 accepted.append({
                     "event_id": each_event.id,
                     "outer_kind": each_event.kind,
@@ -4306,7 +4359,7 @@ class Acorn:
                     "nonce": payload.get("nonce"),
                     "payment_mode": payment_mode,
                     "settlement": payload.get("settlement") or "mint-confirmed",
-                    "provisional": payment_mode == "continuity",
+                    "provisional": provisional,
                 })
                 latest_processed = max(latest_processed, event_ts)
             except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
@@ -4323,7 +4376,7 @@ class Acorn:
                 )
                 break
 
-        if advance_cursor and latest_processed > cursor:
+        if not preview_only and advance_cursor and latest_processed > cursor:
             await self.set_wallet_info(cursor_label, str(latest_processed), record_kind=37376)
 
         return {
@@ -4342,6 +4395,11 @@ class Acorn:
             "latest_processed": latest_processed,
             "queried": len(events_sorted),
             "accepted": accepted,
+            "preview_only": bool(preview_only),
+            "finalize": bool(finalize),
+            "previewed": previewed,
+            "previewed_count": len(previewed),
+            "previewed_amount": sum(each["amount"] for each in previewed),
             "skipped": skipped,
             "failed": failed,
             "accepted_count": len(accepted),

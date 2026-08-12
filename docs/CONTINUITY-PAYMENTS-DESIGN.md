@@ -46,21 +46,39 @@ relay-backed wallet and publishes the encrypted transfer. This prevents normal
 reuse by that Acorn instance. It does not prove that another copy of the same
 proof material does not exist.
 
-## Provisional receipt
+## Pending receipt
 
-The transfer payload declares `payment_mode=continuity` and
-`settlement=provisional`. A receiving Acorn stores the token in its encrypted
-`continuity_receipts` reserved record. It does not add the proofs to spendable
-wallet balance and does not contact the mint while receiving them.
+Every valid incoming token is first stored in Acorn's encrypted
+`continuity_receipts` reserved record as a pending receipt. This ordering
+applies to ecash received through a normal payment as well as a Continuity
+Payment. The confirmed balance changes only after the mint accepts and refreshes
+the proofs.
+
+A Continuity Payment declares `payment_mode=continuity` and
+`settlement=provisional`, so receiving it stops after the durable pending write
+and does not contact the mint. For a normal incoming payment, Acorn may attempt
+mint finalization immediately after the pending write.
 
 The receiver can therefore preserve the payment evidence locally while keeping
-the settlement boundary visible. When the user checks for incoming funds, Acorn
-also attempts to refresh every provisional receipt with its mint. A successful
-refresh adds replacement proofs to spendable balance, records a confirmed
-credit in transaction history, marks the receipt `mint-confirmed`, and removes
-the bearer token from the pending journal. If the mint remains unavailable or
-rejects the refresh, the receipt and bearer token remain provisional for a
-later attempt.
+the settlement boundary visible. When the user chooses **Finalize Pending
+Transactions**, Acorn attempts to refresh every pending receipt with its mint.
+A Safebox finalization action first collects addressed relay transfers into the
+pending journal without contacting a mint, then runs reconciliation as a
+separate phase. A mint outage or timeout therefore cannot interrupt durable
+collection.
+A successful refresh adds replacement proofs to spendable balance, records a
+confirmed credit in transaction history, marks the receipt `mint-confirmed`,
+and removes the bearer token from the pending journal. If the mint is
+unreachable, times out, or rejects the refresh, the receipt and bearer token
+remain pending for a later attempt. Mint unavailability does not remove a
+receipt or add it to the confirmed balance.
+
+The wallet home screen may perform a read-only preview of addressed transfer
+events on the home relay. Preview decrypts and validates the transfer envelope,
+token format, and claimed amount, but does not store a receipt, contact a mint,
+change proof state, write transaction history, or advance the receive cursor.
+The balance remains mint-confirmed; discovered and stored payment material is
+presented to the user as one summed pending amount.
 
 ## Address boundary
 
