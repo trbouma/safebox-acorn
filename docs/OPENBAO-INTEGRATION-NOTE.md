@@ -196,6 +196,14 @@ This separation limits accidental exposure and produces useful audit evidence.
 It does not protect secrets from a host administrator or attacker who can read
 both process memory and secret-delivery files.
 
+The singleton service `nsec` is the supported initial deployment model. A
+future higher-throughput service may instead protect a dedicated service root
+mnemonic and derive independent child Acorns through a separately specified,
+versioned hardened derivation contract. That root must not be introduced until
+the derivation path, worker registry, offline recovery procedure, test vectors,
+and least-privilege delivery model are complete. It must never be exposed to
+ordinary payment handlers or used as a funded wallet.
+
 ## Nostr keys and the Transit limitation
 
 Acorn uses `secp256k1` keys for Nostr signatures and NIP-44 operations. The

@@ -213,6 +213,47 @@ Before a stable release:
 - detect stale writers before destructive proof replacement;
 - document conflict recovery after relay divergence.
 
+### Service Acorn scaling
+
+The supported initial provider model is one singleton service Acorn worker
+controlling one service wallet. Its payment and proof mutations are serialized
+by the process-local mutex and owned relay lease. This is appropriate for the
+developer and early-pilot stages because it keeps proof ownership, recovery,
+and failure diagnosis simple.
+
+The service should add bounded intake, idempotency, explicit busy responses,
+lease renewal, and sustained load testing before attempting to increase
+throughput by adding wallet identities. Do not run several Acorn objects or
+processes against the same service `nsec` as a scaling mechanism.
+
+Revisit a multi-Acorn worker fleet when measurements show that one wallet's
+serialized mint and relay operations cannot meet required throughput or
+latency. The future model may derive independent worker `nsec` values from a
+dedicated 24-word service root mnemonic using a versioned, domain-separated,
+hardened derivation path. Each child must be a separate Acorn with its own
+proofs, balance, relay state, queue, and lease.
+
+Before implementing derived service Acorns:
+
+- specify and freeze the derivation version and hardened path;
+- publish deterministic compatibility test vectors;
+- define secure generation, offline backup, and recovery of the service root
+  mnemonic;
+- keep the root unfunded and unavailable to ordinary payment handlers;
+- store only non-secret worker indexes, public keys, relay and mint mappings,
+  lifecycle state, and derivation version in the worker registry;
+- protect the root through an application-owned secret-management boundary,
+  with future HSM support, without making Acorn depend on one secret manager;
+- assign at most one active transaction to each child Acorn while allowing
+  different child Acorns to operate concurrently;
+- define funding, draining, retirement, and non-reuse rules for worker indexes;
+  and
+- demonstrate complete fleet recovery from the root mnemonic plus the backed-up
+  worker registry.
+
+Until this specification and its recovery tests exist, the singleton service
+Acorn remains the supported deployment model.
+
 ## Gate 2: Key and configuration safety
 
 The local configuration contains the `nsec` and must be treated as sensitive
