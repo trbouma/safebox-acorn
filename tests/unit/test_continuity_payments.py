@@ -177,3 +177,61 @@ async def test_get_continuity_receipts_hides_bearer_tokens_and_sorts_newest() ->
 
     receipts_with_tokens = await acorn.get_continuity_receipts(include_tokens=True)
     assert receipts_with_tokens[0]["token"] == "secret-b"
+
+
+@pytest.mark.asyncio
+async def test_reconcile_continuity_receipts_confirms_and_clears_bearer_token() -> None:
+    acorn = wallet()
+    receipt = {
+        "event_id": "event-1",
+        "amount": 5,
+        "unit": "sat",
+        "comment": "market",
+        "status": "provisional",
+        "token": "cashuB-test",
+    }
+    acorn.get_continuity_receipts = AsyncMock(return_value=[receipt])
+    acorn.accept_token = AsyncMock(return_value=("accepted", 5))
+    acorn._update_continuity_receipt = AsyncMock(return_value={})
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 1
+    assert result["confirmed_amount"] == 5
+    assert result["pending_count"] == 0
+    acorn.accept_token.assert_awaited_once_with(
+        cashu_token="cashuB-test",
+        comment="continuity payment confirmed: market",
+        tendered_amount=5,
+        tendered_currency="SAT",
+    )
+    update = acorn._update_continuity_receipt.await_args
+    assert update.args == ("event-1",)
+    assert update.kwargs["status"] == "mint-confirmed"
+    assert update.kwargs["token"] is None
+
+
+@pytest.mark.asyncio
+async def test_reconcile_continuity_receipts_keeps_unavailable_mint_pending() -> None:
+    acorn = wallet()
+    acorn.get_continuity_receipts = AsyncMock(
+        return_value=[
+            {
+                "event_id": "event-1",
+                "amount": 5,
+                "unit": "sat",
+                "status": "provisional",
+                "token": "cashuB-test",
+            }
+        ]
+    )
+    acorn.accept_token = AsyncMock(side_effect=RuntimeError("mint unavailable"))
+    acorn._update_continuity_receipt = AsyncMock()
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 0
+    assert result["pending_count"] == 1
+    assert result["pending_amount"] == 5
+    assert "mint unavailable" in result["pending"][0]["reason"]
+    acorn._update_continuity_receipt.assert_not_awaited()

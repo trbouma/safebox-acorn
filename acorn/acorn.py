@@ -4001,6 +4001,7 @@ class Acorn:
         self,
         *,
         include_tokens: bool = False,
+        status: str | None = None,
     ) -> List[Dict[str, Any]]:
         """Return persisted provisional receipts without changing wallet balance."""
 
@@ -4018,6 +4019,9 @@ class Acorn:
 
         visible_receipts: List[Dict[str, Any]] = []
         for receipt in receipts:
+            receipt_status = str(receipt.get("status") or "provisional")
+            if status is not None and receipt_status != str(status):
+                continue
             visible = dict(receipt)
             if not include_tokens:
                 visible.pop("token", None)
@@ -4027,6 +4031,108 @@ class Acorn:
             key=lambda item: (int(item.get("timestamp") or 0), str(item.get("event_id") or "")),
             reverse=True,
         )
+
+    async def _update_continuity_receipt(
+        self,
+        event_id: str,
+        **changes: Any,
+    ) -> Dict[str, Any]:
+        """Update one receipt using a fresh relay-backed journal read."""
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CONTINUITY_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Continuity receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Continuity receipt journal has an invalid format")
+            receipt = next(
+                (item for item in receipts if str(item.get("event_id")) == str(event_id)),
+                None,
+            )
+            if receipt is None:
+                raise RuntimeError(f"Continuity receipt {event_id} was not found")
+            receipt.update(changes)
+            await self.set_wallet_info(
+                CONTINUITY_RECEIPTS_LABEL,
+                json.dumps(receipts, separators=(",", ":")),
+                verify=True,
+            )
+            return dict(receipt)
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+    async def reconcile_continuity_receipts(self) -> Dict[str, Any]:
+        """Refresh provisional receipt proofs with their mints when available."""
+
+        receipts = await self.get_continuity_receipts(
+            include_tokens=True,
+            status="provisional",
+        )
+        confirmed: List[Dict[str, Any]] = []
+        pending: List[Dict[str, Any]] = []
+        for receipt in receipts:
+            event_id = str(receipt.get("event_id") or "")
+            token = str(receipt.get("token") or "")
+            if not event_id or not token:
+                pending.append({
+                    "event_id": event_id,
+                    "amount": int(receipt.get("amount") or 0),
+                    "reason": "receipt is missing its bearer token",
+                })
+                continue
+            try:
+                message, amount = await self.accept_token(
+                    cashu_token=token,
+                    comment=(
+                        "continuity payment confirmed: "
+                        + str(receipt.get("comment") or "incoming payment")
+                    ),
+                    tendered_amount=receipt.get("amount"),
+                    tendered_currency=str(receipt.get("unit") or "sat").upper(),
+                )
+                await self._update_continuity_receipt(
+                    event_id,
+                    status="mint-confirmed",
+                    confirmed_at=int(time()),
+                    token=None,
+                    last_error=None,
+                )
+                confirmed.append({
+                    "event_id": event_id,
+                    "amount": int(amount),
+                    "message": str(message),
+                })
+            except Exception as exc:
+                reason = str(exc).strip()
+                self.logger.warning(
+                    "op=reconcile_continuity_receipt status=pending event_id=%s error=%s",
+                    event_id,
+                    reason,
+                )
+                pending.append({
+                    "event_id": event_id,
+                    "amount": int(receipt.get("amount") or 0),
+                    "reason": reason,
+                })
+
+        return {
+            "status": "OK" if not pending else "PARTIAL",
+            "examined_count": len(receipts),
+            "confirmed": confirmed,
+            "confirmed_count": len(confirmed),
+            "confirmed_amount": sum(item["amount"] for item in confirmed),
+            "pending": pending,
+            "pending_count": len(pending),
+            "pending_amount": sum(item["amount"] for item in pending),
+        }
 
     async def sweep_ecash_transfers(
         self,

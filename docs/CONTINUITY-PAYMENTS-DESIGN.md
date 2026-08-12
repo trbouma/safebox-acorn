@@ -54,8 +54,13 @@ The transfer payload declares `payment_mode=continuity` and
 wallet balance and does not contact the mint while receiving them.
 
 The receiver can therefore preserve the payment evidence locally while keeping
-the settlement boundary visible. Later reconciliation must check or refresh the
-proofs with their mint before moving them into spendable balance.
+the settlement boundary visible. When the user checks for incoming funds, Acorn
+also attempts to refresh every provisional receipt with its mint. A successful
+refresh adds replacement proofs to spendable balance, records a confirmed
+credit in transaction history, marks the receipt `mint-confirmed`, and removes
+the bearer token from the pending journal. If the mint remains unavailable or
+rejects the refresh, the receipt and bearer token remain provisional for a
+later attempt.
 
 ## Address boundary
 
@@ -100,12 +105,14 @@ The first implementation follows these rules:
 
 ## Follow-on work
 
-The next milestone should add a reconciliation state machine for quarantined
-receipts: `provisional`, `mint-confirmed`, `spent`, `pending`, and `unknown`.
-It should make retries idempotent, expose receipt status in transaction history,
-and define recovery behavior when relay publication succeeds but delivery
-confirmation is uncertain.
+The current reconciliation path distinguishes `provisional` and
+`mint-confirmed` receipts. A later milestone should add explicit `spent`,
+`pending`, and `unknown` outcomes, strengthen recovery across interruption
+between mint refresh and journal update, and define recovery behavior when
+relay publication succeeds but delivery confirmation is uncertain.
 
 Related context is in
 [Lockbox External Dependencies and Offline Transfer](LOCKBOX-EXTERNAL-DEPENDENCIES-AND-OFFLINE-TRANSFER.md)
 and [Proof State and Relay Consistency](PROOF-STATE-RELAY-CONSISTENCY.md).
+The deferred sender-online/receiver-offline mechanism is described in
+[Deferred P2PK Payments](DEFERRED-P2PK-PAYMENTS-DESIGN.md).
