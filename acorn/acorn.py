@@ -89,7 +89,23 @@ from python_blossom import BlossomClient, Blob as BlossomBlob
 from tempfile import NamedTemporaryFile
 import mimetypes
 
-RECORD_LIMIT: int = 1024
+
+def _positive_limit(value: object, *, name: str) -> int:
+    """Return a positive integer configuration limit with a clear error."""
+
+    try:
+        normalized = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+    if normalized <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+    return normalized
+
+
+RECORD_LIMIT: int = _positive_limit(
+    os.getenv("ACORN_RECORD_LIMIT", "1024"),
+    name="ACORN_RECORD_LIMIT",
+)
 PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
 ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
@@ -251,9 +267,14 @@ class Acorn:
                     logging_level=logging.INFO,
                     blossom_home_server: str | None = None,
                     blossom_xfer_server: str | None = None,
-                    blossom_servers: List[str] | None = None) -> None:
+                    blossom_servers: List[str] | None = None,
+                    record_limit: int | None = None) -> None:
         
         self.max_proof_event_size = max_proof_event_size
+        self.record_limit = _positive_limit(
+            RECORD_LIMIT if record_limit is None else record_limit,
+            name="record_limit",
+        )
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging_level)  
         # Configure the logger's handler and format
@@ -1211,9 +1232,20 @@ class Acorn:
             with contextlib.suppress(asyncio.CancelledError):
                 await client_task
     
-    async def get_user_records(self, record_kind:int=37375, since:int = None, reverse: bool=False, relays:List=None)->List[Any]:
+    async def get_user_records(
+        self,
+        record_kind: int = 37375,
+        since: int = None,
+        reverse: bool = False,
+        relays: List = None,
+        limit: int | None = None,
+    ) -> List[Any]:
 
         events_out = []
+        query_limit = _positive_limit(
+            getattr(self, "record_limit", RECORD_LIMIT) if limit is None else limit,
+            name="record limit",
+        )
         my_enc = NIP44Encrypt(self.k)
         my_gift = KindOtherGiftWrap(BasicKeySigner(self.k), kind_gift_wrap=record_kind)
         m = hashlib.sha256()
@@ -1264,7 +1296,7 @@ class Acorn:
             
            if since:        
                 FILTER = [{
-                'limit': RECORD_LIMIT, 
+                'limit': query_limit,
                 '#p'  :  [self.pubkey_hex],              
                 'kinds': [record_kind],
                 'since': since
@@ -1272,7 +1304,7 @@ class Acorn:
                 }]
            else:
                 FILTER = [{
-                'limit': RECORD_LIMIT, 
+                'limit': query_limit,
                 '#p'  :  [self.pubkey_hex],              
                 'kinds': [record_kind]
                 
@@ -1280,7 +1312,7 @@ class Acorn:
                
         else:
                 record_filter = {
-                'limit': RECORD_LIMIT,
+                'limit': query_limit,
                 'authors': [self.pubkey_hex],
                 'kinds': [record_kind]   
                 }
@@ -1497,6 +1529,7 @@ class Acorn:
         since: int = None,
         reverse: bool = False,
         relays: List = None,
+        limit: int | None = None,
     ) -> List[str]:
         """Return only user record labels for the requested record kind."""
 
@@ -1505,6 +1538,7 @@ class Acorn:
             since=since,
             reverse=reverse,
             relays=relays,
+            limit=limit,
         )
         labels: List[str] = []
         for each in records:

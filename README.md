@@ -14,6 +14,21 @@ provides:
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
 
+Record listings request up to 1,024 relay events by default. This is a
+configurable query boundary, not a hardcoded wallet ceiling. Set
+`ACORN_RECORD_LIMIT` for a deployment-wide default, pass `record_limit=` when
+constructing an `Acorn`, or pass `limit=` to `get_user_records()` and
+`get_user_record_labels()` for one query:
+
+```python
+acorn = Acorn(nsec=nsec, home_relay=relay, record_limit=4096)
+recent_records = await acorn.get_user_records(limit=256, reverse=True)
+```
+
+The limit applies to relay events, including record revisions. A response that
+reaches the configured limit may therefore be incomplete; record listing is
+not currently paginated.
+
 Acorn also owns the initial record-protection key primitives. Applications can
 request a fresh key from the operating-system cryptographic random source or
 derive one deterministically from separate, externally generated 256-bit

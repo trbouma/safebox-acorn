@@ -144,6 +144,54 @@ async def test_standard_record_listing_applies_since_and_preserves_ws_relay(monk
 
 
 @pytest.mark.asyncio
+async def test_record_listing_uses_instance_default_and_per_query_override(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    wallet.record_limit = 2048
+    captured_limits = []
+
+    class EmptyPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, filters):
+            captured_limits.append(filters[0]["limit"])
+            return []
+
+    monkeypatch.setattr(acorn_module, "ClientPool", EmptyPool)
+
+    await wallet.get_user_records()
+    await wallet.get_user_records(limit=64)
+
+    assert captured_limits == [2048, 64]
+
+
+@pytest.mark.asyncio
+async def test_record_listing_rejects_non_positive_limit() -> None:
+    wallet = wallet_with_key()
+
+    with pytest.raises(ValueError, match="record limit must be a positive integer"):
+        await wallet.get_user_records(limit=0)
+
+
+@pytest.mark.asyncio
+async def test_record_label_listing_forwards_limit() -> None:
+    wallet = wallet_with_key()
+    wallet.get_user_records = AsyncMock(return_value=[])
+
+    await wallet.get_user_record_labels(limit=4096)
+
+    assert wallet.get_user_records.await_args.kwargs["limit"] == 4096
+
+
+@pytest.mark.asyncio
 async def test_record_listing_reconciles_versions_and_excludes_internal_state(monkeypatch):
     from acorn import acorn as acorn_module
 
