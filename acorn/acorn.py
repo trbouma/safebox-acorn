@@ -115,6 +115,7 @@ DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
+CONTINUITY_RECEIPTS_LABEL: str = "continuity_receipts"
 WALLET_LOCK_LABEL: str = "lock"
 WALLET_LOCK_LEASE_SECONDS: int = int(os.getenv("ACORN_WALLET_LOCK_LEASE_SECONDS", "300"))
 _PROCESS_WALLET_LOCKS: dict[str, asyncio.Lock] = {}
@@ -124,6 +125,7 @@ MELT_RECOVERY_ATTEMPTS: int = 4
 INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
     {
         "balance",
+        CONTINUITY_RECEIPTS_LABEL,
         "default",
         DEFERRED_RECOVERY_LABEL,
         RECORD_PROTECTION_STATUS_LABEL,
@@ -3822,6 +3824,7 @@ class Acorn:
         nonce: str | None = None,
         direct: bool = False,
         expiration: int | None = None,
+        payment_mode: str = "confirmed",
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted relay event.
 
@@ -3844,17 +3847,26 @@ class Acorn:
             raise ValueError("No relay available for ecash transfer")
         nonce = nonce or secrets.token_hex(16)
 
-        token = await self.issue_token(int(amount), comment=comment)
+        payment_mode = str(payment_mode).strip().lower()
+        if payment_mode not in {"confirmed", "continuity"}:
+            raise ValueError("payment_mode must be 'confirmed' or 'continuity'")
+        if payment_mode == "continuity":
+            token = await self.issue_continuity_token(int(amount), comment=comment)
+        else:
+            token = await self.issue_token(int(amount), comment=comment)
+        token_mint = str(TokenV4.deserialize(token).mint)
 
         payload = {
             "version": 1,
             "type": "cashu-token",
             "token": token,
-            "mint": self.home_mint,
+            "mint": token_mint,
             "amount": int(amount),
             "unit": "sat",
             "comment": comment,
             "nonce": nonce,
+            "payment_mode": payment_mode,
+            "settlement": "provisional" if payment_mode == "continuity" else "mint-confirmed",
         }
 
         async with ClientPool(transfer_relays) as c:
@@ -3865,7 +3877,7 @@ class Acorn:
                     ["p", recipient_pubkey],
                     ["protocol", "acorn-ecash-transfer"],
                     ["v", "1"],
-                    ["mint", self.home_mint],
+                    ["mint", token_mint],
                     ["amount", str(int(amount))],
                     ["unit", "sat"],
                     ["nonce", nonce],
@@ -3920,9 +3932,70 @@ class Acorn:
             "expiration": expiration,
             "amount": int(amount),
             "unit": "sat",
-            "mint": self.home_mint,
+            "mint": token_mint,
             "nonce": nonce,
+            "payment_mode": payment_mode,
+            "settlement": payload["settlement"],
         }
+
+    async def _store_continuity_receipt(
+        self,
+        *,
+        event_id: str,
+        sender_pubkey: str,
+        token: str,
+        payload: Dict[str, Any],
+        timestamp: int,
+    ) -> Dict[str, Any]:
+        """Quarantine a provisional receipt without consulting its mint."""
+
+        token_obj = TokenV4.deserialize(token)
+        token_amount = sum(int(proof.amount) for proof in token_obj.proofs)
+        claimed_amount = int(payload.get("amount", token_amount))
+        if token_amount <= 0 or claimed_amount != token_amount:
+            raise ValueError("Continuity Payment amount does not match its proofs")
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CONTINUITY_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Continuity receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Continuity receipt journal has an invalid format")
+
+            existing = next(
+                (item for item in receipts if str(item.get("event_id")) == str(event_id)),
+                None,
+            )
+            if existing is None:
+                existing = {
+                    "event_id": str(event_id),
+                    "sender_pubkey": str(sender_pubkey),
+                    "token": token,
+                    "mint": str(token_obj.mint),
+                    "amount": token_amount,
+                    "unit": "sat",
+                    "comment": str(payload.get("comment") or ""),
+                    "nonce": payload.get("nonce"),
+                    "timestamp": int(timestamp),
+                    "status": "provisional",
+                }
+                receipts.append(existing)
+                await self.set_wallet_info(
+                    CONTINUITY_RECEIPTS_LABEL,
+                    json.dumps(receipts, separators=(",", ":")),
+                    verify=True,
+                )
+            return existing
+        finally:
+            if lock_acquired:
+                await self.release_lock()
 
     async def sweep_ecash_transfers(
         self,
@@ -4060,13 +4133,28 @@ class Acorn:
                     continue
 
                 comment = payload.get("comment") or "ecash transfer received"
-                history_comment = f"ecash transfer received from {sender_pubkey[:12]}: {comment}"
-                msg_out, token_amount = await self.accept_token(
-                    cashu_token=token,
-                    comment=history_comment,
-                    tendered_amount=payload.get("amount"),
-                    tendered_currency=payload.get("unit", "SAT").upper(),
-                )
+                payment_mode = str(payload.get("payment_mode") or "confirmed").lower()
+                if payment_mode == "continuity":
+                    receipt = await self._store_continuity_receipt(
+                        event_id=each_event.id,
+                        sender_pubkey=sender_pubkey,
+                        token=token,
+                        payload=payload,
+                        timestamp=event_ts,
+                    )
+                    token_amount = int(receipt["amount"])
+                    msg_out = (
+                        f"Received a provisional Continuity Payment of "
+                        f"{token_amount} sats; mint reconciliation is pending."
+                    )
+                else:
+                    history_comment = f"ecash transfer received from {sender_pubkey[:12]}: {comment}"
+                    msg_out, token_amount = await self.accept_token(
+                        cashu_token=token,
+                        comment=history_comment,
+                        tendered_amount=payload.get("amount"),
+                        tendered_currency=payload.get("unit", "SAT").upper(),
+                    )
                 accepted.append({
                     "event_id": each_event.id,
                     "outer_kind": each_event.kind,
@@ -4079,6 +4167,9 @@ class Acorn:
                     "unit": "sat",
                     "message": msg_out,
                     "nonce": payload.get("nonce"),
+                    "payment_mode": payment_mode,
+                    "settlement": payload.get("settlement") or "mint-confirmed",
+                    "provisional": payment_mode == "continuity",
                 })
                 latest_processed = max(latest_processed, event_ts)
             except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
@@ -4117,7 +4208,18 @@ class Acorn:
             "skipped": skipped,
             "failed": failed,
             "accepted_count": len(accepted),
-            "accepted_amount": sum(each["amount"] for each in accepted),
+            "confirmed_count": sum(
+                1 for each in accepted if not each.get("provisional")
+            ),
+            "provisional_count": sum(
+                1 for each in accepted if each.get("provisional")
+            ),
+            "accepted_amount": sum(
+                each["amount"] for each in accepted if not each.get("provisional")
+            ),
+            "provisional_amount": sum(
+                each["amount"] for each in accepted if each.get("provisional")
+            ),
         }
 
     async def delete_ecash_transfer_events(
@@ -8807,6 +8909,167 @@ class Acorn:
 
         
 
+
+    @staticmethod
+    def _exact_proof_subset(proofs: List[Proof], amount: int) -> List[Proof] | None:
+        """Return a deterministic proof subset whose value is exactly amount."""
+
+        target = int(amount)
+        candidates = sorted(
+            proofs,
+            key=lambda proof: (
+                int(proof.amount),
+                str(proof.id or ""),
+                str(proof.secret),
+            ),
+            reverse=True,
+        )
+        reachable: Dict[int, List[Proof]] = {0: []}
+        for proof in candidates:
+            proof_amount = int(proof.amount)
+            if proof_amount <= 0 or proof_amount > target:
+                continue
+            for subtotal, selected in sorted(reachable.items(), reverse=True):
+                candidate_total = subtotal + proof_amount
+                if candidate_total > target or candidate_total in reachable:
+                    continue
+                reachable[candidate_total] = selected + [proof]
+            if target in reachable:
+                return reachable[target]
+        return None
+
+    @staticmethod
+    def _nearest_proof_amounts(
+        proofs: List[Proof],
+        amount: int,
+    ) -> tuple[int | None, int | None]:
+        """Return the nearest attainable positive totals below and above amount."""
+
+        target = int(amount)
+        reachable = {0}
+        nearest_higher: int | None = None
+        for proof in proofs:
+            proof_amount = int(proof.amount)
+            if proof_amount <= 0:
+                continue
+            additions = {subtotal + proof_amount for subtotal in reachable}
+            higher_candidates = [total for total in additions if total > target]
+            if higher_candidates:
+                candidate = min(higher_candidates)
+                nearest_higher = (
+                    candidate
+                    if nearest_higher is None
+                    else min(nearest_higher, candidate)
+                )
+            reachable.update(
+                total
+                for total in additions
+                if total <= target
+                or nearest_higher is None
+                or total <= nearest_higher
+            )
+
+        nearest_lower = max(
+            (total for total in reachable if 0 < total < target),
+            default=None,
+        )
+        return nearest_lower, nearest_higher
+
+    async def issue_continuity_token(
+        self,
+        amount: int,
+        comment: str = "provisional continuity payment",
+    ) -> str:
+        """Issue an exact in-kind token without contacting a Cashu mint."""
+
+        amount = int(amount)
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+
+        lock_acquired = False
+        selected: List[Proof] | None = None
+        selected_mint: str | None = None
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            await self._load_proofs()
+
+            proofs_by_mint: Dict[str, List[Proof]] = {}
+            for proof in self.proofs:
+                mint = self.known_mints.get(str(proof.id or ""))
+                if mint:
+                    proofs_by_mint.setdefault(normalize_mint_url(mint), []).append(proof)
+
+            for mint in sorted(proofs_by_mint):
+                exact = self._exact_proof_subset(proofs_by_mint[mint], amount)
+                if exact is not None:
+                    selected = exact
+                    selected_mint = mint
+                    break
+
+            if not selected or not selected_mint:
+                lower_options: List[int] = []
+                higher_options: List[int] = []
+                for mint_proofs in proofs_by_mint.values():
+                    lower, higher = self._nearest_proof_amounts(mint_proofs, amount)
+                    if lower is not None:
+                        lower_options.append(lower)
+                    if higher is not None:
+                        higher_options.append(higher)
+                nearest_lower = max(lower_options, default=None)
+                nearest_higher = min(higher_options, default=None)
+                alternatives = []
+                if nearest_lower is not None:
+                    alternatives.append(f"nearest lower amount: {nearest_lower} sats")
+                if nearest_higher is not None:
+                    alternatives.append(f"nearest higher amount: {nearest_higher} sats")
+                advice = (
+                    " Available alternatives are " + "; ".join(alternatives) + "."
+                    if alternatives
+                    else " No positive alternative amount is available."
+                )
+                raise ValueError(
+                    "No exact set of locally held proofs is available for this "
+                    f"Continuity Payment.{advice} No funds were changed."
+                )
+
+            token_v3 = TokenV3(
+                token=[TokenV3Token(mint=selected_mint, proofs=selected)],
+                memo=comment,
+                unit="sat",
+            )
+            token_serialized = TokenV4.from_tokenv3(token_v3).serialize()
+
+            selected_secrets = {proof.secret for proof in selected}
+            self.proofs = [
+                proof for proof in self.proofs if proof.secret not in selected_secrets
+            ]
+            self.balance = sum(int(proof.amount) for proof in self.proofs)
+            await self.write_proofs()
+        except (ValueError, TypeError, RuntimeError) as exc:
+            self.logger.error(
+                "op=issue_continuity_token status=failed amount=%s error=%s",
+                amount,
+                exc,
+            )
+            raise RuntimeError(f"Error issuing Continuity Payment: {exc}") from exc
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+        try:
+            await self.add_tx_history(
+                tx_type="D",
+                amount=amount,
+                comment=f"provisional continuity payment: {comment}",
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=issue_continuity_token status=tx_history_failed amount=%s error=%s",
+                amount,
+                exc,
+            )
+        return token_serialized
 
     async def issue_token(self, amount:int, comment:str = "ecash withdrawal"):
 

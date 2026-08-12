@@ -126,6 +126,9 @@ That can create competing control graphs.
 
 ## Continuity Payments
 
+The implementation contract and current safety boundary are defined in
+[Continuity Payments](CONTINUITY-PAYMENTS-DESIGN.md).
+
 The term "offline payment" can be misleading. A community may be offline from
 the global network while still being online locally. For example, a remote
 community may lose satellite connectivity but retain a local network, local

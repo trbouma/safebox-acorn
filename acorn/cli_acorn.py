@@ -1872,12 +1872,20 @@ def receive_ecash(since, relay, receive_key, receive_nsec_file, event_id, no_adv
     if result.get("event_id"):
         click.echo(f"Direct event lookup: {result['event_id']}")
     click.echo(f"Queried {result['queried']} transfer event(s).")
-    if result["accepted_count"]:
+    confirmed_count = int(result.get("confirmed_count", result["accepted_count"]))
+    provisional_count = int(result.get("provisional_count", 0))
+    if confirmed_count:
         click.echo(
             f"Accepted {result['accepted_amount']} sats from "
-            f"{result['accepted_count']} incoming ecash transfer(s)."
+            f"{confirmed_count} incoming ecash transfer(s)."
         )
-    else:
+    if provisional_count:
+        click.echo(
+            f"Stored {result.get('provisional_amount', 0)} sats from "
+            f"{provisional_count} provisional Continuity Payment(s); "
+            "mint reconciliation is pending."
+        )
+    if not confirmed_count and not provisional_count:
         click.echo("No incoming ecash accepted.")
     if result.get("failed"):
         click.echo(f"Stopped after {len(result['failed'])} failed transfer event(s).")
