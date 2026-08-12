@@ -199,6 +199,15 @@ That automatic path removes only proofs the mint definitively reports as
 `SPENT`; it stops without removing value if any relevant result is pending,
 unknown, malformed, or unreachable.
 
+Applications that need this narrow recovery explicitly can call
+`await acorn.reconcile_stale_proofs()`. The method acquires the wallet lock,
+requires any pending Lightning melt journal to reach a terminal state, reloads
+the relay-backed proofs, verifies them with their mapped mints, and rewrites
+the wallet only when mint-confirmed `SPENT` proofs must be removed. It does not
+swap or refresh `UNSPENT` proofs. This makes it suitable for retrying receipt
+finalization without invoking the much heavier whole-wallet `repair-proofs`
+workflow.
+
 It should:
 
 1. load visible proof events;

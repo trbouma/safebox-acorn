@@ -6163,6 +6163,30 @@ class Acorn:
             "balance": self.balance,
         }
 
+    async def reconcile_stale_proofs(self) -> dict:
+        """Remove only proofs conclusively reported as spent by their mint.
+
+        This is the narrow recovery operation for a pending receipt blocked by
+        stale wallet state. It does not swap or refresh usable proofs and it
+        refuses to mutate the wallet when a mint reports PENDING/UNKNOWN state,
+        cannot be reached, or a Lightning melt remains unresolved.
+        """
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            await self._require_resolved_pending_melts()
+            result = await self._reconcile_spent_proofs_locked()
+            return {
+                "status": "OK",
+                "operation": "reconcile-stale-proofs",
+                **result,
+            }
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
     def _proofs_by_keyset(self):
         all_proofs = {}
         keyset_amounts = {}

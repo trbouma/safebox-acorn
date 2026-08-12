@@ -114,6 +114,47 @@ async def test_reconcile_spent_proofs_removes_only_mint_confirmed_spent(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_public_stale_reconciliation_uses_narrow_locked_operation():
+    wallet = wallet_with_key()
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet._require_resolved_pending_melts = AsyncMock()
+    wallet._reconcile_spent_proofs_locked = AsyncMock(
+        return_value={"removed": 1, "amount": 2, "balance": 4}
+    )
+
+    result = await wallet.reconcile_stale_proofs()
+
+    assert result == {
+        "status": "OK",
+        "operation": "reconcile-stale-proofs",
+        "removed": 1,
+        "amount": 2,
+        "balance": 4,
+    }
+    wallet.acquire_lock.assert_awaited_once()
+    wallet._require_resolved_pending_melts.assert_awaited_once()
+    wallet._reconcile_spent_proofs_locked.assert_awaited_once()
+    wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_public_stale_reconciliation_releases_lock_when_state_is_inconclusive():
+    wallet = wallet_with_key()
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet._require_resolved_pending_melts = AsyncMock()
+    wallet._reconcile_spent_proofs_locked = AsyncMock(
+        side_effect=RuntimeError("Mint proof state is inconclusive; no proofs were removed")
+    )
+
+    with pytest.raises(RuntimeError, match="inconclusive"):
+        await wallet.reconcile_stale_proofs()
+
+    wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_write_proofs_rejects_same_balance_with_wrong_proof_identity():
     wallet = wallet_with_key()
     keyset = "test-keyset"
