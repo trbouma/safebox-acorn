@@ -208,6 +208,10 @@ For explicitly disposable development balances, the separate
 retains compatible state, verifies the relay rewrite, and records the discard
 in transaction history. It is not a recovery mechanism.
 
+The discovery, observed wallet behavior, corrective controls, Safebox Web
+integration, external Lightning test, and remaining release gates are recorded
+in the [August 13 Fund-Safety Hardening and Interoperability Milestone](docs/FUND-SAFETY-HARDENING-MILESTONE-2026-08-13.md).
+
 See [Secret Input Specification](docs/SECRET-INPUT-SPEC.md).
 
 ### Local configuration

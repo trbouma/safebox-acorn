@@ -23,6 +23,14 @@ satisfied.
 
 ## Current position
 
+The [August 13 Fund-Safety Hardening and Interoperability Milestone](FUND-SAFETY-HARDENING-MILESTONE-2026-08-13.md)
+records the discovery of historical non-NUT-00 proof derivation, the corrected
+compatibility and relay-persistence controls, the pending-versus-final balance
+boundary, and a successful outgoing Lightning payment to an independently
+operated application. The incident materially improved the release baseline,
+but it also confirms that proof failure injection and recovery remain gates
+rather than optional polish.
+
 The commissioning scope for an external review is maintained in the
 [Independent Security Audit Plan](INDEPENDENT-SECURITY-AUDIT-PLAN.md). It
 defines the pre-audit readiness gate, fund-safety and cryptographic workstreams,

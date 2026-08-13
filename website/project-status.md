@@ -36,6 +36,25 @@ The project has working implementations of:
 This evidence makes Acorn a credible hardened-alpha foundation. It does not
 remove the need for release discipline around failure recovery and value safety.
 
+## August 2026 fund-safety milestone
+
+Pre-release testing uncovered that historical Acorn clients used a
+non-standard Cashu hash-to-curve construction. A mint could report the
+canonical proof identifier as unspent even though the historical proof was not
+redeemable under mandatory NUT-00 rules. Current Acorn now uses the standard
+construction and reference vectors, identifies incompatible historical
+proofs, refuses destructive operations against them, and distinguishes raw
+mint state from cryptographically compatible spendable value.
+
+The same hardening pass added exact event-ID readback for proof and transaction
+history persistence, read-only pending-funds preview, and safer narrow proof
+reconciliation. Fresh compatible funds subsequently completed a Lightning
+payment to an independently operated Swiss Bitcoin Pay application. This is
+strong interoperability evidence, while the remaining crash-window and
+failure-injection work stays explicitly on the release roadmap.
+
+[Read the complete milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/FUND-SAFETY-HARDENING-MILESTONE-2026-08-13.md){ .md-button .md-button--primary }
+
 The practical product scope is the safekeeping of user-controlled keys, funds,
 and records. Keys provide cryptographic authority and continuity; identity
 claims and their interpretation remain outside the component.
@@ -125,3 +144,4 @@ operational detail.
 - [Testing Guide](https://github.com/trbouma/safebox-acorn/blob/main/docs/TESTING.md)
 - [Relay Suitability Ledger](https://github.com/trbouma/safebox-acorn/blob/main/docs/RELAY-SUITABILITY-LEDGER.md)
 - [CLI and Safebox Interoperability](https://github.com/trbouma/safebox-acorn/blob/main/docs/ACORN-WEBAPP-INTEROPERABILITY.md)
+- [August 13 Fund-Safety Hardening Milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/FUND-SAFETY-HARDENING-MILESTONE-2026-08-13.md)
