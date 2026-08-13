@@ -35,6 +35,15 @@ def wallet_with_key() -> Acorn:
     return wallet
 
 
+def test_relay_verify_timeout_default_and_validation():
+    assert acorn_module.RELAY_VERIFY_TIMEOUT_SECONDS > 0
+    assert acorn_module._positive_timeout("90", name="timeout") == 90.0
+    with pytest.raises(ValueError, match="must be a positive number"):
+        acorn_module._positive_timeout("0", name="timeout")
+    with pytest.raises(ValueError, match="must be a positive number"):
+        acorn_module._positive_timeout("invalid", name="timeout")
+
+
 @pytest.mark.asyncio
 async def test_accept_token_registers_rotated_keyset_and_updates_balance(monkeypatch):
     wallet = wallet_with_key()

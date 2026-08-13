@@ -115,7 +115,7 @@ The `acorn repair-proofs` command now checks first and skips when the wallet is
 already clean. A forced full proof refresh remains available:
 
 ```bash
-poetry run acorn repair-proofs --refresh
+poetry run acorn repair-proofs --refresh --confirm-refresh
 ```
 
 ## Suitability ledger entries

@@ -179,6 +179,35 @@ Ordinary command and JSON output redact private keys and recovery material.
 Commands that deliberately export recovery material are separate, explicit
 operations and must be handled as sensitive output.
 
+### Proof replacement durability
+
+Cashu swaps consume bearer proofs at the mint before Acorn can prove that the
+replacement event is readable from its home relay. Acorn mitigates this
+ordering risk with a relay write/read preflight before irreversible mint
+operations, exact signed-event publication, in-memory idempotent retries, and
+exact event-ID readback before reporting success.
+
+Acorn intentionally does not store a local proof journal. Encrypted wallet and
+recovery state belongs on relays rather than in application files or databases.
+This preserves the component boundary but cannot make a mint mutation and an
+eventually consistent relay write atomic. A process terminating after a
+successful mint swap but before any relay accepts the replacement remains a
+residual fund-loss risk. Use reliable relays, replication, small batches, and
+keep the process alive when post-swap publication fails. See
+[Proof State and Relay Consistency](docs/PROOF-STATE-RELAY-CONSISTENCY.md).
+
+Proof compatibility is checked separately from NUT-07 spend state. Historical
+Acorn versions used a non-standard hash-to-curve construction; a mint can
+report the standard identifier as `UNSPENT` even though the corresponding
+historical proof cannot be redeemed. Current Acorn uses the mandatory NUT-00
+domain-separated construction, tests published vectors, classifies historical
+proofs as incompatible, and refuses to mutate them. Recovery of already-issued
+legacy proofs requires the issuing mint operator; ordinary repair is unsafe.
+For explicitly disposable development balances, the separate
+`discard-incompatible-proofs` command requires an exact amount acknowledgement,
+retains compatible state, verifies the relay rewrite, and records the discard
+in transaction history. It is not a recovery mechanism.
+
 See [Secret Input Specification](docs/SECRET-INPUT-SPEC.md).
 
 ### Local configuration
@@ -517,11 +546,12 @@ formal audited severity score.
 | Token-specified mint endpoint | Accepting an untrusted token causes Acorn to contact the mint URL carried by that token. A malicious URL may target an unexpected host or internal service from the Acorn execution environment. | Accept tokens only from expected sources during preview; restrict host network egress; require one issuing mint per token; add URL-policy validation, private-address blocking, and/or explicit operator approval before broad deployment. |
 | Bearer proof theft | Anyone obtaining valid Cashu proofs or tokens may be able to spend them. | Encrypt relay-backed proof state; prohibit proof logging; refresh received proofs; protect process memory and backups. |
 | Bearer-token issuance and handoff | `issue_token` commits removal of the issued value from the wallet proof set before returning the bearer token to its caller. A crash, assertion, application error, or lost response during that handoff can strand funds even though the mint created valid outgoing proofs. | Derive balance from retained proofs; use small amounts; make callers capture and protect the returned token immediately; live-test cleanup attempts in-memory recovery; implement a durable encrypted token outbox and acknowledged handoff before pilot release. |
-| Accepted-token persistence gap | The mint can successfully refresh an incoming token before Acorn proves that the new kind `7375` event is readable from the home relay. If the process terminates during a persistent relay failure, the refreshed proofs may exist only in memory. | Retry idempotent proof publication; require relay readback before reporting success; keep the process running while resolving failures; design a durable encrypted receive journal or emergency recovery export before stable release. |
+| Accepted-token persistence gap | The mint can successfully refresh an incoming token before Acorn proves that the new kind `7375` event is readable from the home relay. If the process terminates during a persistent relay failure, the refreshed proofs may exist only in memory. | Preflight relay writes; retry the exact signed event idempotently in memory; require relay readback before reporting success; keep the process running while resolving failures; use reliable replicated relays; do not silently introduce application-local proof state. |
 | Outgoing-transfer crash window | An interruption between bearer-token issuance and gift-wrapped transfer publication can create uncertainty or unsafe retry behavior. A complete durable transfer outbox remains a release gate. | Use small test amounts; preserve transaction evidence; implement the roadmap's idempotent transfer outbox and acknowledged delivery state before pilot release. |
 | Concurrent wallet writers | Multiple processes, workers, devices, or stale relay views can race and overwrite proof state. Relay locks reduce but do not eliminate distributed concurrency risk. | Lock records, readback checks, proof audits, and repair tools; complete wallet-state isolation and failure-injection gates before stable release. |
 | Balance interpretation | Total wallet balance may be distributed across independent mints or keysets and may exceed what one Lightning melt can spend. Fee reserves further reduce the payable amount. | Report mint/keyset balances and the largest single-keyset pre-fee Lightning capacity; obtain a melt quote before claiming an exact payable amount; keep multi-part payments out of scope until implemented and tested. |
-| Stale relay proof history | A relay can retain or return kind `7375` events after an authored deletion request, causing a relay-visible sum to include already-spent proofs. | Apply authored kind `5` references during proof loading; label relay totals explicitly; use read-only mint verification before spending or repair; continue work on proof-state epochs or manifests for stronger ordering. |
+| Stale relay proof history | A relay can retain or return kind `7375` events after an authored deletion request, causing a relay-visible sum to include already-spent proofs. Historical events may also contain a missing or incorrect cached `Y`. | Apply authored kind `5` references during proof loading; derive canonical Cashu `Y` from each proof secret for every spend-state decision; label relay totals explicitly; use read-only mint verification before spending or repair; continue work on proof-state epochs or manifests for stronger ordering. |
+| Legacy hash-to-curve proofs | Historical Acorn clients derived proof points differently from mandatory Cashu NUT-00. NUT-07 can report the standard `Y` as unspent while redemption still fails, so a state check alone can overstate spendable value. | Use the NUT-00 domain-separated algorithm and reference vectors; classify cached proof identifiers; report incompatible value separately; refuse payment, swap, refresh, repair, and pruning; preserve relay state and require mint-operator migration. |
 | Partial proof swap | A mint swap consumes bearer inputs before all later inputs or keysets have completed. A process or network failure can strand replacement proofs if they exist only in memory. | Publish and verify each successful replacement batch immediately; retain source events until all replacements are durable; inject later-step failures in tests; keep automatic maintenance disabled. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
 | Lightning ambiguity | Network or mint timeouts can leave payment outcome uncertain. | Persist pending melts and reconcile by quote ID; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |

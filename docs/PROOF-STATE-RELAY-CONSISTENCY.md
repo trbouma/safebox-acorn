@@ -10,6 +10,15 @@ Acorn proof state lives at the intersection of two systems:
 Relays are storage and transport. They are not the source of truth for proof
 spend status. The mint is the authority for whether a proof is unspent.
 
+There are two separate questions:
+
+1. Does the mint report a supplied proof identifier (`Y`) as unspent?
+2. Is the proof cryptographically compatible with the mint's current Cashu
+   verification rules?
+
+NUT-07 `/checkstate` answers only the first question. It is not a redemption
+preflight and cannot establish the second by itself.
+
 Relay migration exposed two important design lessons: read-only commands must
 not mutate wallet proof state, and mint-mutating operations must reconcile
 known-spent relay proofs before selecting value. Whole-wallet refresh and
@@ -49,6 +58,9 @@ The real wallet balance is:
 ```text
 sum(proofs that the mint reports as UNSPENT)
 ```
+
+For operationally spendable value, Acorn must additionally establish that the
+proof identifier follows the mandatory NUT-00 hash-to-curve construction.
 
 These values can diverge during:
 
@@ -149,6 +161,39 @@ Acorn now:
 - leaves receive-side maintenance disabled unless explicitly enabled; and
 - does not invoke maintenance from deposits or token acceptance.
 
+## August 2026 hash-to-curve compatibility incident
+
+A newly created wallet reported 3,925 sats in 34 proofs as `UNSPENT` through
+NUT-07, yet a 21-sat Lightning payment failed at `/v1/swap` with Cashu error
+`11001`. Reconciliation removed nothing because the identifiers queried by the
+client were not in the mint's spent set.
+
+The underlying issue was that historical Acorn releases used an experimental
+hash-to-curve loop without the mandatory NUT-00 domain separator and
+little-endian counter. A blind mint can sign a point constructed by that older
+client, but a current mint later derives the standard NUT-00 point from the
+revealed secret during redemption. The resulting proof is incompatible even
+though a NUT-07 query for the standard identifier can return `UNSPENT`.
+
+Acorn now uses the NUT-00 algorithm and tests it against published reference
+vectors. The proof audit also compares a proof's cached identifier with both
+the NUT-00 and historical Acorn derivations. A historical match is reported as
+`incompatible`, never as mint-confirmed spendable, and all destructive proof
+operations are refused.
+
+Existing incompatible proofs must be preserved exactly as stored. They cannot
+be safely repaired by swapping, refreshing, pruning, or rewriting relay state.
+Recovery requires cooperation from the issuing mint operator, which may be
+able to validate the historical construction and migrate the value under a
+controlled compatibility procedure.
+
+For development wallets where preservation of the incompatible value is not a
+requirement, `discard-incompatible-proofs --confirm-amount <sats>` provides a
+narrow reset. It removes only non-NUT-00 proof state and retains the component
+key, configuration, records, history, and any already-compatible proofs. This
+is an intentional loss operation rather than cryptographic migration; the
+wallet becomes usable again only after receiving freshly issued NUT-00 proofs.
+
 ## Received ecash proof state
 
 Incoming ecash transfers are delivery events, not durable proof state.
@@ -214,6 +259,11 @@ and reports `UNSPENT`, `SPENT`, `PENDING`, and `UNKNOWN` totals. It also reports
 local structural problems such as duplicates and unknown keyset mappings.
 Duplicate proof copies are counted once in the mint-confirmed total.
 
+The output distinguishes `mint_reported_unspent` from
+`mint_confirmed_unspent`. The former is the raw NUT-07 state response. The
+latter excludes proofs whose cached identifier shows historical or inconsistent
+hash-to-curve behavior.
+
 The check deliberately performs no lock acquisition, proof refresh, event
 deletion, proof rewrite, or transaction-history update. `PENDING`, `UNKNOWN`,
 and network-error results are inconclusive; the operator should recheck or
@@ -234,6 +284,21 @@ the wallet only when mint-confirmed `SPENT` proofs must be removed. It does not
 swap or refresh `UNSPENT` proofs. This makes it suitable for retrying receipt
 finalization without invoking the much heavier whole-wallet `repair-proofs`
 workflow.
+
+The same narrow operation is available to CLI operators:
+
+```sh
+acorn reconcile-proofs
+acorn balance --verify
+```
+
+This is preferred over a forced whole-wallet refresh when the immediate
+problem is a mint error `11001` (`Token already spent`). Older proof events may
+omit or contain an incorrect cached `Y`; Acorn never trusts that field for
+spend-state decisions and instead derives canonical `Y` from the proof secret
+for reconciliation, inspection, pending-payment state, and the final pre-swap
+check. Incomplete mint check-state responses fail closed before a swap is
+submitted.
 
 It should:
 
@@ -335,6 +400,63 @@ next independent input or keyset. Only after every replacement is durable may
 it publish a deletion request for the source proof events. If a later swap
 fails, already-created replacements remain recoverable from the relay and the
 old historical events remain available for diagnosis.
+
+Because a mint swap is irreversible, Acorn performs a relay write/read
+preflight before consuming proofs and then publishes each exact signed
+replacement event immediately:
+
+```text
+verify home-relay write/read behavior
+  -> perform irreversible mint operation
+  -> create and sign the replacement kind 7375 event
+  -> publish the exact event
+  -> retry the same signed event in memory
+  -> require readback of the exact event ID
+```
+
+Acorn deliberately does not persist a local proof journal. Wallet state,
+pending-payment state, continuity receipts, and recovery coordination belong
+in encrypted relay records rather than application-local files or databases.
+The exact signed event is retried idempotently only while the operation remains
+alive.
+
+Relay acknowledgement and relay query visibility are not always simultaneous.
+Acorn therefore waits up to 60 seconds by default for exact-ID readback and
+republishes the same signed event during that interval. Operators may tune this
+without changing wallet semantics:
+
+```sh
+ACORN_RELAY_VERIFY_TIMEOUT_SECONDS=90
+```
+
+The value must be a positive number of seconds. A timeout is an indeterminate
+storage result, not proof that publication failed. If it occurs after a mint
+operation, do not repeat the payment or swap blindly. Wait for the relay to
+settle, run `acorn check-proofs`, and use `acorn reconcile-proofs` only if the
+mint conclusively reports an obsolete input as spent. The error includes the
+replacement event IDs so an operator can investigate the relay directly.
+
+This boundary has an unavoidable consequence: no client can make an
+irreversible mint swap and an eventually consistent relay write atomic. If the
+mint succeeds and every configured relay remains unavailable until the process
+terminates, a replacement proof held only in memory may be lost. The mitigations
+are preflight verification, reliable home relays, optional relay replication,
+small independently persisted batches, exact-ID readback, and keeping the
+process alive while a post-swap publication failure is investigated. Acorn
+must not imply that application-local storage closes this protocol gap.
+
+Whole-wallet refresh is intentionally guarded because even a clean-looking
+wallet is rewritten through irreversible mint swaps:
+
+```sh
+acorn check-proofs
+acorn repair-proofs --refresh --confirm-refresh
+```
+
+An inability to verify the remote release of a wallet lease is reported as a
+degraded cleanup condition. The local mutex is still released and the owned
+remote lease expires naturally. Most importantly, that cleanup condition no
+longer replaces the primary mint or proof-persistence error.
 
 ### Wallet mutations need owned serialization
 

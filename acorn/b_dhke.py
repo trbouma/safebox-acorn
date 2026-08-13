@@ -56,19 +56,41 @@ from typing import Optional, Tuple
 from secp256k1 import PrivateKey, PublicKey
 
 
+CASHU_HASH_TO_CURVE_DOMAIN_SEPARATOR = b"Secp256k1_HashToCurve_Cashu_"
+CASHU_HASH_TO_CURVE_MAX_ITERATIONS = 2**16
+
+
 def hash_to_curve(message: bytes) -> PublicKey:
-    """Generates a point from the message hash and checks if the point lies on the curve.
-    If it does not, iteratively tries to compute a new point from the hash."""
-    point = None
-    msg_to_hash = message
-    while point is None:
-        _hash = hashlib.sha256(msg_to_hash).digest()
+    """Map message bytes to secp256k1 exactly as required by Cashu NUT-00."""
+    msg_hash = hashlib.sha256(
+        CASHU_HASH_TO_CURVE_DOMAIN_SEPARATOR + message
+    ).digest()
+    for counter in range(CASHU_HASH_TO_CURVE_MAX_ITERATIONS):
+        candidate = hashlib.sha256(
+            msg_hash + counter.to_bytes(4, "little")
+        ).digest()
         try:
-            # will error if point does not lie on curve
-            point = PublicKey(b"\x02" + _hash, raw=True)
+            return PublicKey(b"\x02" + candidate, raw=True)
         except Exception:
-            msg_to_hash = _hash
-    return point
+            continue
+    raise RuntimeError("Cashu hash_to_curve could not find a secp256k1 point")
+
+
+def legacy_hash_to_curve(message: bytes) -> PublicKey:
+    """Reproduce Acorn's historical mapping for read-only diagnostics only.
+
+    This is not the Cashu NUT-00 algorithm and must never be used to create,
+    mint, swap, or spend proofs. It remains here solely so existing wallets can
+    identify proofs created by older Acorn releases and avoid treating a
+    NUT-07 state response for the wrong Y as proof of spendability.
+    """
+    msg_to_hash = message
+    while True:
+        candidate = hashlib.sha256(msg_to_hash).digest()
+        try:
+            return PublicKey(b"\x02" + candidate, raw=True)
+        except Exception:
+            msg_to_hash = candidate
 
 
 def step1_alice(

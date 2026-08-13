@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from acorn.acorn import Acorn
+from acorn.b_dhke import hash_to_curve, legacy_hash_to_curve
 from acorn.models import Proof
 
 
@@ -36,11 +37,71 @@ class FakeAsyncClient:
 
 
 def make_wallet(proofs, known_mints):
+    for proof in proofs:
+        proof.Y = hash_to_curve(proof.secret.encode("utf-8")).serialize().hex()
     wallet = object.__new__(Acorn)
     wallet.proofs = proofs
     wallet.known_mints = known_mints
     wallet.balance = sum(proof.amount for proof in proofs)
     return wallet
+
+
+@pytest.mark.asyncio
+async def test_check_proofs_does_not_call_legacy_y_spendable(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    proof = Proof(
+        id="keyset-a",
+        amount=21,
+        secret="legacy-secret",
+        C="02a",
+        Y=legacy_hash_to_curve(b"legacy-secret").serialize().hex(),
+    )
+    wallet = object.__new__(Acorn)
+    wallet.proofs = [proof]
+    wallet.known_mints = {"keyset-a": "https://mint.example.com"}
+    wallet.balance = 21
+    FakeAsyncClient.posts = []
+    FakeAsyncClient.states_by_url = {
+        "https://mint.example.com/v1/checkstate": [{"state": "UNSPENT"}],
+    }
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    report = await wallet.check_proofs()
+
+    assert report["status"] == "incompatible"
+    assert report["requires_repair"] is False
+    assert report["mint_reported_unspent"] == {"proof_count": 1, "amount": 21}
+    assert report["mint_confirmed_unspent"] == {"proof_count": 0, "amount": 0}
+    assert report["structural"]["reason"] == "legacy_hash_to_curve"
+    assert report["structural"]["hash_to_curve_profiles"]["legacy_acorn"] == {
+        "proof_count": 1,
+        "amount": 21,
+    }
+
+
+@pytest.mark.asyncio
+async def test_check_proofs_treats_missing_cached_y_as_unverifiable(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    proof = Proof(id="keyset-a", amount=8, secret="missing-y", C="02a", Y="")
+    wallet = object.__new__(Acorn)
+    wallet.proofs = [proof]
+    wallet.known_mints = {"keyset-a": "https://mint.example.com"}
+    wallet.balance = 8
+    FakeAsyncClient.posts = []
+    FakeAsyncClient.states_by_url = {
+        "https://mint.example.com/v1/checkstate": [{"state": "UNSPENT"}],
+    }
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeAsyncClient)
+
+    report = await wallet.check_proofs()
+
+    assert report["status"] == "incompatible"
+    assert report["requires_repair"] is False
+    assert report["mint_reported_unspent"] == {"proof_count": 1, "amount": 8}
+    assert report["mint_confirmed_unspent"] == {"proof_count": 0, "amount": 0}
+    assert report["structural"]["reason"] == "proof_y_missing"
 
 
 @pytest.mark.asyncio
@@ -79,7 +140,12 @@ async def test_check_proofs_reports_states_without_mutating_wallet(monkeypatch):
     assert report["states"]["SPENT"] == {"proof_count": 1, "amount": 2}
     assert report["states"]["PENDING"] == {"proof_count": 1, "amount": 4}
     assert report["structural"]["duplicate_proofs"] == 1
-    assert FakeAsyncClient.posts[0]["json"] == {"Ys": ["03a", "03b", "03c"]}
+    assert FakeAsyncClient.posts[0]["json"] == {
+        "Ys": [
+            acorn_module.hash_to_curve(secret.encode("utf-8")).serialize().hex()
+            for secret in ("one", "two", "four")
+        ]
+    }
 
     assert [proof.model_dump() for proof in wallet.proofs] == before_proofs
     assert wallet.known_mints == before_mints
@@ -149,4 +215,3 @@ async def test_check_proofs_clean_wallet_needs_no_repair(monkeypatch):
     assert report["requires_repair"] is False
     assert report["mint_confirmed_unspent"] == {"proof_count": 1, "amount": 2}
     assert report["recommendation"] == "No repair indicated."
-

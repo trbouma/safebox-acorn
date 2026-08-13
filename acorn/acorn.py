@@ -64,7 +64,12 @@ from acorn.record_protection import validate_record_protection_key
 
 tail = util_funcs.str_tails
 
-from acorn.b_dhke import step1_alice, step3_alice, hash_to_curve
+from acorn.b_dhke import (
+    hash_to_curve,
+    legacy_hash_to_curve,
+    step1_alice,
+    step3_alice,
+)
 from acorn.secp import PrivateKey, PublicKey
 from acorn.lightning import lightning_address_pay, lnaddress_to_lnurl, zap_address_pay
 from acorn.nostr import bech32_to_hex, hex_to_bech32, nip05_to_npub, create_nembed_compressed,parse_nembed_compressed
@@ -102,9 +107,24 @@ def _positive_limit(value: object, *, name: str) -> int:
     return normalized
 
 
+def _positive_timeout(value: object, *, name: str) -> float:
+    """Return a positive timeout with a clear configuration error."""
+    try:
+        normalized = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a positive number") from exc
+    if normalized <= 0:
+        raise ValueError(f"{name} must be a positive number")
+    return normalized
+
+
 RECORD_LIMIT: int = _positive_limit(
     os.getenv("ACORN_RECORD_LIMIT", "1024"),
     name="ACORN_RECORD_LIMIT",
+)
+RELAY_VERIFY_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_RELAY_VERIFY_TIMEOUT_SECONDS", "60"),
+    name="ACORN_RELAY_VERIFY_TIMEOUT_SECONDS",
 )
 PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
@@ -139,6 +159,7 @@ DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
+PROOF_PERSISTENCE_PREFLIGHT_LABEL: str = "proof_persistence_preflight"
 CONTINUITY_RECEIPTS_LABEL: str = "continuity_receipts"
 WALLET_LOCK_LABEL: str = "lock"
 WALLET_LOCK_LEASE_SECONDS: int = int(os.getenv("ACORN_WALLET_LOCK_LEASE_SECONDS", "300"))
@@ -162,6 +183,7 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
         "mints",
         "payment_request",
         PENDING_MELTS_LABEL,
+        PROOF_PERSISTENCE_PREFLIGHT_LABEL,
         "privkey",
         "profile",
         "public_relays",
@@ -2678,7 +2700,7 @@ class Acorn:
         replicate_relays: List[str] = None,
         record_kind: int = 37375,
         verify: bool = False,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ) -> dict:
         return await self._async_set_wallet_info(
             label,
@@ -2696,7 +2718,7 @@ class Acorn:
         replicate_relays: List[str] = None,
         record_kind: int = 37375,
         verify: bool = False,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ) -> dict:
         label_name_hash = self._record_label_hash(label)
 
@@ -2872,7 +2894,7 @@ class Acorn:
     async def store_deferred_recovery(
         self,
         *,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ) -> dict:
         """Persist only the non-secret state of a deferred backup ceremony."""
 
@@ -2953,7 +2975,7 @@ class Acorn:
         self,
         *,
         record_protection_key: str,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ) -> dict:
         """Publish non-secret state indicating that an RPK has been activated."""
 
@@ -3003,7 +3025,7 @@ class Acorn:
     async def complete_deferred_recovery(
         self,
         *,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ) -> dict:
         """Remove current recovery secrets after the user confirms backup."""
 
@@ -3424,14 +3446,30 @@ class Acorn:
                 self._lock_owner,
                 held_ms,
             )
+        release_result = {"released": True, "error": None}
         try:
             lock_state = await self._read_wallet_lock()
             if lock_state.get("token") == self._lock_token:
-                await self.set_wallet_info(
-                    label=WALLET_LOCK_LABEL,
-                    label_info="FALSE",
-                    verify=True,
-                )
+                try:
+                    await self.set_wallet_info(
+                        label=WALLET_LOCK_LABEL,
+                        label_info="FALSE",
+                        verify=True,
+                    )
+                except Exception as exc:
+                    release_result = {
+                        "released": False,
+                        "error": str(exc),
+                        "lease_expires_at": lock_state.get("expires_at"),
+                    }
+                    self.logger.error(
+                        "op=release_lock status=remote_release_unverified "
+                        "handle=%s actor=%s lease_expires_at=%s error=%s",
+                        self.handle,
+                        actor,
+                        lock_state.get("expires_at"),
+                        exc,
+                    )
             else:
                 self.logger.warning(
                     "op=release_lock status=ownership_lost handle=%s actor=%s",
@@ -3446,8 +3484,7 @@ class Acorn:
             if self._process_wallet_lock and self._process_wallet_lock.locked():
                 self._process_wallet_lock.release()
             self._process_wallet_lock = None
-        
-        pass  
+        return release_result
 
         
     async def get_record(
@@ -5463,7 +5500,7 @@ class Acorn:
         record_origin: str = None,
         blob_data: bytes = None,
         relays: List[str] | str | None = None,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
         return_result: bool = False,
         preserve_existing_blob: bool = False,
     ):
@@ -5657,6 +5694,7 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._preflight_proof_persistence()
             headers = { "Content-Type": "application/json"}
             timeout = httpx.Timeout(20.0, connect=5.0)
             mint_base_url = normalize_mint_url(mint or self.home_mint)
@@ -5991,12 +6029,40 @@ class Acorn:
         
         return msg_out
 
+    async def _preflight_proof_persistence(self) -> dict:
+        """Require relay read-after-write before an irreversible mint operation."""
+
+        marker = json.dumps(
+            {
+                "version": 1,
+                "nonce": secrets.token_hex(16),
+                "checked_at": int(time()),
+            },
+            separators=(",", ":"),
+        )
+        try:
+            result = await self.set_wallet_info(
+                label=PROOF_PERSISTENCE_PREFLIGHT_LABEL,
+                label_info=marker,
+                verify=True,
+            )
+        except Exception as exc:
+            raise ProofRecoveryError(
+                "Home relay failed the proof-persistence write/read preflight; "
+                "no mint proofs were consumed. Retry later or migrate to a "
+                "reliable home relay."
+            ) from exc
+        return {
+            "status": "OK",
+            "relay_event_id": result.get("event_id") if isinstance(result, dict) else None,
+        }
+
     async def add_proofs_obj(
         self,
         proofs_arg: List[Proof],
         replicate_relays: List[str] = None,
         verify: bool = False,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ):
         
         records_to_write = []
@@ -6039,15 +6105,14 @@ class Acorn:
 
             for each in records_to_write:
                 payload_encrypt = my_enc.encrypt(each,to_pub_k=self.pubkey_hex)
-            
-                async with ClientPool(write_relays) as c:
-                    
-                    #FIXME kind
-                    n_msg = Event(kind=7375,
-                                content=payload_encrypt,
-                                pub_key=self.pubkey_hex)
-                    n_msg.sign(self.privkey_hex)
-                    published_events.append(n_msg)
+                n_msg = Event(kind=7375,
+                            content=payload_encrypt,
+                            pub_key=self.pubkey_hex)
+                n_msg.sign(self.privkey_hex)
+                published_events.append(n_msg)
+
+            async with ClientPool(write_relays) as c:
+                for n_msg in published_events:
                     self.logger.debug(
                         "op=add_proofs_obj status=published event_id=%s kind=%s payload_bytes=%s",
                         n_msg.id,
@@ -6055,7 +6120,7 @@ class Acorn:
                         len(record),
                     )
                     c.publish(n_msg)
-                    await asyncio.sleep(0.2)
+                await asyncio.sleep(0.2)
         except (ValueError, TypeError, json.JSONDecodeError) as e:
             self.logger.error("op=add_proofs_obj status=failed proofs=%s error=%s", len(proofs_arg), e)
             raise RuntimeError(f"Error writing proofs: {e}") from e
@@ -6117,6 +6182,11 @@ class Acorn:
                 raise RuntimeError(
                     "Proof publish could not be verified on: "
                     + ", ".join(failed)
+                    + ". Replacement event IDs: "
+                    + ", ".join(event_ids)
+                    + ". Do not retry the mint operation; wait and run "
+                    "'acorn check-proofs' to determine whether these events "
+                    "became visible."
                 )
 
         return {
@@ -6467,13 +6537,39 @@ class Acorn:
             for proof in proofs
         }
 
+    @staticmethod
+    def _canonical_proof_y(proof: Proof) -> str:
+        """Derive Cashu Y from the secret; never trust a cached relay field."""
+        secret = str(proof.secret)
+        if not secret:
+            raise ValueError("Proof secret is required to derive Cashu Y")
+        return hash_to_curve(secret.encode("utf-8")).serialize().hex()
+
+    @staticmethod
+    def _proof_hash_to_curve_profile(proof: Proof) -> str:
+        """Classify cached Y without using it as cryptographic authority."""
+        secret = str(proof.secret)
+        if not secret:
+            return "invalid"
+        cached_y = str(proof.Y or "").lower()
+        if not cached_y:
+            return "missing"
+        standard_y = hash_to_curve(secret.encode("utf-8")).serialize().hex()
+        if cached_y == standard_y:
+            return "nut00"
+        legacy_y = legacy_hash_to_curve(secret.encode("utf-8")).serialize().hex()
+        if cached_y == legacy_y:
+            return "legacy_acorn"
+        return "mismatch"
+
     async def _reconcile_spent_proofs_locked(self) -> dict:
         """Remove only mint-confirmed spent proofs while the wallet lock is held."""
         await self._load_proofs()
         report = await self.check_proofs()
-        if report["status"] == "inconclusive":
+        if report["status"] in {"inconclusive", "incompatible"}:
             raise RuntimeError(
-                "Mint proof state is inconclusive; no proofs were removed"
+                f"Mint proof state is {report['status']}; no proofs were removed. "
+                f"{report['recommendation']}"
             )
 
         spent_ys: set[str] = set()
@@ -6482,10 +6578,7 @@ class Acorn:
                 keyset = str(keyset_report["keyset"])
                 mint_url = self.known_mints.get(keyset)
                 keyset_proofs = [proof for proof in self.proofs if str(proof.id) == keyset]
-                ys = [
-                    str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex())
-                    for proof in keyset_proofs
-                ]
+                ys = [self._canonical_proof_y(proof) for proof in keyset_proofs]
                 async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
                     response = await client.post(
                         url=f"{mint_url.rstrip('/')}/v1/checkstate",
@@ -6503,7 +6596,7 @@ class Acorn:
                             "Mint proof state became inconclusive; no proofs were removed"
                         )
                     if state == "SPENT":
-                        spent_ys.add(str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex()))
+                        spent_ys.add(self._canonical_proof_y(proof))
 
         if not spent_ys:
             return {"removed": 0, "amount": 0, "balance": self.balance}
@@ -6511,7 +6604,7 @@ class Acorn:
         retained: list[Proof] = []
         removed_amount = 0
         for proof in self.proofs:
-            proof_y = str(proof.Y or hash_to_curve(str(proof.secret).encode("utf-8")).serialize().hex())
+            proof_y = self._canonical_proof_y(proof)
             if proof_y in spent_ys:
                 removed_amount += int(proof.amount)
             else:
@@ -6556,6 +6649,126 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+    async def discard_incompatible_proofs(
+        self,
+        *,
+        expected_amount: int,
+        reason: str = "NUT-00 development reset",
+    ) -> dict:
+        """Discard only proof state that cannot be established as NUT-00.
+
+        This is a development recovery operation, not a mint repair. It keeps
+        the Acorn key, configuration, records, and any NUT-00 proof state. The
+        caller must acknowledge the exact incompatible amount before relay
+        events are rewritten.
+        """
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            await self._preflight_proof_persistence()
+            await self._load_proofs()
+
+            source_event_ids = list(self.proof_event_ids)
+            retained: list[Proof] = []
+            discarded: list[Proof] = []
+            profile_counts: dict[str, dict[str, int]] = {}
+            for proof in self.proofs:
+                profile = self._proof_hash_to_curve_profile(proof)
+                totals = profile_counts.setdefault(
+                    profile,
+                    {"proof_count": 0, "amount": 0},
+                )
+                totals["proof_count"] += 1
+                totals["amount"] += int(proof.amount)
+                if profile == "nut00":
+                    retained.append(proof)
+                else:
+                    discarded.append(proof)
+
+            discarded_amount = sum(int(proof.amount) for proof in discarded)
+            if not discarded:
+                raise RuntimeError(
+                    "No incompatible proofs were found; proof state was not changed"
+                )
+            if int(expected_amount) != discarded_amount:
+                raise RuntimeError(
+                    "Discard amount acknowledgement does not match incompatible "
+                    f"proof state: expected {discarded_amount} sats"
+                )
+
+            # Republish compatible proofs before deleting source events because
+            # one historical event can contain both compatible and incompatible
+            # proofs.
+            retained_by_keyset: dict[str, list[Proof]] = {}
+            for proof in retained:
+                retained_by_keyset.setdefault(str(proof.id), []).append(proof)
+            for proof_group in retained_by_keyset.values():
+                await self.add_proofs_obj(proof_group, verify=True)
+
+            if source_event_ids:
+                await self._async_delete_events_by_ids(
+                    source_event_ids,
+                    record_kind=7375,
+                    verify=True,
+                )
+
+            self.proofs = list(retained)
+            self.balance = sum(int(proof.amount) for proof in retained)
+            expected_identities = self._proof_identity_set(retained)
+            await self._load_proofs()
+            if self._proof_identity_set(self.proofs) != expected_identities:
+                raise RuntimeError(
+                    "Relay readback did not match retained NUT-00 proof state"
+                )
+
+            history_error = None
+            try:
+                await self.add_tx_history(
+                    tx_type="X",
+                    amount=discarded_amount,
+                    comment=(
+                        "Incompatible proof state discarded: "
+                        f"{reason}"
+                    ),
+                    tendered_amount=discarded_amount,
+                    tendered_currency="SAT",
+                )
+            except Exception as exc:
+                # The proof reset is already complete and verified. Do not
+                # report the destructive operation as failed merely because
+                # its advisory audit entry could not be published.
+                history_error = str(exc)
+                self.logger.error(
+                    "op=discard_incompatible_proofs "
+                    "status=history_write_failed error=%s",
+                    exc,
+                )
+            return {
+                "status": "OK",
+                "operation": "discard-incompatible-proofs",
+                "discarded": {
+                    "proof_count": len(discarded),
+                    "amount": discarded_amount,
+                    "profiles": {
+                        profile: totals
+                        for profile, totals in profile_counts.items()
+                        if profile != "nut00"
+                    },
+                },
+                "retained": {
+                    "proof_count": len(retained),
+                    "amount": self.balance,
+                },
+                "source_event_count": len(source_event_ids),
+                "reason": reason,
+                "history_recorded": history_error is None,
+                "history_error": history_error,
+            }
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
     def _proofs_by_keyset(self):
         all_proofs = {}
         keyset_amounts = {}
@@ -6589,6 +6802,13 @@ class Acorn:
             "unknown_keysets": [],
             "invalid_proofs": 0,
             "duplicate_proofs": 0,
+            "hash_to_curve_profiles": {
+                "nut00": {"proof_count": 0, "amount": 0},
+                "legacy_acorn": {"proof_count": 0, "amount": 0},
+                "missing": {"proof_count": 0, "amount": 0},
+                "mismatch": {"proof_count": 0, "amount": 0},
+                "invalid": {"proof_count": 0, "amount": 0},
+            },
             "relay_check": None,
         }
 
@@ -6607,6 +6827,10 @@ class Acorn:
                     invalid += 1
                     continue
                 amount_sum += pamount
+                profile = self._proof_hash_to_curve_profile(each)
+                profile_totals = report["hash_to_curve_profiles"][profile]
+                profile_totals["proof_count"] += 1
+                profile_totals["amount"] += pamount
                 if pid not in self.known_mints:
                     unknown_keysets.add(pid)
                 key = (pid, psecret)
@@ -6637,6 +6861,15 @@ class Acorn:
         elif unknown_keysets:
             report["safe_to_swap"] = False
             report["reason"] = "unknown_keyset_mapping"
+        elif report["hash_to_curve_profiles"]["legacy_acorn"]["proof_count"]:
+            report["safe_to_swap"] = False
+            report["reason"] = "legacy_hash_to_curve"
+        elif report["hash_to_curve_profiles"]["mismatch"]["proof_count"]:
+            report["safe_to_swap"] = False
+            report["reason"] = "proof_y_mismatch"
+        elif report["hash_to_curve_profiles"]["missing"]["proof_count"]:
+            report["safe_to_swap"] = False
+            report["reason"] = "proof_y_missing"
         elif len(self.proofs) == 0:
             report["safe_to_swap"] = False
             report["reason"] = "no_proofs"
@@ -6702,7 +6935,15 @@ class Acorn:
                 ),
             },
             "checked": {"proof_count": 0, "amount": 0},
+            "mint_reported_unspent": {"proof_count": 0, "amount": 0},
             "mint_confirmed_unspent": {"proof_count": 0, "amount": 0},
+            "legacy_identifier_check": {
+                "proof_count": 0,
+                "amount": 0,
+                "states": empty_state_totals(),
+                "keysets": [],
+                "errors": [],
+            },
             "states": empty_state_totals(),
             "keysets": [],
             "structural": structural,
@@ -6710,7 +6951,7 @@ class Acorn:
             "recommendation": "No repair indicated.",
         }
 
-        unique_by_keyset: dict[str, list[tuple[Proof, str]]] = {}
+        unique_by_keyset: dict[str, list[tuple[Proof, str, str]]] = {}
         seen: set[tuple[str, str]] = set()
 
         for proof in self.proofs:
@@ -6724,10 +6965,9 @@ class Acorn:
                 if proof_key in seen:
                     continue
                 seen.add(proof_key)
-                proof_y = str(proof.Y or "")
-                if not proof_y:
-                    proof_y = hash_to_curve(secret.encode("utf-8")).serialize().hex()
-                unique_by_keyset.setdefault(keyset, []).append((proof, proof_y))
+                proof_y = self._canonical_proof_y(proof)
+                profile = self._proof_hash_to_curve_profile(proof)
+                unique_by_keyset.setdefault(keyset, []).append((proof, proof_y, profile))
             except Exception:
                 # The structural audit reports malformed proofs. Do not mutate
                 # or attempt to manufacture a state for one here.
@@ -6740,7 +6980,7 @@ class Acorn:
             for keyset, proof_rows in unique_by_keyset.items():
                 mint_url = self.known_mints.get(keyset)
                 keyset_states = empty_state_totals()
-                keyset_amount = sum(int(proof.amount) for proof, _ in proof_rows)
+                keyset_amount = sum(int(proof.amount) for proof, _, _ in proof_rows)
                 keyset_report = {
                     "keyset": keyset,
                     "mint": mint_url,
@@ -6764,7 +7004,7 @@ class Acorn:
                 try:
                     response = await client.post(
                         url=f"{mint_url.rstrip('/')}/v1/checkstate",
-                        json={"Ys": [proof_y for _, proof_y in proof_rows]},
+                        json={"Ys": [proof_y for _, proof_y, _ in proof_rows]},
                         headers=headers,
                     )
                     response.raise_for_status()
@@ -6789,7 +7029,7 @@ class Acorn:
                     report["states"]["UNKNOWN"]["amount"] += keyset_amount
                     continue
 
-                for (proof, _proof_y), state_obj in zip(proof_rows, states):
+                for (proof, _proof_y, profile), state_obj in zip(proof_rows, states):
                     state = (
                         str(state_obj.get("state", "")).upper()
                         if isinstance(state_obj, dict)
@@ -6804,20 +7044,105 @@ class Acorn:
                     report["states"][state]["amount"] += amount
                     report["checked"]["proof_count"] += 1
                     report["checked"]["amount"] += amount
+                    if state == "UNSPENT" and profile == "nut00":
+                        report["mint_confirmed_unspent"]["proof_count"] += 1
+                        report["mint_confirmed_unspent"]["amount"] += amount
+
+                legacy_rows = [
+                    (proof, str(proof.Y))
+                    for proof, _proof_y, profile in proof_rows
+                    if profile == "legacy_acorn"
+                ]
+                if legacy_rows:
+                    legacy_totals = empty_state_totals()
+                    legacy_amount = sum(int(proof.amount) for proof, _ in legacy_rows)
+                    legacy_keyset_report = {
+                        "keyset": keyset,
+                        "mint": mint_url,
+                        "proof_count": len(legacy_rows),
+                        "amount": legacy_amount,
+                        "states": legacy_totals,
+                        "error": None,
+                    }
+                    report["legacy_identifier_check"]["keysets"].append(
+                        legacy_keyset_report
+                    )
+                    try:
+                        legacy_response = await client.post(
+                            url=f"{mint_url.rstrip('/')}/v1/checkstate",
+                            json={"Ys": [cached_y for _, cached_y in legacy_rows]},
+                            headers=headers,
+                        )
+                        legacy_response.raise_for_status()
+                        legacy_body = legacy_response.json()
+                        legacy_states = (
+                            legacy_body.get("states", [])
+                            if isinstance(legacy_body, dict)
+                            else []
+                        )
+                        if len(legacy_states) != len(legacy_rows):
+                            raise RuntimeError(
+                                f"legacy checkstate returned {len(legacy_states)} "
+                                f"states for {len(legacy_rows)} proofs"
+                            )
+                    except Exception as exc:
+                        error = (
+                            f"Unable to check legacy identifiers for keyset "
+                            f"{keyset} at {mint_url}: {exc}"
+                        )
+                        legacy_keyset_report["error"] = error
+                        report["legacy_identifier_check"]["errors"].append(error)
+                        legacy_states = [
+                            {"state": "UNKNOWN"} for _proof, _cached_y in legacy_rows
+                        ]
+
+                    for (proof, _cached_y), state_obj in zip(
+                        legacy_rows, legacy_states
+                    ):
+                        state = (
+                            str(state_obj.get("state", "")).upper()
+                            if isinstance(state_obj, dict)
+                            else ""
+                        )
+                        if state not in state_names:
+                            state = "UNKNOWN"
+                        amount = int(proof.amount)
+                        legacy_totals[state]["proof_count"] += 1
+                        legacy_totals[state]["amount"] += amount
+                        aggregate = report["legacy_identifier_check"]["states"][state]
+                        aggregate["proof_count"] += 1
+                        aggregate["amount"] += amount
+                        report["legacy_identifier_check"]["proof_count"] += 1
+                        report["legacy_identifier_check"]["amount"] += amount
 
         unspent = report["states"]["UNSPENT"]
-        report["mint_confirmed_unspent"] = dict(unspent)
+        report["mint_reported_unspent"] = dict(unspent)
 
         structural_problem = not structural["safe_to_swap"] and structural["reason"] != "no_proofs"
+        compatibility_problem = structural["reason"] in {
+            "legacy_hash_to_curve",
+            "proof_y_mismatch",
+            "proof_y_missing",
+        }
         spent_found = report["states"]["SPENT"]["proof_count"] > 0
         inconclusive = bool(
             report["errors"]
             or report["states"]["PENDING"]["proof_count"]
             or report["states"]["UNKNOWN"]["proof_count"]
         )
-        report["requires_repair"] = bool(structural_problem or spent_found)
+        report["requires_repair"] = bool(
+            not compatibility_problem and (structural_problem or spent_found)
+        )
 
-        if inconclusive:
+        if compatibility_problem:
+            report["status"] = "incompatible"
+            report["recommendation"] = (
+                "Do not spend, swap, refresh, or prune these proofs. They use "
+                "a legacy or inconsistent hash-to-curve identifier that NUT-07 "
+                "cannot validate. Preserve relay state and contact the mint "
+                "operator for recovery or migration."
+            )
+        elif inconclusive:
             report["status"] = "inconclusive"
             report["recommendation"] = (
                 "Recheck before repairing; pending, unknown, or unreachable "
@@ -6856,7 +7181,19 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._preflight_proof_persistence()
             await self._load_proofs()
+            audit = await self.proof_safety_audit(check_relay=False)
+            if audit["reason"] in {
+                "legacy_hash_to_curve",
+                "proof_y_mismatch",
+                "proof_y_missing",
+            }:
+                raise RuntimeError(
+                    "Proof refresh refused: the wallet contains legacy or "
+                    "inconsistent hash-to-curve identifiers. Preserve relay "
+                    "state and contact the mint operator for recovery."
+                )
             source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
 
@@ -6883,7 +7220,7 @@ class Acorn:
                     unique_proofs.append(proof)
 
                 checkstate_url = f"{mint_url}/v1/checkstate"
-                ys = [each.Y for each in unique_proofs]
+                ys = [self._canonical_proof_y(each) for each in unique_proofs]
                 payload = {"Ys": ys}
 
                 async with httpx.AsyncClient(timeout=timeout) as client:
@@ -7262,12 +7599,11 @@ class Acorn:
         spend_ys = {str(each) for each in entry.get("spend_ys", [])}
         retained: List[Proof] = []
         for proof in self.proofs:
-            proof_y = str(proof.Y or "")
-            if not proof_y:
-                proof_y = hash_to_curve(
-                    str(proof.secret).encode("utf-8")
-                ).serialize().hex()
-            if proof_y not in spend_ys:
+            canonical_y = self._canonical_proof_y(proof)
+            # Accept the historical cached-Y form for pending melts created by
+            # older Acorn versions, while all new state uses canonical Y.
+            cached_y = str(proof.Y or "")
+            if canonical_y not in spend_ys and cached_y not in spend_ys:
                 retained.append(proof)
 
         self.proofs = retained
@@ -7651,7 +7987,9 @@ class Acorn:
                             or "Local wallet proof state is stale" in error_text
                         ):
                             raise RuntimeError(
-                                "Payment could not proceed because the wallet contains stale proofs."
+                                "Payment could not proceed because the wallet contains stale proofs. "
+                                "Run 'acorn reconcile-proofs', verify with "
+                                "'acorn balance --verify', then retry once."
                             ) from e
                         raise RuntimeError(f"ERROR Swap for Payment: {e}. You may need to try the payment again.") from e
                         
@@ -7706,9 +8044,7 @@ class Acorn:
                         "mint": self.known_mints[chosen_keyset],
                         "keyset": chosen_keyset,
                         "spend_ys": [
-                            str(each.Y or hash_to_curve(
-                                str(each.secret).encode("utf-8")
-                            ).serialize().hex())
+                            self._canonical_proof_y(each)
                             for each in spend_proofs
                         ],
                         "amount": int(amount),
@@ -7778,7 +8114,11 @@ class Acorn:
                 or "11001" in str(e)
                 or "stale proofs" in str(e).lower()
             ):
-                msg_out = "Payment could not proceed because the wallet contains stale proofs."
+                msg_out = (
+                    "Payment could not proceed because the wallet contains stale proofs. "
+                    "Run 'acorn reconcile-proofs', verify with "
+                    "'acorn balance --verify', then retry once."
+                )
             elif melt_attempted:
                 msg_out = (
                     "Lightning payment outcome may be unresolved. Do not retry "
@@ -8084,9 +8424,7 @@ class Acorn:
                 "mint": self.known_mints[chosen_keyset],
                 "keyset": chosen_keyset,
                 "spend_ys": [
-                    str(each.Y or hash_to_curve(
-                        str(each.secret).encode("utf-8")
-                    ).serialize().hex())
+                    self._canonical_proof_y(each)
                     for each in spend_proofs
                 ],
                 "amount": int(ln_amount),
@@ -8231,7 +8569,7 @@ class Acorn:
         event_ids: List[str],
         record_kind: int,
         verify: bool = True,
-        verify_timeout: float = 8.0,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
     ):
         if not event_ids:
             return {"status": "OK", "event_id": None, "verified": True}
@@ -8288,6 +8626,8 @@ class Acorn:
         self.logger.debug("Swap proofs")
         if not incoming_swap_proofs:
             raise RuntimeError("No proofs supplied for swap")
+
+        await self._preflight_proof_persistence()
 
         swap_amount =0
         count = 0
@@ -8426,6 +8766,7 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._preflight_proof_persistence()
             await self._load_proofs()
             source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
@@ -8443,7 +8784,7 @@ class Acorn:
                 check = []
                 mint_verify_url = f"{self.known_mints[each_keyset]}/v1/checkstate"
                 for each_proof in keyset_proofs[each_keyset]:
-                    check.append(each_proof.Y)
+                    check.append(self._canonical_proof_y(each_proof))
 
                 # print(mint_verify_url, check)
                 Ys = {"Ys": check}
@@ -8605,6 +8946,7 @@ class Acorn:
         try:
             await self.acquire_lock()
             lock_acquired = True
+            await self._preflight_proof_persistence()
             await self._load_proofs()
             source_event_ids = list(self.proof_event_ids)
             await self._require_resolved_pending_melts()
@@ -8634,7 +8976,10 @@ class Acorn:
                 if not unique_proofs:
                     continue
 
-                check = [each_proof.Y for each_proof in unique_proofs]
+                check = [
+                    self._canonical_proof_y(each_proof)
+                    for each_proof in unique_proofs
+                ]
                 mint_verify_url = f"{self.known_mints[each_keyset]}/v1/checkstate"
                 Ys = {"Ys": check}
                 async with httpx.AsyncClient(timeout=timeout) as client:
@@ -8824,7 +9169,7 @@ class Acorn:
                 check = []
                 mint_verify_url = f"{self.known_mints[each_keyset]}/v1/checkstate"
                 for each_proof in keyset_proofs[each_keyset]:
-                    check.append(each_proof.Y)
+                    check.append(self._canonical_proof_y(each_proof))
 
                 Ys = {"Ys": check}
                 try:
@@ -9060,6 +9405,8 @@ class Acorn:
     async def swap_for_payment_multi(self, keyset_to_use:str, proofs_to_use: List[Proof], payment_amount: int)->List[Proof]:
         # create proofs to melt, and proofs_remaining
 
+        await self._preflight_proof_persistence()
+
         swap_amount =0
         count = 0
         
@@ -9083,7 +9430,7 @@ class Acorn:
         self.logger.debug("op=swap_for_payment_multi status=checkstate_start")
         for each in proofs_to_use:
             self.logger.debug("op=swap_for_payment_multi status=checkstate_y")
-            checkstate_ys.append(each.Y)
+            checkstate_ys.append(self._canonical_proof_y(each))
 
         data_to_send = {"Ys": checkstate_ys}  
         self.logger.debug("op=swap_for_payment_multi status=checkstate_payload")
@@ -9094,6 +9441,11 @@ class Acorn:
             self.logger.debug("op=swap_for_payment_multi status=checkstate_response")
 
         states = checkstate_response.get("states", []) if isinstance(checkstate_response, dict) else []
+        if len(states) != len(proofs_to_use):
+            raise RuntimeError(
+                "mint returned an incomplete proof-state response before swap; "
+                "payment was not attempted"
+            )
         invalid_states = []
         for idx, state_obj in enumerate(states):
             state_value = None

@@ -9,6 +9,7 @@ from monstr.encrypt import Keys
 
 from acorn import acorn as acorn_module
 from acorn.acorn import Acorn
+from acorn.b_dhke import legacy_hash_to_curve
 from acorn.models import NIP60Proofs, Proof
 
 
@@ -33,6 +34,91 @@ def wallet_with_key() -> Acorn:
     wallet._lock_depth = 0
     wallet._process_wallet_lock = None
     return wallet
+
+
+@pytest.mark.asyncio
+async def test_discard_incompatible_proofs_preserves_wallet_and_clears_legacy_state():
+    wallet = wallet_with_key()
+    keyset = "legacy-keyset"
+    legacy_proofs = [
+        Proof(
+            amount=1,
+            id=keyset,
+            secret="legacy-one",
+            C="legacy-c-one",
+            Y=legacy_hash_to_curve(b"legacy-one").serialize().hex(),
+        ),
+        Proof(
+            amount=2,
+            id=keyset,
+            secret="legacy-two",
+            C="legacy-c-two",
+            Y=legacy_hash_to_curve(b"legacy-two").serialize().hex(),
+        ),
+    ]
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet._preflight_proof_persistence = AsyncMock()
+    wallet._async_delete_events_by_ids = AsyncMock(return_value={"verified": True})
+    wallet.add_proofs_obj = AsyncMock()
+    wallet.add_tx_history = AsyncMock()
+    load_count = 0
+
+    async def load_proofs():
+        nonlocal load_count
+        load_count += 1
+        if load_count == 1:
+            wallet.proofs = list(legacy_proofs)
+            wallet.balance = 3
+            wallet.proof_event_ids = ["legacy-event"]
+        else:
+            wallet.proofs = []
+            wallet.balance = 0
+            wallet.proof_event_ids = []
+
+    wallet._load_proofs = AsyncMock(side_effect=load_proofs)
+
+    result = await wallet.discard_incompatible_proofs(expected_amount=3)
+
+    assert result["status"] == "OK"
+    assert result["discarded"]["proof_count"] == 2
+    assert result["discarded"]["amount"] == 3
+    assert result["retained"] == {"proof_count": 0, "amount": 0}
+    wallet.add_proofs_obj.assert_not_awaited()
+    wallet._async_delete_events_by_ids.assert_awaited_once_with(
+        ["legacy-event"],
+        record_kind=7375,
+        verify=True,
+    )
+    wallet.add_tx_history.assert_awaited_once()
+    wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_discard_incompatible_proofs_requires_exact_amount():
+    wallet = wallet_with_key()
+    proof = Proof(
+        amount=8,
+        id="legacy-keyset",
+        secret="legacy-eight",
+        C="legacy-c",
+        Y=legacy_hash_to_curve(b"legacy-eight").serialize().hex(),
+    )
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet._preflight_proof_persistence = AsyncMock()
+    wallet._load_proofs = AsyncMock()
+    wallet._async_delete_events_by_ids = AsyncMock()
+    wallet.proofs = [proof]
+    wallet.balance = 8
+    wallet.proof_event_ids = ["legacy-event"]
+
+    with pytest.raises(RuntimeError, match="expected 8 sats"):
+        await wallet.discard_incompatible_proofs(expected_amount=7)
+
+    wallet._async_delete_events_by_ids.assert_not_awaited()
+    wallet.release_lock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -152,6 +238,59 @@ async def test_public_stale_reconciliation_releases_lock_when_state_is_inconclus
         await wallet.reconcile_stale_proofs()
 
     wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_payment_pre_swap_check_ignores_incorrect_cached_proof_y(monkeypatch):
+    wallet = wallet_with_key()
+    keyset = "test-keyset"
+    proof = Proof(
+        amount=4,
+        id=keyset,
+        secret="legacy-proof-without-y",
+        C="02" + "11" * 32,
+        Y="02" + "ff" * 32,
+    )
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet._preflight_proof_persistence = AsyncMock()
+    captured = {}
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            return Response({"keysets": [{"id": keyset}]})
+
+        async def post(self, url, **kwargs):
+            captured["checkstate"] = kwargs["json"]
+            return Response({"states": [{"state": "SPENT"}]})
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
+
+    with pytest.raises(RuntimeError, match="Retry payment after wallet state refresh"):
+        await wallet.swap_for_payment_multi(keyset, [proof], 4)
+
+    expected_y = acorn_module.hash_to_curve(
+        proof.secret.encode("utf-8")
+    ).serialize().hex()
+    assert captured["checkstate"] == {"Ys": [expected_y]}
 
 
 @pytest.mark.asyncio
@@ -288,6 +427,7 @@ async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
     wallet.balance = 31
     wallet.acquire_lock = AsyncMock()
     wallet.release_lock = AsyncMock()
+    wallet._preflight_proof_persistence = AsyncMock()
     wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
 
     serialized_point = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
@@ -382,6 +522,7 @@ async def test_swap_each_persists_first_replacement_before_later_failure(monkeyp
     wallet.proof_event_ids = ["source-event"]
     wallet.acquire_lock = AsyncMock()
     wallet.release_lock = AsyncMock()
+    wallet._preflight_proof_persistence = AsyncMock()
     wallet._require_resolved_pending_melts = AsyncMock()
     wallet.proof_safety_audit = AsyncMock(
         return_value={"safe_to_swap": True, "reason": "ok"}

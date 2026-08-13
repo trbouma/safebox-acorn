@@ -61,6 +61,23 @@ def test_normalize_relay_csv_preserves_local_websocket_relays(monkeypatch, tmp_p
     ]
 
 
+def test_forced_proof_refresh_requires_explicit_acknowledgement(
+    monkeypatch,
+    tmp_path,
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    def fail_if_constructed(*args, **kwargs):
+        raise AssertionError("wallet must not load before refresh acknowledgement")
+
+    monkeypatch.setattr(cli, "Acorn", fail_if_constructed)
+    result = CliRunner().invoke(cli.repair_proofs, ["--refresh"])
+
+    assert result.exit_code == 1
+    assert "--refresh performs irreversible mint swaps" in result.output
+    assert "--refresh --confirm-refresh" in result.output
+
+
 def test_delete_record_requires_confirmation_before_loading_wallet(
     monkeypatch,
     tmp_path,

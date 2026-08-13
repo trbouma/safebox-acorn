@@ -199,7 +199,6 @@ MINTS = default_mints
 REPLICATE_RELAYS = []
 LOGGING_LEVEL = default_logging_level
 
-
 def write_config():
     persist_config(
         file_path,
@@ -432,6 +431,25 @@ def _format_proof_check(report: dict) -> str:
         )
 
     structural = report["structural"]
+    profiles = structural.get("hash_to_curve_profiles", {})
+    for profile in ("nut00", "legacy_acorn", "missing", "mismatch", "invalid"):
+        totals = profiles.get(profile, {})
+        if totals.get("proof_count"):
+            lines.append(
+                f"Hash-to-curve profile {profile}: {totals['amount']} sats in "
+                f"{totals['proof_count']} proofs"
+            )
+    legacy_check = report.get("legacy_identifier_check", {})
+    if legacy_check.get("proof_count"):
+        lines.append("Historical identifier states (diagnostic only):")
+        for state in ("UNSPENT", "SPENT", "PENDING", "UNKNOWN"):
+            totals = legacy_check.get("states", {}).get(state, {})
+            lines.append(
+                f"- {state}: {totals.get('amount', 0)} sats in "
+                f"{totals.get('proof_count', 0)} proofs"
+            )
+        for error in legacy_check.get("errors", []):
+            lines.append(f"Historical identifier warning: {error}")
     if structural["duplicate_proofs"]:
         lines.append(f"Structural warning: {structural['duplicate_proofs']} duplicate proofs")
     if structural["invalid_proofs"]:
@@ -1314,7 +1332,19 @@ def swap(consolidate):
 @click.command("repair-proofs", help="Prune spent proofs and rewrite wallet proof state")
 @click.option("--force", "-f", is_flag=True, default=False, help="Allow repair to clear the wallet if no usable proofs survive")
 @click.option("--refresh", is_flag=True, default=False, help="Refresh all proofs even when check-proofs reports clean state.")
-def repair_proofs(force, refresh):
+@click.option(
+    "--confirm-refresh",
+    is_flag=True,
+    default=False,
+    help="Acknowledge that refresh performs irreversible mint swaps.",
+)
+def repair_proofs(force, refresh, confirm_refresh):
+    if refresh and not confirm_refresh:
+        raise click.ClickException(
+            "--refresh performs irreversible mint swaps. Review 'acorn check-proofs' "
+            "first, then repeat with --refresh --confirm-refresh. Acorn will verify "
+            "the home relay before consuming proofs."
+        )
     acorn_obj = Acorn(nsec=NSEC, relays=RELAYS, mints=MINTS, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
     asyncio.run(acorn_obj.load_data())
     click.echo("Repair proofs")
@@ -1336,7 +1366,7 @@ def repair_proofs(force, refresh):
                 "Retry later or use a more reliable home relay before forcing "
                 "a full proof refresh."
             ) from exc
-        raise
+        raise click.ClickException(message) from exc
     click.echo(result_out)
 
 @click.command("check-proofs", help="Check proof state at each mint without changing the wallet")
@@ -1355,6 +1385,103 @@ def check_proofs(json_output):
         _emit_json(report)
     else:
         click.echo(_format_proof_check(report))
+
+
+@click.command(
+    "reconcile-proofs",
+    help="Remove only proofs conclusively reported as spent by their mints.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def reconcile_proofs(json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        mints=MINTS,
+        home_relay=HOME_RELAY,
+        logging_level=LOGGING_LEVEL,
+    )
+
+    async def run_reconciliation():
+        await acorn_obj.load_data()
+        return await acorn_obj.reconcile_stale_proofs()
+
+    try:
+        result = asyncio.run(run_reconciliation())
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+    click.echo("Proof reconciliation completed.")
+    click.echo(f"Removed spent proofs: {result['removed']}")
+    click.echo(f"Removed amount: {result['amount']} sats")
+    click.echo(f"Remaining balance: {result['balance']} sats")
+
+
+@click.command(
+    "discard-incompatible-proofs",
+    help="Discard non-NUT-00 proof state while preserving this Acorn and its records.",
+)
+@click.option(
+    "--confirm-amount",
+    required=True,
+    type=click.IntRange(min=1),
+    help="Exact incompatible sat amount acknowledged for permanent discard.",
+)
+@click.option(
+    "--reason",
+    default="NUT-00 development reset",
+    show_default=True,
+    help="Audit note written to transaction history.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def discard_incompatible_proofs(confirm_amount, reason, json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        mints=MINTS,
+        home_relay=HOME_RELAY,
+        logging_level=LOGGING_LEVEL,
+    )
+
+    async def run_discard():
+        await acorn_obj.load_data()
+        return await acorn_obj.discard_incompatible_proofs(
+            expected_amount=confirm_amount,
+            reason=reason,
+        )
+
+    if not json_output:
+        click.echo(
+            "This permanently removes incompatible relay-backed proofs. "
+            "It does not recover or replace their value."
+        )
+        click.echo(f"Acknowledged discard amount: {confirm_amount} sats")
+
+    try:
+        result = asyncio.run(run_discard())
+    except RuntimeError as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+    click.echo("Incompatible proof state discarded.")
+    click.echo(
+        f"Discarded: {result['discarded']['amount']} sats in "
+        f"{result['discarded']['proof_count']} proofs"
+    )
+    click.echo(
+        f"Retained: {result['retained']['amount']} sats in "
+        f"{result['retained']['proof_count']} proofs"
+    )
+    if not result.get("history_recorded", True):
+        click.echo(
+            "Warning: proof reset succeeded, but its transaction-history "
+            f"entry could not be written: {result.get('history_error')}"
+        )
+    click.echo("The Acorn key, configuration, records, and history were retained.")
 
 @click.command("pay", help="Payout funds to lightning address")
 @click.argument('amount', default=21)
@@ -1802,6 +1929,7 @@ def balance(json_output, show_mints, verify_mint_state):
             payload["mint_confirmed_balance"] = verification[
                 "mint_confirmed_unspent"
             ]["amount"]
+            payload["lightning_capacity_verified"] = verification["status"] == "clean"
         if show_mints:
             payload["mints"] = mint_balances
         _emit_json(payload)
@@ -1822,7 +1950,13 @@ def balance(json_output, show_mints, verify_mint_state):
                     f"Proof verification status: {verification['status']}. "
                     f"{verification['recommendation']}"
                 )
-        click.echo(_format_lightning_capacity(lightning_capacity))
+        if verification is not None and verification["status"] != "clean":
+            click.echo(
+                "Lightning payment capacity: unavailable until proof "
+                "verification is clean."
+            )
+        else:
+            click.echo(_format_lightning_capacity(lightning_capacity))
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))
 
@@ -2270,7 +2404,12 @@ def release_lock():
     click.echo("get lock")
     acorn_obj = Acorn(nsec=NSEC,relays=RELAYS,mints=MINTS,home_relay=HOME_RELAY)
     asyncio.run(acorn_obj.load_data()) 
-    asyncio.run(acorn_obj.release_lock()) 
+    result = asyncio.run(acorn_obj.release_lock())
+    if result and not result.get("released", True):
+        click.echo(
+            "Local lock released, but remote release could not be verified. "
+            f"The remote lease expires at {result.get('lease_expires_at')}."
+        )
 
 @click.command("issue_record", help="Issue private record")
 @click.argument('content', default="hello")
@@ -2526,6 +2665,8 @@ cli.add_command(deposit)
 cli.add_command(proofs)
 cli.add_command(swap)
 cli.add_command(check_proofs)
+cli.add_command(reconcile_proofs)
+cli.add_command(discard_incompatible_proofs)
 cli.add_command(repair_proofs)
 cli.add_command(pay)
 cli.add_command(reconcile_payments)

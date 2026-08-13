@@ -119,13 +119,67 @@ acorn check-proofs --json
 
 `check-proofs` loads the wallet's relay-backed state and calls each mint's
 Cashu `/v1/checkstate` endpoint. It reports wallet-visible proof totals and
-mint-reported `UNSPENT`, `SPENT`, `PENDING`, and `UNKNOWN` totals.
+mint-reported `UNSPENT`, `SPENT`, `PENDING`, and `UNKNOWN` totals. NUT-07
+checks only the supplied `Y` identifiers; it does not prove that a proof's
+signature will pass redemption. Acorn therefore also classifies cached proof
+identifiers as current NUT-00, historical Acorn, missing, or mismatched.
+Only NUT-00-compatible proofs reported `UNSPENT` are included in
+`mint_confirmed_unspent`. The unfiltered NUT-07 result remains available as
+`mint_reported_unspent` for diagnosis.
 
 The command is strictly read-only: it does not acquire the wallet lock, swap
 proofs, delete events, rewrite proof state, or create transaction history.
 Duplicate copies are queried only once so the mint-confirmed amount is not
 overstated. A pending, unknown, or unreachable state is reported as
 inconclusive and should be rechecked before running a repair.
+
+An `incompatible` result is different from stale state. Do not run payment,
+swap, refresh, repair, or pruning commands against those proofs. Preserve the
+relay events and contact the mint operator for a recovery or migration path.
+Ordinary proof repair cannot convert a legacy signature into a NUT-00 proof.
+
+During development, an operator who explicitly accepts losing incompatible
+value can reset only that proof state while preserving the Acorn key,
+configuration, records, compatible proofs, and history:
+
+```sh
+acorn discard-incompatible-proofs --confirm-amount 3925
+```
+
+The acknowledgement must exactly match the incompatible amount. The command
+performs a relay write/read preflight, republishes any retained NUT-00 proofs,
+publishes and verifies deletion of the old proof events, confirms the resulting
+proof set, and writes a type `X` audit entry. It does not recover, compensate,
+or replace the discarded value. A fresh deposit is required afterward.
+
+For the narrow stale-proof case, operators can remove only proofs that their
+mints conclusively report as `SPENT`:
+
+```sh
+acorn reconcile-proofs
+acorn reconcile-proofs --json
+```
+
+This command does not swap or refresh `UNSPENT` proofs. It refuses to mutate
+the wallet if a relevant mint response is pending, unknown, malformed, or
+unreachable, or if the proof identifiers are incompatible. After
+reconciliation, verify with `acorn balance --verify` before retrying a payment
+once—but retry only when verification reports `clean`.
+
+If a payment stops with `Proof publish could not be verified`, the preceding
+internal mint swap may already have succeeded even though the Lightning payment
+was never submitted. Do not immediately retry. Wait for relay indexing, then
+run:
+
+```sh
+acorn check-proofs
+acorn reconcile-proofs
+acorn balance --verify
+```
+
+The default exact-event readback window is 60 seconds and can be adjusted with
+`ACORN_RELAY_VERIFY_TIMEOUT_SECONDS`. Increasing it accommodates slower
+eventually consistent relays; it does not weaken exact event-ID verification.
 
 `acorn balance` labels its ordinary total as **relay-visible** because it is
 derived from encrypted proof events returned by the home relay. It does not
@@ -139,7 +193,15 @@ and consolidation remain operator decisions:
 
 ```sh
 acorn repair-proofs
+acorn repair-proofs --refresh --confirm-refresh
 ```
+
+The `--confirm-refresh` acknowledgement is required with `--refresh` because
+the operation consumes proofs at their mints before replacement proof events
+can be verified on the relay. Before any such mutation, the CLI performs a
+relay write/read preflight. Replacement events are signed once, republished
+idempotently in memory, and verified by exact event ID. Acorn does not create a
+local proof journal; encrypted operational state remains relay-backed.
 
 Payment, token issuance, and token acceptance are already mutating operations.
 Before they select or add value, Acorn reloads proof state and automatically
