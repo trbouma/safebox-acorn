@@ -69,6 +69,7 @@ def incoming_transfer_event(
     event_id: str,
     created_at: int,
     amount: int = 1,
+    comment: str = "",
 ) -> Event:
     return Event(
         id=event_id,
@@ -80,6 +81,7 @@ def incoming_transfer_event(
                 "token": serialized_token([proof(amount, event_id[:1])]),
                 "amount": amount,
                 "unit": "sat",
+                "comment": comment,
                 "payment_mode": "confirmed",
             }
         ),
@@ -159,6 +161,26 @@ def test_nearest_proof_amounts_reports_attainable_totals() -> None:
 
     assert lower == 10
     assert higher == 12
+
+
+@pytest.mark.asyncio
+async def test_incoming_preview_includes_sender_comment(monkeypatch) -> None:
+    acorn = wallet()
+    event = incoming_transfer_event(
+        acorn,
+        event_id="a" * 64,
+        created_at=123,
+        amount=5,
+        comment="Emergency supplies",
+    )
+    install_filtering_transfer_pool(monkeypatch, [event])
+
+    result = await acorn.sweep_ecash_transfers(preview_only=True)
+
+    assert result["previewed_count"] == 1
+    assert result["previewed"][0]["amount"] == 5
+    assert result["previewed"][0]["comment"] == "Emergency supplies"
+    acorn.set_wallet_info.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -4993,6 +4993,7 @@ class Acorn:
                         "timestamp": event_ts,
                         "amount": token_amount,
                         "unit": str(payload.get("unit") or "sat").lower(),
+                        "comment": str(payload.get("comment") or "").strip(),
                         "payment_mode": payment_mode,
                     })
                     continue
