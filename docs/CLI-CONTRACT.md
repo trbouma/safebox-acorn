@@ -181,6 +181,13 @@ The default exact-event readback window is 60 seconds and can be adjusted with
 `ACORN_RELAY_VERIFY_TIMEOUT_SECONDS`. Increasing it accommodates slower
 eventually consistent relays; it does not weaken exact event-ID verification.
 
+Deposit and payment history entries are encrypted kind `7377` events on the
+same home relay. Acorn verifies each newly written history event by exact ID
+and retries the same signature during the relay-verification window. History is
+an audit view rather than the wallet balance: a history-write error must be
+investigated, but the financial operation must not be repeated solely to create
+the missing entry.
+
 `acorn balance` labels its ordinary total as **relay-visible** because it is
 derived from encrypted proof events returned by the home relay. It does not
 claim that every visible proof remains spendable. `acorn balance --verify`

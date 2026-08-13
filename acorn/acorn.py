@@ -2504,9 +2504,11 @@ class Acorn:
                                 invoice:str=None,
                                 payment_preimage: str = None,
                                 payment_hash: str = None,
-                                description_hash: str = None
+                                description_hash: str = None,
+                                verify: bool = True,
+                                verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
                                 ):
-        self.logger.debug("Add tx history")
+        self.logger.debug("op=add_tx_history status=start type=%s amount=%s", tx_type, amount)
         my_enc = NIP44Encrypt(self.k)
         if comment == None: #sometimes none get passed in
             comment = ""
@@ -2538,15 +2540,64 @@ class Acorn:
                                 )
         tx_history_str = json.dumps(tx_history.model_dump())
         tx_history_encrypt = my_enc.encrypt(tx_history_str,to_pub_k=self.pubkey_hex)
+        n_msg = Event(
+                    kind=7377,
+                    content=tx_history_encrypt,
+                    pub_key=self.pubkey_hex)
+        n_msg.sign(self.privkey_hex)
+        event_id = str(n_msg.id)
+
         async with ClientPool([self.home_relay]) as c:
-       
-            n_msg = Event(                        
-                        kind=7377,
-                        content=tx_history_encrypt,
-                        pub_key=self.pubkey_hex)
-            n_msg.sign(self.privkey_hex)
             c.publish(n_msg)
             await asyncio.sleep(0.2)
+
+        if verify:
+            verify_filter = [{
+                "limit": 1,
+                "authors": [self.pubkey_hex],
+                "kinds": [7377],
+                "ids": [event_id],
+            }]
+            deadline = monotonic() + max(0.5, float(verify_timeout))
+            observed = False
+            last_error = None
+            while monotonic() < deadline:
+                try:
+                    async with ClientPool([self.home_relay]) as c:
+                        readback = await c.query(verify_filter)
+                    observed = any(
+                        str(event.id) == event_id for event in readback
+                    )
+                    if observed:
+                        break
+                    # Retry the same signed event. Its ID is unchanged, so this
+                    # is idempotent even when the first publish was accepted.
+                    async with ClientPool([self.home_relay]) as c:
+                        c.publish(n_msg)
+                except Exception as exc:
+                    last_error = exc
+                await asyncio.sleep(0.4)
+
+            if not observed:
+                detail = f" Last relay error: {last_error}" if last_error else ""
+                raise RuntimeError(
+                    "Transaction-history publish could not be verified on: "
+                    f"{self.home_relay}. Event ID: {event_id}. The funds state "
+                    "is unaffected; do not repeat the financial operation."
+                    + detail
+                )
+
+        self.logger.debug(
+            "op=add_tx_history status=complete event_id=%s verified=%s",
+            event_id,
+            verify,
+        )
+        return {
+            "status": "OK",
+            "event_id": event_id,
+            "relay": self.home_relay,
+            "verified": bool(verify),
+        }
             
 
 

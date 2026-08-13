@@ -436,6 +436,20 @@ settle, run `acorn check-proofs`, and use `acorn reconcile-proofs` only if the
 mint conclusively reports an obsolete input as spent. The error includes the
 replacement event IDs so an operator can investigate the relay directly.
 
+### Transaction history is a verified audit view
+
+Transaction history is stored separately from bearer proof state as encrypted
+kind `7377` events. A missing history event does not remove funds or alter mint
+spend state, but silently losing the audit entry makes the wallet misleading.
+Acorn therefore signs each history event once, republishes that exact event
+while waiting, and requires readback of its event ID using the same configurable
+relay-verification window. Failure is reported explicitly and must never cause
+the associated deposit or payment to be repeated.
+
+Proof events remain authoritative for the relay-visible wallet, and the mint
+remains authoritative for spend status. Transaction history explains observed
+operations; it is not used to reconstruct or calculate the proof balance.
+
 This boundary has an unavoidable consequence: no client can make an
 irreversible mint swap and an eventually consistent relay write atomic. If the
 mint succeeds and every configured relay remains unavailable until the process
