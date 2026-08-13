@@ -431,6 +431,18 @@ Receiving ecash is an explicit mutating operation. It may accept a token through
 the mint, refresh proofs, write updated kind `7375` proof state, and write kind
 `7377` transaction history. It must not be hidden inside `acorn balance`.
 
+Pending incoming value can be inspected without performing that mutation:
+
+```sh
+acorn receive-ecash --preview
+acorn receive-ecash --preview --json
+```
+
+Preview mode unwraps addressed transfer events and reports
+`previewed_count` and `previewed_amount`. It does not submit proofs to a mint,
+change wallet proof state, write transaction history, or advance the stored
+receive cursor.
+
 When `--receive-key` is supplied, Acorn obtains transient receiving material
 through a hidden prompt. `--receive-nsec-file` provides the protected
 file/stdin automation path. The key may be used to unwrap incoming transfer

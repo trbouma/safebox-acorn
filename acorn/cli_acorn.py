@@ -1969,8 +1969,9 @@ def balance(json_output, show_mints, verify_mint_state):
 @click.option("--receive-nsec-file", default=None, metavar="PATH", help="Read a transient receiving nsec from a chmod-600 file, or '-' for stdin.")
 @click.option("--event-id", default=None, help="Receive a specific kind 1059 gift-wrap or direct kind 7378 event id; bypasses recipient tag and cursor query.")
 @click.option("--no-advance", is_flag=True, help="Do not advance the stored receive cursor.")
+@click.option("--preview", is_flag=True, help="Show pending incoming funds without accepting proofs or advancing the cursor.")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
-def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_file, event_id, no_advance, json_output):
+def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_file, event_id, no_advance, preview, json_output):
     receive_nsec = _private_key_from_secure_input(receive_key, receive_nsec_file)
     if receive_nsec is not None:
         try:
@@ -1987,9 +1988,10 @@ def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_
                 relays=sweep_relays,
                 limit=page_size,
                 max_pages=max_pages,
-                advance_cursor=not no_advance,
+                advance_cursor=False if preview else not no_advance,
                 receive_nsec=receive_nsec,
                 event_id=event_id,
+                preview_only=preview,
             )
         )
     except Exception as exc:
@@ -2017,6 +2019,18 @@ def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_
         f"Queried {result['queried']} transfer event(s) across "
         f"{result.get('page_count', 1)} relay page(s)."
     )
+    if preview:
+        previewed_count = int(result.get("previewed_count", 0))
+        previewed_amount = int(result.get("previewed_amount", 0))
+        if previewed_count:
+            click.echo(
+                f"Pending incoming funds: {previewed_amount} sats in "
+                f"{previewed_count} transfer event(s)."
+            )
+        else:
+            click.echo("No pending incoming funds found.")
+        click.echo("Preview only: wallet proofs, history, and receive cursor were unchanged.")
+        return
     confirmed_count = int(result.get("confirmed_count", result["accepted_count"]))
     provisional_count = int(result.get("provisional_count", 0))
     if confirmed_count:

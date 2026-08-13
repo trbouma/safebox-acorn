@@ -369,6 +369,12 @@ Receive opportunistically before showing balance:
 acorn receive-ecash
 ```
 
+Preview pending incoming funds without accepting them or advancing the cursor:
+
+```sh
+acorn receive-ecash --preview
+```
+
 Receive from a specific relay:
 
 ```sh

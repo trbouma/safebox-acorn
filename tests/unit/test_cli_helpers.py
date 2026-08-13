@@ -222,6 +222,38 @@ def test_init_help_does_not_offer_broken_longseed_option(monkeypatch, tmp_path):
     assert "--words 12|24" in result.output
 
 
+def test_receive_ecash_preview_is_read_only(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    sweep = AsyncMock(
+        return_value={
+            "queried": 1,
+            "page_count": 1,
+            "previewed_count": 1,
+            "previewed_amount": 25,
+        }
+    )
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            pass
+
+        async def load_data(self):
+            return None
+
+        sweep_ecash_transfers = sweep
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(cli.receive_ecash, ["--preview"])
+
+    assert result.exit_code == 0
+    assert "Pending incoming funds: 25 sats in 1 transfer event(s)." in result.output
+    assert "wallet proofs, history, and receive cursor were unchanged" in result.output
+    sweep.assert_awaited_once()
+    assert sweep.await_args.kwargs["preview_only"] is True
+    assert sweep.await_args.kwargs["advance_cursor"] is False
+
+
 @pytest.mark.parametrize(("words", "word_count"), [("12", 12), ("24", 24)])
 def test_init_can_generate_selected_mnemonic_length(
     monkeypatch, tmp_path, words, word_count
