@@ -66,6 +66,17 @@ A Safebox finalization action first collects addressed relay transfers into the
 pending journal without contacting a mint, then runs reconciliation as a
 separate phase. A mint outage or timeout therefore cannot interrupt durable
 collection.
+
+When two or more pending receipts use the same sat-denominated mint, Acorn can
+combine their bearer proofs into one finalization swap. This is particularly
+useful for application-gateway payments, where the service Acorn issues each
+transfer from the configured application mint. Replacement proofs are
+published and verified once, while receipt status and transaction history stay
+distinct for each payment. Mixed-mint and single-receipt work remains
+individual. A conclusive spent-token rejection is also isolated through the
+individual path; an unavailable mint leaves the whole batch pending rather than
+creating repeated failing requests.
+
 A successful refresh adds replacement proofs to spendable balance, records a
 confirmed credit in transaction history, marks the receipt `mint-confirmed`,
 and removes the bearer token from the pending journal. If the mint is

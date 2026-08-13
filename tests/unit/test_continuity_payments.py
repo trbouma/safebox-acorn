@@ -42,6 +42,9 @@ def wallet() -> Acorn:
     result.logger = logging.getLogger("continuity-payment-test")
     result.acquire_lock = AsyncMock()
     result.release_lock = AsyncMock()
+    result._reconcile_spent_proofs_locked = AsyncMock(
+        return_value={"removed": 0, "amount": 0, "balance": 0}
+    )
     result._load_proofs = AsyncMock()
     result.write_proofs = AsyncMock()
     result.add_tx_history = AsyncMock()
@@ -267,6 +270,33 @@ async def test_get_continuity_receipts_hides_bearer_tokens_and_sorts_newest() ->
 
 
 @pytest.mark.asyncio
+async def test_update_continuity_receipts_batch_uses_one_verified_write() -> None:
+    acorn = wallet()
+    existing = [
+        {"event_id": "event-1", "status": "provisional", "token": "secret-a"},
+        {"event_id": "event-2", "status": "provisional", "token": "secret-b"},
+        {"event_id": "event-3", "status": "provisional", "token": "secret-c"},
+    ]
+    acorn.get_wallet_info = AsyncMock(return_value=json.dumps(existing))
+
+    updated = await acorn._update_continuity_receipts_batch(
+        ["event-1", "event-2"],
+        status="mint-confirmed",
+        token=None,
+    )
+
+    assert {item["event_id"] for item in updated} == {"event-1", "event-2"}
+    written = json.loads(acorn.set_wallet_info.await_args.args[1])
+    assert written[0]["status"] == "mint-confirmed"
+    assert written[0]["token"] is None
+    assert written[1]["status"] == "mint-confirmed"
+    assert written[1]["token"] is None
+    assert written[2] == existing[2]
+    assert acorn.set_wallet_info.await_count == 1
+    assert acorn.set_wallet_info.await_args.kwargs["verify"] is True
+
+
+@pytest.mark.asyncio
 async def test_reconcile_continuity_receipts_confirms_and_clears_bearer_token() -> None:
     acorn = wallet()
     receipt = {
@@ -296,6 +326,164 @@ async def test_reconcile_continuity_receipts_confirms_and_clears_bearer_token() 
     assert update.args == ("event-1",)
     assert update.kwargs["status"] == "mint-confirmed"
     assert update.kwargs["token"] is None
+
+
+@pytest.mark.asyncio
+async def test_accept_continuity_token_batch_uses_one_swap_and_proof_write() -> None:
+    acorn = wallet()
+    receipts = [
+        {
+            "event_id": "event-1",
+            "amount": 5,
+            "token": serialized_token([proof(1, "1"), proof(4, "4")]),
+        },
+        {
+            "event_id": "event-2",
+            "amount": 2,
+            "token": serialized_token([proof(2, "2")]),
+        },
+    ]
+    refreshed = [proof(1, "new-1"), proof(2, "new-2"), proof(4, "new-4")]
+    acorn.swap_proofs = AsyncMock(return_value=refreshed)
+    acorn.add_proofs_obj = AsyncMock(return_value={"verified": True})
+
+    result = await acorn.accept_continuity_token_batch(receipts)
+
+    assert result["receipt_count"] == 2
+    assert result["amount"] == 7
+    assert result["receipt_amounts"] == {"event-1": 5, "event-2": 2}
+    assert acorn.balance == 7
+    assert acorn.swap_proofs.await_count == 1
+    assert len(acorn.swap_proofs.await_args.args[0]) == 3
+    acorn.add_proofs_obj.assert_awaited_once_with(refreshed, verify=True)
+    acorn.acquire_lock.assert_awaited_once()
+    acorn.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_continuity_receipts_batches_same_mint() -> None:
+    acorn = wallet()
+    receipts = [
+        {
+            "event_id": "event-1",
+            "sender_pubkey": "22" * 32,
+            "amount": 5,
+            "unit": "sat",
+            "comment": "first",
+            "payment_mode": "confirmed",
+            "status": "provisional",
+            "token": serialized_token([proof(1, "1"), proof(4, "4")]),
+        },
+        {
+            "event_id": "event-2",
+            "sender_pubkey": "33" * 32,
+            "amount": 2,
+            "unit": "sat",
+            "comment": "second",
+            "payment_mode": "confirmed",
+            "status": "provisional",
+            "token": serialized_token([proof(2, "2")]),
+        },
+    ]
+    acorn.get_continuity_receipts = AsyncMock(return_value=receipts)
+    acorn.accept_continuity_token_batch = AsyncMock(
+        return_value={
+            "status": "OK",
+            "mint": MINT,
+            "receipt_count": 2,
+            "amount": 7,
+            "receipt_amounts": {"event-1": 5, "event-2": 2},
+        }
+    )
+    acorn._update_continuity_receipts_batch = AsyncMock(return_value=receipts)
+    acorn.accept_token = AsyncMock()
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 2
+    assert result["confirmed_amount"] == 7
+    assert result["pending_count"] == 0
+    acorn.accept_continuity_token_batch.assert_awaited_once_with(receipts)
+    batch_update = acorn._update_continuity_receipts_batch.await_args
+    assert batch_update.args[0] == ["event-1", "event-2"]
+    assert batch_update.kwargs["status"] == "mint-confirmed"
+    assert batch_update.kwargs["token"] is None
+    acorn.accept_token.assert_not_awaited()
+    assert acorn.add_tx_history.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_reconcile_batch_mint_outage_keeps_entire_group_pending() -> None:
+    acorn = wallet()
+    receipts = [
+        {
+            "event_id": "event-1",
+            "amount": 5,
+            "unit": "sat",
+            "status": "provisional",
+            "token": serialized_token([proof(1, "1"), proof(4, "4")]),
+        },
+        {
+            "event_id": "event-2",
+            "amount": 2,
+            "unit": "sat",
+            "status": "provisional",
+            "token": serialized_token([proof(2, "2")]),
+        },
+    ]
+    acorn.get_continuity_receipts = AsyncMock(return_value=receipts)
+    acorn.accept_continuity_token_batch = AsyncMock(
+        side_effect=RuntimeError("mint gateway unavailable")
+    )
+    acorn._update_continuity_receipts_batch = AsyncMock()
+    acorn.accept_token = AsyncMock()
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 0
+    assert result["pending_count"] == 2
+    assert result["pending_amount"] == 7
+    assert all("mint gateway unavailable" in item["reason"] for item in result["pending"])
+    acorn._update_continuity_receipts_batch.assert_not_awaited()
+    acorn.accept_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reconcile_spent_batch_falls_back_to_individual_isolation() -> None:
+    acorn = wallet()
+    receipts = [
+        {
+            "event_id": "event-valid",
+            "amount": 5,
+            "unit": "sat",
+            "status": "provisional",
+            "token": serialized_token([proof(1, "1"), proof(4, "4")]),
+        },
+        {
+            "event_id": "event-spent",
+            "amount": 2,
+            "unit": "sat",
+            "status": "provisional",
+            "token": serialized_token([proof(2, "2")]),
+        },
+    ]
+    acorn.get_continuity_receipts = AsyncMock(return_value=receipts)
+    acorn.accept_continuity_token_batch = AsyncMock(
+        side_effect=RuntimeError("Token already spent (code 11001)")
+    )
+    acorn.accept_token = AsyncMock(
+        side_effect=[("accepted", 5), RuntimeError("Token already spent")]
+    )
+    acorn._update_continuity_receipt = AsyncMock(return_value={})
+    acorn.get_tx_history = AsyncMock(return_value=[])
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["confirmed_count"] == 1
+    assert result["confirmed_amount"] == 5
+    assert result["terminal_error_count"] == 1
+    assert result["terminal_error_amount"] == 2
+    assert acorn.accept_token.await_count == 2
 
 
 @pytest.mark.asyncio

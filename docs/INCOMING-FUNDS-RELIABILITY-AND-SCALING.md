@@ -30,6 +30,29 @@ The incoming-funds path follows these rules:
 The wallet balance changes only after the mint accepts and refreshes the
 received proofs. Relay visibility alone is never treated as spendable balance.
 
+## Same-mint batch finalization
+
+Two or more pending receipts issued by the same mint and denominated in sats
+can be finalized through one mint swap. This is the normal gateway case: a
+Safebox service Acorn delivers several independently journaled transfers using
+the configured application mint. Acorn validates every token, rejects duplicate
+proofs, combines the inputs, and requires the refreshed output amount to equal
+the combined input amount.
+
+The batch holds one wallet lock, performs one proof refresh, and publishes the
+combined replacement proofs through one verified relay-persistence cycle. Only
+after those proofs are readable does Acorn replace the receipt journal once to
+mark every constituent receipt mint-confirmed and remove its bearer token. Each
+receipt still receives its own transaction-history credit, preserving the
+user-facing payment trail even though proof maintenance was consolidated.
+
+A mint outage or ambiguous proof-persistence failure leaves the entire group
+pending and does not fall back to repeated mint requests. A conclusive
+already-spent response falls back to individual processing so Acorn can isolate
+the bad receipt and credit unaffected transfers. Receipts from different mints,
+single receipts, unsupported units, and tokens that cannot be safely classified
+continue through the established individual path.
+
 ## Checkpoint representation
 
 The reserved kind `37376` record labelled `ecash_transfer_latest` contains:
@@ -109,6 +132,10 @@ single-page backlog risks, but they do not make every data structure unbounded:
 - transaction history and terminal-error records grow over time;
 - multiple processes must not independently mutate one Acorn without effective
   wallet locking and a single-writer policy; and
+- batching reduces network and relay round trips but increases the amount of
+  value exposed to an interruption between mint acceptance and final receipt
+  journaling; interruption testing and durable swap recovery remain release
+  requirements;
 - changing relay pools can expose older events that precede the current
   checkpoint and therefore require an explicit replay or migration operation;
   and

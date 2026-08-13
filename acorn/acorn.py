@@ -4252,6 +4252,187 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+    async def _update_continuity_receipts_batch(
+        self,
+        event_ids: List[str],
+        **changes: Any,
+    ) -> List[Dict[str, Any]]:
+        """Update several receipts through one verified journal replacement."""
+
+        normalized_ids = {str(event_id) for event_id in event_ids if event_id}
+        if not normalized_ids:
+            return []
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CONTINUITY_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Continuity receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Continuity receipt journal has an invalid format")
+
+            updated: List[Dict[str, Any]] = []
+            found_ids: set[str] = set()
+            for receipt in receipts:
+                event_id = str(receipt.get("event_id") or "")
+                if event_id not in normalized_ids:
+                    continue
+                receipt.update(changes)
+                found_ids.add(event_id)
+                updated.append(dict(receipt))
+
+            missing_ids = normalized_ids - found_ids
+            if missing_ids:
+                raise RuntimeError(
+                    "Continuity receipt batch is incomplete; missing: "
+                    + ", ".join(sorted(missing_ids))
+                )
+
+            await self.set_wallet_info(
+                CONTINUITY_RECEIPTS_LABEL,
+                json.dumps(receipts, separators=(",", ":")),
+                verify=True,
+            )
+            return updated
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+    @staticmethod
+    def _continuity_token_details(receipt: Dict[str, Any]) -> Dict[str, Any]:
+        """Parse one receipt token without changing wallet or relay state."""
+
+        token = str(receipt.get("token") or "")
+        token_mints: set[str] = set()
+        proofs: List[Proof] = []
+        if token.startswith("cashuB"):
+            token_obj = TokenV4.deserialize(token)
+            proofs = list(token_obj.proofs)
+            token_unit = str(token_obj.unit or "sat").lower()
+            if token_obj.mint:
+                token_mints.add(normalize_mint_url(str(token_obj.mint)))
+        elif token.startswith("cashuA"):
+            token_obj = TokenV3.deserialize(token)
+            token_unit = str(token_obj.unit or "sat").lower()
+            for token_group in token_obj.token:
+                proofs.extend(token_group.proofs)
+                if token_group.mint:
+                    token_mints.add(normalize_mint_url(str(token_group.mint)))
+        else:
+            raise ValueError("Not a valid cashu token format")
+
+        if len(token_mints) != 1:
+            raise ValueError("Cashu token must identify exactly one issuing mint")
+        if not proofs:
+            raise ValueError("Cashu token contains no proofs")
+
+        amount = sum(int(proof.amount) for proof in proofs)
+        claimed_amount = int(receipt.get("amount", amount))
+        if amount <= 0 or claimed_amount != amount:
+            raise ValueError("Continuity Payment amount does not match its proofs")
+        receipt_unit = str(receipt.get("unit") or "sat").lower()
+        if token_unit != "sat" or receipt_unit != token_unit:
+            raise ValueError("Continuity token batch supports sat-denominated proofs only")
+        return {
+            "mint": next(iter(token_mints)),
+            "proofs": proofs,
+            "amount": amount,
+            "unit": token_unit,
+        }
+
+    async def accept_continuity_token_batch(
+        self,
+        receipts: List[Dict[str, Any]],
+    ) -> Dict[str, Any]:
+        """Refresh same-mint receipt tokens through one mint swap and proof write."""
+
+        if len(receipts) < 2:
+            raise ValueError("A continuity token batch requires at least two receipts")
+
+        mint: str | None = None
+        incoming_proofs: List[Proof] = []
+        receipt_amounts: Dict[str, int] = {}
+        proof_identities: set[tuple[str, str]] = set()
+        for receipt in receipts:
+            event_id = str(receipt.get("event_id") or "")
+            if not event_id:
+                raise ValueError("Continuity receipt is missing its event id")
+            details = self._continuity_token_details(receipt)
+            receipt_mint = str(details["mint"])
+            if mint is None:
+                mint = receipt_mint
+            elif receipt_mint != mint:
+                raise ValueError("Continuity token batch contains multiple mints")
+            receipt_amounts[event_id] = int(details["amount"])
+            for proof in details["proofs"]:
+                identity = (str(proof.id or ""), str(proof.secret))
+                if identity in proof_identities:
+                    raise ValueError("Continuity token batch contains duplicate proofs")
+                proof_identities.add(identity)
+                incoming_proofs.append(proof)
+
+        if mint is None:
+            raise ValueError("Continuity token batch has no issuing mint")
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            await self._reconcile_spent_proofs_locked()
+            for proof in incoming_proofs:
+                self.known_mints[proof.id] = mint
+            refreshed_proofs = await self.swap_proofs(incoming_proofs)
+            if not refreshed_proofs:
+                raise RuntimeError("Mint batch swap returned no refreshed proofs")
+            incoming_amount = sum(int(proof.amount) for proof in incoming_proofs)
+            refreshed_amount = sum(int(proof.amount) for proof in refreshed_proofs)
+            if refreshed_amount != incoming_amount:
+                raise RuntimeError(
+                    "Mint batch swap returned a different proof amount "
+                    f"({refreshed_amount} != {incoming_amount})"
+                )
+            for proof in refreshed_proofs:
+                self.known_mints[proof.id] = mint
+            await self.add_proofs_obj(refreshed_proofs, verify=True)
+            self.proofs = self._deduplicate_proofs(
+                [*self.proofs, *refreshed_proofs]
+            )
+            self.balance = sum(proof.amount for proof in self.proofs)
+        except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as exc:
+            self.logger.error(
+                "op=accept_continuity_token_batch status=failed receipts=%s error=%s",
+                len(receipts),
+                exc,
+            )
+            raise RuntimeError(
+                f"Unable to accept continuity token batch safely: {exc}"
+            ) from exc
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+        total_amount = sum(receipt_amounts.values())
+        self.logger.info(
+            "op=accept_continuity_token_batch status=success receipts=%s amount=%s mint=%s",
+            len(receipts),
+            total_amount,
+            mint,
+        )
+        return {
+            "status": "OK",
+            "mint": mint,
+            "receipt_count": len(receipts),
+            "amount": total_amount,
+            "receipt_amounts": receipt_amounts,
+            "proof_count": len(refreshed_proofs),
+        }
+
     @staticmethod
     def _token_already_spent_error(error: object) -> bool:
         """Return whether a mint conclusively rejected a bearer token as spent."""
@@ -4352,8 +4533,126 @@ class Acorn:
         confirmed: List[Dict[str, Any]] = []
         pending: List[Dict[str, Any]] = []
         terminal_errors: List[Dict[str, Any]] = []
+        processed_event_ids: set[str] = set()
+
+        # Gateway transfers normally arrive as several independently journaled
+        # tokens from one application mint. Refresh each same-mint group with a
+        # single swap, then replace the receipt journal once. A connectivity or
+        # relay-persistence failure leaves the entire group pending. Only a
+        # conclusive spent-token rejection falls back to the per-receipt path so
+        # the offending transfer can be isolated without blocking valid ones.
+        batch_groups: Dict[str, List[Dict[str, Any]]] = {}
+        for receipt in receipts:
+            try:
+                details = self._continuity_token_details(receipt)
+            except Exception:
+                # Classification is opportunistic. The established individual
+                # path below owns detailed validation and error handling.
+                continue
+            batch_groups.setdefault(str(details["mint"]), []).append(receipt)
+
+        for mint, batch_receipts in batch_groups.items():
+            if len(batch_receipts) < 2:
+                continue
+            batch_event_ids = [
+                str(receipt.get("event_id") or "")
+                for receipt in batch_receipts
+            ]
+            try:
+                batch_result = await self.accept_continuity_token_batch(batch_receipts)
+                confirmed_at = int(time())
+                await self._update_continuity_receipts_batch(
+                    batch_event_ids,
+                    status="mint-confirmed",
+                    confirmed_at=confirmed_at,
+                    token=None,
+                    last_error=None,
+                    batch_mint=mint,
+                    batch_receipt_count=len(batch_receipts),
+                )
+            except Exception as exc:
+                reason = str(exc).strip()
+                if self._token_already_spent_error(reason):
+                    self.logger.warning(
+                        "op=reconcile_continuity_receipts_batch "
+                        "status=fallback_individual mint=%s receipts=%s error=%s",
+                        mint,
+                        len(batch_receipts),
+                        reason,
+                    )
+                    continue
+                self.logger.warning(
+                    "op=reconcile_continuity_receipts_batch status=pending "
+                    "mint=%s receipts=%s error=%s",
+                    mint,
+                    len(batch_receipts),
+                    reason,
+                )
+                for receipt in batch_receipts:
+                    event_id = str(receipt.get("event_id") or "")
+                    processed_event_ids.add(event_id)
+                    pending.append({
+                        "event_id": event_id,
+                        "amount": int(receipt.get("amount") or 0),
+                        "reason": reason,
+                    })
+                continue
+
+            receipt_amounts = batch_result.get("receipt_amounts", {})
+            for receipt in batch_receipts:
+                event_id = str(receipt.get("event_id") or "")
+                amount = int(receipt_amounts.get(event_id, receipt.get("amount") or 0))
+                payment_mode = str(receipt.get("payment_mode") or "continuity").lower()
+                if payment_mode == "continuity":
+                    history_comment = (
+                        "continuity payment confirmed: "
+                        + str(receipt.get("comment") or "incoming payment")
+                    )
+                else:
+                    sender_pubkey = str(receipt.get("sender_pubkey") or "")
+                    history_comment = (
+                        f"funds transfer received from {sender_pubkey[:12]}: "
+                        + str(receipt.get("comment") or "incoming payment")
+                    )
+                try:
+                    await self.add_tx_history(
+                        tx_type="C",
+                        amount=amount,
+                        comment=history_comment,
+                        tendered_amount=receipt.get("amount"),
+                        tendered_currency=str(receipt.get("unit") or "sat").upper(),
+                        description_hash=f"cashu-receipt:{event_id}",
+                    )
+                except Exception as history_exc:
+                    self.logger.error(
+                        "op=reconcile_continuity_receipts_batch "
+                        "status=tx_history_failed event_id=%s error=%s",
+                        event_id,
+                        history_exc,
+                    )
+                processed_event_ids.add(event_id)
+                confirmed.append({
+                    "event_id": event_id,
+                    "amount": amount,
+                    "message": (
+                        f"Successfully accepted {amount} sats in a batch of "
+                        f"{len(batch_receipts)} transfers"
+                    ),
+                    "batch": True,
+                    "mint": mint,
+                })
+            self.logger.info(
+                "op=reconcile_continuity_receipts_batch status=success "
+                "mint=%s receipts=%s amount=%s",
+                mint,
+                len(batch_receipts),
+                int(batch_result.get("amount", 0)),
+            )
+
         for receipt in receipts:
             event_id = str(receipt.get("event_id") or "")
+            if event_id in processed_event_ids:
+                continue
             token = str(receipt.get("token") or "")
             if not event_id or not token:
                 pending.append({
