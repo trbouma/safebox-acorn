@@ -2,13 +2,14 @@
 
 ## Product promise
 
-**Mainstay is a local-first application for records, identity, and payments
-that keeps working across connected and disrupted conditions.**
+**Mainstay is a local-first application for records, identity, payments, and
+community resource coordination that keeps working across connected and
+disrupted conditions.**
 
-It gives individuals and communities one dependable place to manage the
-information and value they need to continue operating. Hosted services can
-assist, but the user experience should not disappear when a provider, mint, or
-wider network becomes unavailable.
+It gives individuals, organizations, and communities one dependable place to
+manage the information and value they need to continue operating. Hosted
+services can assist, but the user experience should not disappear when a
+provider, mint, or wider network becomes unavailable.
 
 ![Mainstay logo](./assets/mainstay-logo.svg)
 
@@ -35,6 +36,9 @@ family of independently useful components:
 - **Acorn** provides portable keys, funds, records, signing, and recovery.
 - **Grove** provides local-first encrypted blob storage.
 - **Spurline** provides local event continuity and synchronization.
+- **Clear** provides optional local-first currencies and voucher systems for
+  organizations and communities that want an internal economy without Bitcoin
+  or Lightning.
 
 Mainstay does not become the authority or system of record. It presents and
 coordinates the authority, evidence, and state preserved by the underlying
@@ -60,9 +64,13 @@ hardware-backed controls, and an appliance-like operating model.
    and evidence outside the application boundary.
 4. **One experience across modes.** Do not turn disruption into a separate
    emergency product or unfamiliar workflow.
-5. **Useful components, coherent whole.** Keep Safebox, Acorn, Grove, and
-   Spurline independently testable and replaceable while making them feel like
-   one product to the user.
+5. **Useful components, coherent whole.** Keep Safebox, Acorn, Grove, Spurline,
+   and Clear independently testable and replaceable while making them feel
+   coherent to the user.
+6. **Bounded economies remain bounded.** Present each Clear currency with its
+   issuer, policy, recognition network, and settlement promise. Never imply
+   that separate organizational currencies are interchangeable or legal
+   tender.
 
 ## Near-term direction
 
@@ -77,6 +85,7 @@ The initial Mainstay experience should prioritize:
 - a clear continuity-mode indicator;
 - confirmed balance and pending transaction finalization;
 - local Spurline and Grove integration;
+- optional Clear currency discovery, distinct balances, and voucher workflows;
 - recovery, migration, health, and synchronization visibility.
 
 The goal is calm capability: records and payments remain understandable and
@@ -88,3 +97,4 @@ usable when conditions change.
 - [Continuity Payments](CONTINUITY-PAYMENTS-DESIGN.md)
 - [Lockbox External Dependencies and Offline Transfer](LOCKBOX-EXTERNAL-DEPENDENCIES-AND-OFFLINE-TRANSFER.md)
 - [Acorn Product North Star](ACORN-PRODUCT-NORTH-STAR.md)
+- [Clear](https://trbouma.github.io/clear/)

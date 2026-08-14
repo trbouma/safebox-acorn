@@ -1,13 +1,14 @@
 ---
 title: Mainstay and Lockbox Product Vision
-description: How the Mainstay application and Lockbox appliance bring Acorn, Safebox Web, Grove, and Spurline together.
+description: How Mainstay and Lockbox bring Acorn, Safebox Web, Grove, Spurline, and optional Clear currencies together.
 ---
 
 # Mainstay and Lockbox Product Vision
 
 **Mainstay** is the future unified local-first application for records,
-identity, payments, and continuity. **Lockbox** is the hardware-first appliance
-that gives Mainstay and its supporting services a dedicated local home.
+identity, payments, community resource coordination, and continuity.
+**Lockbox** is the hardware-first appliance that gives Mainstay and its
+supporting services a dedicated local home.
 
 The product family is intentionally made of sibling projects. Each one should
 remain useful on its own, while also fitting into a larger local appliance
@@ -21,6 +22,10 @@ without becoming a separate emergency-only app.
 The existing sibling architecture is the foundation Mainstay will unify:
 
 ![Current Lockbox component architecture](assets/images/lockbox-family-architecture.svg)
+
+Clear is the newest optional sibling and is not yet shown in this first
+architecture graphic. It sits beside Grove and Spurline as a local service that
+Mainstay can use and Lockbox can host.
 
 ## Continuity at a glance
 
@@ -39,6 +44,8 @@ and what to do when external services are unavailable.
   supporting services.
 - **Continuity** is the capability: records and payments keep working across
   connected, local, mobile, and community conditions.
+- **Clear** is the optional local mint for organizations that want bounded
+  currencies or voucher systems without Bitcoin or Lightning.
 
 Mainstay can also run without dedicated Lockbox hardware. Lockbox is the
 integrated deployment for people and communities that want durable local
@@ -94,6 +101,18 @@ mesh synchronization.
 
 </article>
 
+<article class="acorn-card" markdown>
+
+### Clear
+
+An optional local-first Cashu mint for organization-defined points, vouchers,
+and internal economies without Bitcoin or Lightning settlement.
+
+[Clear site](https://trbouma.github.io/clear/) ·
+[Clear source](https://github.com/trbouma/clear)
+
+</article>
+
 </div>
 
 ### Mainstay
@@ -104,9 +123,10 @@ independently useful.
 
 ## The appliance direction
 
-Lockbox packages these components into a local runtime for individuals and
-communities. The initial target platform is FreeBSD on Raspberry Pi 4 with a
-physical keypad and a TROPIC01 HSM.
+Lockbox packages these components into a local runtime for individuals,
+organizations, and communities. A deployment may optionally include Clear when
+it needs a locally governed currency. The initial target platform is FreeBSD
+on Raspberry Pi 4 with a physical keypad and a TROPIC01 HSM.
 
 That hardware direction matters. The keypad provides local presence for
 unlock, approval, and recovery flows. The HSM provides a hardware-backed
@@ -121,14 +141,64 @@ Lockbox gives the user app four plain operating modes:
 
 | Mode | User meaning |
 | --- | --- |
-| **Connected Mode** | Normal connected use with hosted services, relays, mints, synchronization, and updates available. |
-| **Local Mode** | Direct local use of the Lockbox appliance when upstream internet or hosted services are unavailable. |
+| **Connected Mode** | Normal connected use with hosted services, relays, external mints, optional Clear currencies, synchronization, and updates available. |
+| **Local Mode** | Direct local use of the Lockbox appliance, including any configured Clear mint, when upstream internet or hosted services are unavailable. |
 | **Mobile Mode** | A phone or nearby device supplies temporary upstream connectivity while Lockbox remains the local authority environment. |
 | **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages locally. |
 
 The current Safebox Web app can start by showing **Connected Mode**. Later
 versions can determine mode from service reachability, local pairing, bridge
 state, and community mesh participation.
+
+## Local internal economies with Clear
+
+Clear extends the Mainstay family beyond globally connected payments. It is an
+optional local-first mint for organizations and communities that want to create
+their own bounded points or voucher system without adopting Bitcoin or running
+Lightning infrastructure.
+
+A Clear currency has its own governing authority, authorized treasurers,
+operational mint, ledger, and recognition network. The organization decides
+what the currency represents and which providers accept it. Clear provides
+private Cashu bearer proofs, supply accounting, swaps, spent-state checks, and
+retirement.
+
+This can support:
+
+- church meal, transportation, or benevolence vouchers;
+- food-bank credits recognized by participating providers;
+- campus, event, camp, or emergency allocations; and
+- a resort payment system for guest credits, staff allowances, shops,
+  restaurants, and activities on the resort's own network.
+
+In the resort example, the resort treasury governs issuance and settlement. A
+local Clear mint issues the resort-specific currency. Guests and staff hold
+proofs in Acorn-backed wallets, participating services accept them, and
+providers return proofs for retirement and reimbursement or internal
+accounting.
+
+```text
+Organization establishes policy
+            -> treasurer issues vouchers
+            -> people use recognized local providers
+            -> providers return proofs for retirement and settlement
+```
+
+The currency is not legal tender and does not need universal acceptance.
+Ordinary money can fund the program and settle with providers, while Clear
+coordinates the purpose-specific allocation in between with cash-like
+possession, direct transfer, voluntary recognition, and privacy.
+
+A locally reachable Clear mint also provides a stronger form of local payment
+continuity. It can validate, swap, issue, and retire its own currency entirely
+inside the local network. By contrast, proofs from an unreachable external
+mint remain provisional until that mint returns. Mainstay should show this
+difference clearly: local Clear finality is not the same state as a pending
+Continuity Payment.
+
+Clear remains optional. Mainstay should present configured currencies without
+combining them, and Lockbox should never silently create a currency or imply
+that operating an appliance grants authority to issue one.
 
 ## Continuity Payments
 
@@ -182,6 +252,10 @@ Spurline is the relay service. It preserves relevant Nostr events locally and
 creates a base for local continuity, network synchronization, and future mesh
 operation.
 
+Clear is the optional local mint. It supports independently governed points,
+vouchers, and internal economies while remaining separate from Bitcoin,
+Lightning, and external Cashu mints.
+
 Lockbox is the hardware-first appliance. It runs Mainstay and the family
 locally with predictable services, durable local storage, health checks,
 hardware-backed controls, and a clear operator experience.
@@ -198,8 +272,9 @@ provider.
 
 Acorn gives the stack portable protocol authority. Safebox Web provides the
 current application foundation. Grove preserves encrypted blobs. Spurline
-preserves events. Mainstay becomes the unified entry point, and Lockbox brings
-the complete experience together as a local appliance.
+preserves events. Clear can support bounded local economies. Mainstay becomes
+the unified entry point, and Lockbox brings the complete experience together
+as a local appliance.
 
 [Read the detailed product note](https://github.com/trbouma/safebox-acorn/blob/main/docs/LOCKBOX-PRODUCT-VISION.md){ .md-button .md-button--primary }
 [How Acorn works](how-acorn-works.md){ .md-button }
