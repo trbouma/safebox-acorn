@@ -1,5 +1,19 @@
 # Mainstay Product Vision
 
+## A community continuity scenario
+
+A satellite link goes down. A distant cloud service starts behaving
+unpredictably. A tornado takes out the local registry office and bank. Solar
+power and backup systems are keeping the electricity on, but the community has
+lost access to much of what it needs to function: payment services, critical
+records, local evidence, and the remote systems used to coordinate them.
+
+The people, funds, and records have not disappeared. Access to the distant
+infrastructure has. This is the moment Mainstay is intended for: providing a
+local point of continuity so a community can keep using the resources already
+within reach, coordinate through nearby infrastructure, and reconcile with
+external systems when connectivity returns.
+
 ## Product promise
 
 **Mainstay is a local-first application for records, identity, payments, and

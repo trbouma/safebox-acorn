@@ -1,5 +1,19 @@
 # Mainstay and Lockbox Product Vision
 
+## A community continuity scenario
+
+A satellite link goes down. A distant cloud service starts behaving
+unpredictably. A tornado takes out the local registry office and bank. Solar
+power and backup systems are keeping the electricity on, but the community has
+lost access to much of what it needs to function: payment services, critical
+records, local evidence, and the remote systems used to coordinate them.
+
+The people, funds, and records have not disappeared. Access to the distant
+infrastructure has. Mainstay provides the local point of continuity, while a
+Lockbox gives the application and its supporting services a dedicated local
+home. Together they let the community use resources already within reach and
+reconcile with external systems when connectivity returns.
+
 ## Summary
 
 **Mainstay** is the future unified local-first application for the Acorn stack.
