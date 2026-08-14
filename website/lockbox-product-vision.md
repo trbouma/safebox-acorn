@@ -19,14 +19,19 @@ local point of continuity so a community can keep using the resources already
 within reach, coordinate through nearby infrastructure, and reconcile with
 external systems when connectivity returns.
 
-**Mainstay** is the future unified local-first application for records,
-identity, payments, community resource coordination, and continuity.
+**Mainstay** is the future unified local-first application for keys, records,
+payments, community resource coordination, and continuity.
 **Lockbox** is the hardware-first appliance that gives Mainstay and its
 supporting services a dedicated local home.
 
-The product family is intentionally made of sibling projects. Each one should
-remain useful on its own, while also fitting into a larger local appliance
-profile.
+The Mainstay product family is intentionally made of sibling projects. Each
+one should remain useful on its own, while also fitting into a larger local
+appliance profile.
+
+**Good boundaries, not barriers.** Each sibling retains a clear responsibility,
+authority boundary, and failure domain. Open protocols let them cooperate and
+remain replaceable without turning that separation into an obstacle to
+continuity.
 
 The user path should remain simple. In ordinary conditions, someone can use a
 web-connected service. If the hosted service, provider, or wider internet is
@@ -249,12 +254,13 @@ provisional transfer.
 
 ## Product roles
 
-Mainstay is the unified application. It coordinates records, identity,
+Mainstay is the unified application. It coordinates keys, records,
 payments, synchronization, and continuity modes without becoming the system of
 record.
 
-Acorn is the protocol authority layer. It coordinates keys, signing, encrypted
-records, wallet state, transfer flows, and recovery material.
+Acorn is the protocol-first component for safeguarding user-controlled keys,
+funds, and records. It provides signing, encrypted wallet state, transfer
+flows, and recovery below the application layer.
 
 Safebox Web is the current user app and foundation for Mainstay. It gives
 people browser-based workflows without becoming the system of record.
