@@ -338,6 +338,33 @@ quantity            -> amount represented by the record
 equivalence domain  -> rules under which quantities may be combined
 ```
 
+### Example: transferable gym guest passes
+
+A gym can issue a fixed allocation of guest-pass units to a member. Each unit
+represents the same entitlement: one guest admission under the gym's program
+rules. The member may transfer any of those units to another person without
+asking the gym to mediate the transfer.
+
+```text
+gym issues guest-pass units
+  -> member holds the units
+  -> member transfers a unit to a guest
+  -> guest presents the unit at the gym
+  -> gym verifies, redeems, and retires the unit
+```
+
+The units are transferable and fungible within the equivalence domain defined
+by the gym, program, validity period, and redemption policy. Their bearer
+proofs remain unique records. Retirement permanently removes a redeemed unit
+from circulation and prevents the same entitlement from being exercised
+again.
+
+This example also separates governance from custody. The gym controls issuance
+and defines what a unit can be redeemed for, while holders control valid units
+and may transfer them freely until presentation or expiry. The units represent
+an in-kind service entitlement, not cash and not a promise of monetary
+redemption.
+
 ## Resource descriptor
 
 A URM profile should define a descriptor containing or resolving the following
@@ -691,4 +718,3 @@ It should guide new Acorn designs, but no existing wire format should be
 renamed or migrated merely to appear uniform. A concrete protocol change
 requires its own versioned specification, compatibility plan, threat model,
 tests, and operational recovery design.
-

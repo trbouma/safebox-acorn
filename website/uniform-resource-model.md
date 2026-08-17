@@ -106,6 +106,17 @@ Cashu ecash and Clear Mint Units represent fungible quantities through unique
 bearer proofs. Acorn keeps cash and Clear in separate proof-state and history
 profiles because their issuers, units, policies, and settlement models differ.
 
+### Transferable gym guest passes
+
+A gym can issue a member several guest-pass units. The member may transfer a
+unit to any guest, who presents it for admission. The gym verifies the unit and
+retires it when redeemed so it cannot be used again.
+
+These passes are transferable, fungible entitlements within the gym's program:
+each unit grants the same in-kind service, but it is not cash or a promise of
+monetary redemption. The gym governs issuance and redemption while holders
+control how valid units move between them.
+
 ### Entitlements
 
 Personal quotas and non-transferable service allowances are fungible within a
@@ -140,4 +151,3 @@ and transferring exclusive control.
 [Read the full design note](https://github.com/trbouma/safebox-acorn/blob/main/docs/UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md){ .md-button .md-button--primary }
 [User-controlled keys, funds and records](user-controlled-funds-and-records.md){ .md-button }
 [How Acorn works](how-acorn-works.md){ .md-button }
-
