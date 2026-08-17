@@ -10,8 +10,12 @@ from monstr.event.event import Event
 
 from acorn.acorn import (
     Acorn,
+    CLEAR_RECEIPTS_LABEL,
+    CLEAR_TRANSFER_CURSOR_LABEL,
+    CLEAR_TRANSFER_KIND,
     CONTINUITY_RECEIPTS_LABEL,
     ECASH_TRANSFER_CURSOR_LABEL,
+    ECASH_TRANSFER_GIFT_WRAP_KIND,
     ECASH_TRANSFER_KIND,
 )
 from acorn.models import Proof, TokenV3, TokenV3Token, TokenV4
@@ -60,6 +64,14 @@ def serialized_token(proofs: list[Proof]) -> str:
             memo="continuity",
             unit="sat",
         )
+    ).serialize()
+
+
+def clear_token(proofs: list[Proof], *, unit: str = "cmu-test") -> str:
+    return TokenV3(
+        token=[TokenV3Token(mint="http://clear.example", proofs=proofs)],
+        memo="clear",
+        unit=unit,
     ).serialize()
 
 
@@ -790,6 +802,215 @@ async def test_sweep_can_collect_standard_payment_without_contacting_mint(
     assert result["provisional_count"] == 1
     acorn._store_continuity_receipt.assert_awaited_once()
     acorn.accept_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_clear_7379_gift_wrap_without_breaking_ecash(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    outer = Event(
+        id="9" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        content="encrypted-clear-transfer",
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="44" * 32,
+        created_at=130,
+    )
+    inner = Event(
+        id="8" * 64,
+        sig=None,
+        kind=7379,
+        content=json.dumps(
+            {
+                "type": "clear-token",
+                "token": "cashuA-clear-token",
+                "amount": 25,
+                "unit": "cmu-test",
+                "keyset_ids": ["keyset-id"],
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex], ["protocol", "clear-token-transfer"]],
+        pub_key="55" * 32,
+        created_at=130,
+    )
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [outer]
+
+    class PlaintextNip44:
+        def __init__(self, _keys):
+            pass
+
+        def decrypt(self, content, _pubkey):
+            return content
+
+    class GiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            return inner
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", GiftWrap)
+    acorn._store_continuity_receipt = AsyncMock()
+    acorn.accept_token = AsyncMock()
+
+    result = await acorn.sweep_ecash_transfers(finalize=False)
+
+    assert result["status"] == "OK"
+    assert result["accepted_count"] == 0
+    assert result["failed"] == []
+    assert result["skipped"] == [
+        {
+            "event_id": outer.id,
+            "reason": "unsupported_inner_kind",
+            "timestamp": 130,
+            "outer_kind": ECASH_TRANSFER_GIFT_WRAP_KIND,
+            "inner_kind": 7379,
+            "expected_inner_kind": ECASH_TRANSFER_KIND,
+        }
+    ]
+    assert result["latest_checkpoint"] == {
+        "created_at": 130,
+        "event_id": "9" * 64,
+    }
+    acorn._store_continuity_receipt.assert_not_awaited()
+    acorn.accept_token.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_store_clear_receipt_uses_separate_journal() -> None:
+    acorn = wallet()
+    stored = []
+
+    async def save(_label, value, **_kwargs):
+        stored[:] = json.loads(value)
+        return {"status": "OK"}
+
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+    token = clear_token([proof(16, "16"), proof(8, "8"), proof(1, "1")])
+
+    receipt = await acorn._store_clear_receipt(
+        event_id="e" * 64,
+        sender_pubkey="55" * 32,
+        token=token,
+        payload={
+            "type": "clear-token",
+            "token": token,
+            "amount": 25,
+            "unit": "cmu-test",
+            "keyset_ids": [KEYSET],
+            "memo": "test CMU",
+        },
+        timestamp=131,
+        outer_kind=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        inner_kind=CLEAR_TRANSFER_KIND,
+    )
+
+    assert receipt["status"] == "pending"
+    assert receipt["mint"] == "http://clear.example"
+    assert receipt["unit"] == "cmu-test"
+    assert receipt["amount"] == 25
+    assert receipt["keyset_ids"] == [KEYSET]
+    acorn.set_wallet_info.assert_awaited_once()
+    assert acorn.set_wallet_info.await_args.args[0] == CLEAR_RECEIPTS_LABEL
+    assert stored[0]["token"] == token
+
+
+@pytest.mark.asyncio
+async def test_sweep_clear_transfers_stores_pending_without_ecash_accept(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    token = clear_token([proof(16, "16"), proof(8, "8"), proof(1, "1")])
+    outer = Event(
+        id="7" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        content="encrypted-clear-transfer",
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="44" * 32,
+        created_at=132,
+    )
+    inner = Event(
+        id="6" * 64,
+        sig=None,
+        kind=CLEAR_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "clear-token",
+                "token": token,
+                "amount": 25,
+                "unit": "cmu-test",
+                "keyset_ids": [KEYSET],
+                "memo": "test CMU",
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex], ["protocol", "clear-token-transfer"]],
+        pub_key="55" * 32,
+        created_at=132,
+    )
+    operations = []
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [outer]
+
+    class GiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            return inner
+
+    async def save(label, value, **_kwargs):
+        operations.append((label, value))
+        return {"status": "OK"}
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", GiftWrap)
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+    acorn.accept_token = AsyncMock()
+    acorn._store_continuity_receipt = AsyncMock()
+
+    result = await acorn.sweep_clear_transfers()
+
+    assert result["status"] == "OK"
+    assert result["stored_count"] == 1
+    assert result["stored_amount"] == 25
+    assert result["stored"][0]["unit"] == "cmu-test"
+    assert result["stored"][0]["keyset_ids"] == [KEYSET]
+    assert operations[0][0] == CLEAR_RECEIPTS_LABEL
+    assert operations[1][0] == CLEAR_TRANSFER_CURSOR_LABEL
+    acorn.accept_token.assert_not_awaited()
+    acorn._store_continuity_receipt.assert_not_awaited()
 
 
 @pytest.mark.asyncio

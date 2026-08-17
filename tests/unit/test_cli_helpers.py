@@ -1042,6 +1042,18 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
                 "mint_confirmed_unspent": {"amount": 52, "proof_count": 8},
             }
 
+        async def get_clear_receipts(self):
+            return [
+                {
+                    "event_id": "clear-1",
+                    "status": "pending",
+                    "amount": 25,
+                    "unit": "cmu-test",
+                    "mint": "http://clear.example",
+                    "keyset_ids": ["keyset-clear"],
+                }
+            ]
+
         def get_balance(self):
             return 132
 
@@ -1062,6 +1074,8 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert "Mint state not checked" in text_result.output
     assert "up to 131 sats before mint fees" in text_result.output
     assert "one keyset per Lightning payment" in text_result.output
+    assert "Pending Clear transactions: 25 unit(s) in 1 receipt(s)" in text_result.output
+    assert "- cmu-test: 25 unit(s) in 1 receipt(s)" in text_result.output
 
     json_result = CliRunner().invoke(cli.balance, ["--json"])
     assert json_result.exit_code == 0
@@ -1078,6 +1092,20 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
         "constraint": "single_keyset",
         "fee_reserve_included": False,
     }
+    assert payload["pending_clear"] == {
+        "pending": True,
+        "count": 1,
+        "amount": 25,
+        "units": [
+            {
+                "unit": "cmu-test",
+                "amount": 25,
+                "count": 1,
+                "mints": ["http://clear.example"],
+                "keyset_ids": ["keyset-clear"],
+            }
+        ],
+    }
 
     verified_result = CliRunner().invoke(cli.balance, ["--verify"])
     assert verified_result.exit_code == 0
@@ -1090,6 +1118,52 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert verified_payload["relay_visible_balance"] == 132
     assert verified_payload["mint_confirmed_balance"] == 52
     assert verified_payload["mint_verification"]["status"] == "repair-recommended"
+
+
+def test_receive_clear_command_stores_pending_receipts(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def load_data(self):
+            return None
+
+        async def sweep_clear_transfers(self, **kwargs):
+            assert kwargs["preview_only"] is False
+            assert kwargs["advance_cursor"] is True
+            return {
+                "status": "OK",
+                "queried": 1,
+                "query_pages": [{"limit": 1024}],
+                "event_id": None,
+                "stored_count": 1,
+                "stored_amount": 25,
+                "previewed_count": 0,
+                "previewed_amount": 0,
+                "failed": [],
+            }
+
+        async def get_clear_receipts(self):
+            return [
+                {
+                    "event_id": "clear-1",
+                    "status": "pending",
+                    "amount": 25,
+                    "unit": "cmu-test",
+                    "mint": "http://clear.example",
+                    "keyset_ids": ["keyset-clear"],
+                }
+            ]
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(cli.receive_clear)
+
+    assert result.exit_code == 0
+    assert "Stored 25 Clear unit(s) from 1 pending transfer receipt(s)" in result.output
+    assert "Pending Clear transactions: 25 unit(s) in 1 receipt(s)" in result.output
 
 
 def test_format_proof_check_emphasizes_read_only_result(monkeypatch, tmp_path):

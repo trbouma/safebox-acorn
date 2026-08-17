@@ -132,6 +132,9 @@ ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
 ECASH_TRANSFER_CURSOR_VERSION: int = 2
 ECASH_TRANSFER_LEGACY_EVENT_ID: str = "f" * 64
+CLEAR_TRANSFER_KIND: int = 7379
+CLEAR_TRANSFER_CURSOR_LABEL: str = "clear_transfer_latest"
+CLEAR_RECEIPTS_LABEL: str = "clear_receipts"
 
 
 class MalformedIncomingTransfer(ValueError):
@@ -171,11 +174,13 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
     {
         "balance",
         CONTINUITY_RECEIPTS_LABEL,
+        CLEAR_RECEIPTS_LABEL,
         "default",
         DEFERRED_RECOVERY_LABEL,
         RECORD_PROTECTION_STATUS_LABEL,
         "ecash_latest",
         "ecash_transfer_latest",
+        CLEAR_TRANSFER_CURSOR_LABEL,
         "home_relay",
         "index",
         "last_dm",
@@ -4750,6 +4755,366 @@ class Acorn:
             "terminal_error_amount": sum(item["amount"] for item in terminal_errors),
         }
 
+    async def _store_clear_receipt(
+        self,
+        *,
+        event_id: str,
+        sender_pubkey: str,
+        token: str,
+        payload: Dict[str, Any],
+        timestamp: int,
+        outer_kind: int,
+        inner_kind: int,
+    ) -> Dict[str, Any]:
+        """Persist an incoming Clear token separately from sats proof state."""
+
+        token_obj = TokenV3.deserialize(token)
+        token_amount = int(token_obj.get_amount())
+        claimed_amount = int(payload.get("amount", token_amount))
+        if token_amount <= 0 or claimed_amount != token_amount:
+            raise ValueError("Clear transfer amount does not match its proofs")
+        token_mints = sorted(str(mint).rstrip("/") for mint in token_obj.get_mints())
+        if len(token_mints) != 1:
+            raise ValueError("Clear transfer must contain exactly one mint")
+        token_unit = str(token_obj.unit or payload.get("unit") or "").strip()
+        payload_unit = str(payload.get("unit") or token_unit).strip()
+        if not token_unit or payload_unit != token_unit:
+            raise ValueError("Clear transfer unit does not match its token")
+        keyset_ids = sorted(str(keyset) for keyset in token_obj.get_keysets())
+        payload_keyset_ids = payload.get("keyset_ids")
+        if payload_keyset_ids is not None:
+            supplied = sorted(str(keyset) for keyset in payload_keyset_ids)
+            if supplied != keyset_ids:
+                raise ValueError("Clear transfer keyset_ids do not match its token")
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CLEAR_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Clear receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Clear receipt journal has an invalid format")
+
+            existing = next(
+                (item for item in receipts if str(item.get("event_id")) == str(event_id)),
+                None,
+            )
+            if existing is None:
+                existing = {
+                    "event_id": str(event_id),
+                    "sender_pubkey": str(sender_pubkey),
+                    "token": token,
+                    "mint": token_mints[0],
+                    "amount": token_amount,
+                    "unit": token_unit,
+                    "keyset_ids": keyset_ids,
+                    "comment": str(payload.get("comment") or payload.get("memo") or ""),
+                    "nonce": payload.get("nonce"),
+                    "timestamp": int(timestamp),
+                    "status": "pending",
+                    "outer_kind": int(outer_kind),
+                    "inner_kind": int(inner_kind),
+                    "protocol": "clear-token-transfer",
+                }
+                receipts.append(existing)
+                await self.set_wallet_info(
+                    CLEAR_RECEIPTS_LABEL,
+                    json.dumps(receipts, separators=(",", ":")),
+                    verify=True,
+                )
+            return existing
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+    async def get_clear_receipts(
+        self,
+        *,
+        include_tokens: bool = False,
+        status: str | None = None,
+    ) -> List[Dict[str, Any]]:
+        """Return persisted Clear receipts without changing wallet balance."""
+
+        raw_receipts = await self.get_wallet_info(CLEAR_RECEIPTS_LABEL)
+        if not raw_receipts:
+            return []
+        try:
+            receipts = json.loads(raw_receipts)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Clear receipt journal is unreadable") from exc
+        if not isinstance(receipts, list) or not all(
+            isinstance(item, dict) for item in receipts
+        ):
+            raise RuntimeError("Clear receipt journal has an invalid format")
+
+        visible_receipts: List[Dict[str, Any]] = []
+        for receipt in receipts:
+            receipt_status = str(receipt.get("status") or "pending")
+            if status is not None and receipt_status != str(status):
+                continue
+            visible = dict(receipt)
+            if not include_tokens:
+                visible.pop("token", None)
+            visible_receipts.append(visible)
+        return sorted(
+            visible_receipts,
+            key=lambda item: (
+                int(item.get("timestamp") or 0),
+                str(item.get("event_id") or ""),
+            ),
+            reverse=True,
+        )
+
+    async def sweep_clear_transfers(
+        self,
+        since: int | None = None,
+        relays: List[str] | None = None,
+        limit: int = RECORD_LIMIT,
+        advance_cursor: bool = True,
+        receive_nsec: str | None = None,
+        event_id: str | None = None,
+        preview_only: bool = False,
+        max_pages: int = 100,
+    ) -> Dict[str, Any]:
+        """Store Clear token transfers addressed to this wallet as pending."""
+
+        receive_key = Keys(priv_k=receive_nsec) if receive_nsec else self.k
+        receive_pubkey = receive_key.public_key_hex()
+        target_event_id = str(event_id or "").strip()
+        if target_event_id.startswith("note"):
+            target_event_id = bech32_to_hex(target_event_id)
+        if target_event_id:
+            target_event_id = target_event_id.lower()
+            if len(target_event_id) != 64 or not all(ch in string.hexdigits for ch in target_event_id):
+                raise ValueError("event_id must be note1... or 64-char hex")
+        if relays:
+            relay_pool = self._normalize_relays(relays)
+        elif receive_nsec:
+            relay_discovery = await self._resolve_receive_relays_from_kind0(receive_pubkey)
+            relay_pool = relay_discovery.get("relays") or self._normalize_relays([self.home_relay])
+        else:
+            relay_pool = self._normalize_relays([self.home_relay])
+
+        cursor_label = (
+            CLEAR_TRANSFER_CURSOR_LABEL
+            if receive_pubkey == self.pubkey_hex
+            else f"{CLEAR_TRANSFER_CURSOR_LABEL}:{receive_pubkey}"
+        )
+        cursor_from_record = False
+        cursor_checkpoint = self._parse_ecash_transfer_checkpoint(since or 0)
+        if since is None:
+            cursor_from_record = True
+            try:
+                cursor_raw = await self.get_wallet_info(cursor_label, record_kind=37376)
+                cursor_checkpoint = self._parse_ecash_transfer_checkpoint(cursor_raw)
+            except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
+                self.logger.debug("op=sweep_clear_transfers status=no_cursor error=%s", exc)
+                cursor_checkpoint = (0, "")
+
+        query_limit = int(limit)
+        page_limit = int(max_pages)
+        if query_limit <= 0:
+            raise ValueError("limit must be greater than zero")
+        if page_limit <= 0:
+            raise ValueError("max_pages must be greater than zero")
+
+        if target_event_id:
+            query_filter = [{
+                "limit": 1,
+                "ids": [target_event_id],
+                "kinds": [ECASH_TRANSFER_GIFT_WRAP_KIND],
+            }]
+        else:
+            query_filter = [{
+                "limit": int(limit),
+                "kinds": [ECASH_TRANSFER_GIFT_WRAP_KIND],
+                "#p": [receive_pubkey],
+            }]
+        if cursor_checkpoint[0] > 0 and not target_event_id:
+            query_filter[0]["since"] = cursor_checkpoint[0]
+
+        query_pages: List[Dict[str, Any]] = []
+        seen_events: Dict[str, Event] = {}
+        async with ClientPool(relay_pool) as c:
+            if target_event_id:
+                query_pages.append(dict(query_filter[0]))
+                events: List[Event] = await c.query(query_filter)
+                for event in events:
+                    seen_events[str(event.id)] = event
+            else:
+                page_until = int(time())
+                for _page_number in range(1, page_limit + 1):
+                    page_filter = dict(query_filter[0])
+                    page_filter["until"] = page_until
+                    query_pages.append(page_filter)
+                    page_events: List[Event] = await c.query([page_filter])
+                    for event in page_events:
+                        seen_events[str(event.id)] = event
+                    if len(page_events) < query_limit:
+                        break
+                    page_until = min(self._event_timestamp(event) for event in page_events)
+                else:
+                    raise RuntimeError("Clear transfer pagination reached max_pages")
+
+        events_sorted = sorted(
+            (
+                event
+                for event in seen_events.values()
+                if target_event_id
+                or self._event_checkpoint(event) > cursor_checkpoint
+            ),
+            key=self._event_checkpoint,
+        )
+        receive_gift = KindOtherGiftWrap(
+            BasicKeySigner(receive_key),
+            kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        )
+        stored: List[Dict[str, Any]] = []
+        previewed: List[Dict[str, Any]] = []
+        skipped: List[Dict[str, Any]] = []
+        failed: List[Dict[str, Any]] = []
+        latest_checkpoint = cursor_checkpoint
+
+        for each_event in events_sorted:
+            event_ts = self._event_timestamp(each_event)
+            event_checkpoint = self._event_checkpoint(each_event)
+            try:
+                try:
+                    unwrapped_event = await receive_gift.unwrap(each_event)
+                except Exception as unwrap_exc:
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "gift_wrap_not_addressed_to_receive_key",
+                        "timestamp": event_ts,
+                        "error": str(unwrap_exc),
+                    })
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                    continue
+                inner_kind = getattr(unwrapped_event, "kind", None)
+                if inner_kind != CLEAR_TRANSFER_KIND:
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "unsupported_inner_kind",
+                        "timestamp": event_ts,
+                        "outer_kind": each_event.kind,
+                        "inner_kind": inner_kind,
+                        "expected_inner_kind": CLEAR_TRANSFER_KIND,
+                    })
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                    continue
+                try:
+                    payload = json.loads(unwrapped_event.content)
+                except (json.JSONDecodeError, TypeError) as payload_exc:
+                    raise MalformedIncomingTransfer(
+                        f"Clear transfer payload is not valid JSON: {payload_exc}"
+                    ) from payload_exc
+                if not isinstance(payload, dict):
+                    raise MalformedIncomingTransfer(
+                        "Clear transfer payload must be a JSON object"
+                    )
+                if payload.get("type") != "clear-token":
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "unsupported_payload_type",
+                        "timestamp": event_ts,
+                    })
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                    continue
+                token = payload.get("token")
+                if not isinstance(token, str) or not token:
+                    raise MalformedIncomingTransfer(
+                        "Clear transfer payload is missing its Cashu token"
+                    )
+                token_obj = TokenV3.deserialize(token)
+                preview = {
+                    "event_id": each_event.id,
+                    "sender_pubkey": unwrapped_event.pub_key,
+                    "outer_pubkey": each_event.pub_key,
+                    "timestamp": event_ts,
+                    "amount": int(token_obj.get_amount()),
+                    "unit": str(token_obj.unit or payload.get("unit") or ""),
+                    "mints": sorted(str(mint).rstrip("/") for mint in token_obj.get_mints()),
+                    "keyset_ids": sorted(str(keyset) for keyset in token_obj.get_keysets()),
+                    "comment": str(payload.get("comment") or payload.get("memo") or ""),
+                    "outer_kind": each_event.kind,
+                    "inner_kind": inner_kind,
+                }
+                if preview_only:
+                    previewed.append(preview)
+                else:
+                    receipt = await self._store_clear_receipt(
+                        event_id=each_event.id,
+                        sender_pubkey=unwrapped_event.pub_key,
+                        token=token,
+                        payload=payload,
+                        timestamp=event_ts,
+                        outer_kind=each_event.kind,
+                        inner_kind=inner_kind,
+                    )
+                    stored.append(
+                        {key: value for key, value in receipt.items() if key != "token"}
+                    )
+                latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+            except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
+                failed.append({
+                    "event_id": each_event.id,
+                    "sender_pubkey": each_event.pub_key,
+                    "timestamp": event_ts,
+                    "reason": str(exc),
+                })
+                break
+
+        if (
+            not preview_only
+            and advance_cursor
+            and not target_event_id
+            and latest_checkpoint > cursor_checkpoint
+        ):
+            await self.set_wallet_info(
+                cursor_label,
+                self._serialize_ecash_transfer_checkpoint(latest_checkpoint),
+                record_kind=37376,
+            )
+
+        return {
+            "status": "OK" if not failed else "PARTIAL",
+            "kind": CLEAR_TRANSFER_KIND,
+            "gift_wrap_kind": ECASH_TRANSFER_GIFT_WRAP_KIND,
+            "relays": relay_pool,
+            "cursor_label": cursor_label,
+            "query_filter": query_filter,
+            "query_pages": query_pages,
+            "event_id": target_event_id or None,
+            "receive_pubkey": receive_pubkey,
+            "wallet_pubkey": self.pubkey_hex,
+            "used_transient_receive_key": bool(receive_nsec),
+            "cursor_from_record": cursor_from_record,
+            "cursor_checkpoint": {
+                "created_at": cursor_checkpoint[0],
+                "event_id": cursor_checkpoint[1],
+            },
+            "latest_checkpoint": {
+                "created_at": latest_checkpoint[0],
+                "event_id": latest_checkpoint[1],
+            },
+            "queried": len(events_sorted),
+            "stored": stored,
+            "stored_count": len(stored),
+            "stored_amount": sum(int(each["amount"]) for each in stored),
+            "preview_only": bool(preview_only),
+            "previewed": previewed,
+            "previewed_count": len(previewed),
+            "previewed_amount": sum(int(each["amount"]) for each in previewed),
+            "skipped": skipped,
+            "failed": failed,
+        }
+
     async def sweep_ecash_transfers(
         self,
         since: int | None = None,
@@ -4916,6 +5281,18 @@ class Acorn:
                     decrypted = unwrapped_event.content
                     sender_pubkey = unwrapped_event.pub_key
                     mode = "gift-wrapped"
+                    inner_kind = getattr(unwrapped_event, "kind", None)
+                    if inner_kind != ECASH_TRANSFER_KIND:
+                        skipped.append({
+                            "event_id": each_event.id,
+                            "reason": "unsupported_inner_kind",
+                            "timestamp": event_ts,
+                            "outer_kind": each_event.kind,
+                            "inner_kind": inner_kind,
+                            "expected_inner_kind": ECASH_TRANSFER_KIND,
+                        })
+                        latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                        continue
                 except Exception as unwrap_exc:
                     self.logger.debug(
                         "op=sweep_ecash_transfers status=unwrap_fallback event_id=%s error=%s",

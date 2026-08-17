@@ -356,6 +356,58 @@ def _format_balance_by_mint(rows: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _summarize_clear_receipts(receipts: list[dict]) -> dict:
+    pending = [
+        receipt
+        for receipt in receipts
+        if str(receipt.get("status") or "pending") == "pending"
+    ]
+    by_unit: dict[str, dict] = {}
+    for receipt in pending:
+        unit = str(receipt.get("unit") or "unknown")
+        row = by_unit.setdefault(
+            unit,
+            {
+                "unit": unit,
+                "amount": 0,
+                "count": 0,
+                "mints": [],
+                "keyset_ids": [],
+            },
+        )
+        row["amount"] += int(receipt.get("amount") or 0)
+        row["count"] += 1
+        mint = receipt.get("mint")
+        if mint and mint not in row["mints"]:
+            row["mints"].append(mint)
+        for keyset_id in receipt.get("keyset_ids") or []:
+            if keyset_id not in row["keyset_ids"]:
+                row["keyset_ids"].append(keyset_id)
+
+    units = sorted(by_unit.values(), key=lambda row: row["unit"])
+    return {
+        "pending": bool(pending),
+        "count": len(pending),
+        "amount": sum(row["amount"] for row in units),
+        "units": units,
+    }
+
+
+def _format_pending_clear(summary: dict) -> str:
+    if not summary.get("pending"):
+        return "No pending Clear transactions."
+    lines = [
+        "Pending Clear transactions: "
+        f"{summary['amount']} unit(s) in {summary['count']} receipt(s)."
+    ]
+    for row in summary.get("units") or []:
+        lines.append(
+            f"- {row['unit']}: {row['amount']} unit(s) "
+            f"in {row['count']} receipt(s)"
+        )
+    return "\n".join(lines)
+
+
 def _lightning_capacity(acorn_obj: Acorn) -> dict:
     all_proofs, keyset_amounts = acorn_obj._proofs_by_keyset()
     candidates = [
@@ -1910,6 +1962,9 @@ def balance(json_output, show_mints, verify_mint_state):
     proof_count = len(acorn_obj.proofs)
     lightning_capacity = _lightning_capacity(acorn_obj)
     mint_balances = _balance_by_mint(acorn_obj) if show_mints else []
+    pending_clear = _summarize_clear_receipts(
+        asyncio.run(acorn_obj.get_clear_receipts())
+    )
     verification = (
         asyncio.run(acorn_obj.check_proofs())
         if verify_mint_state
@@ -1923,6 +1978,7 @@ def balance(json_output, show_mints, verify_mint_state):
             "unit": "sat",
             "proof_count": proof_count,
             "lightning_capacity": lightning_capacity,
+            "pending_clear": pending_clear,
         }
         if verification is not None:
             payload["mint_verification"] = verification
@@ -1957,6 +2013,8 @@ def balance(json_output, show_mints, verify_mint_state):
             )
         else:
             click.echo(_format_lightning_capacity(lightning_capacity))
+        if pending_clear["pending"]:
+            click.echo(_format_pending_clear(pending_clear))
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))
 
@@ -2048,6 +2106,102 @@ def receive_ecash(since, relay, page_size, max_pages, receive_key, receive_nsec_
         click.echo("No incoming funds accepted.")
     if result.get("failed"):
         click.echo(f"Stopped after {len(result['failed'])} failed transfer event(s).")
+
+
+@click.command("receive-clear", help="Store incoming Clear token transfers as pending receipts")
+@click.option("--since", default=None, type=int, help="Override the Clear transfer cursor.")
+@click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps.")
+@click.option("--page-size", default=1024, type=click.IntRange(min=1), show_default=True, help="Maximum relay events requested per page.")
+@click.option("--max-pages", default=100, type=click.IntRange(min=1), show_default=True, help="Maximum relay pages read in one receive operation.")
+@click.option("--receive-key", is_flag=True, help="Prompt privately for a transient receiving nsec; it is not stored.")
+@click.option("--receive-nsec-file", default=None, metavar="PATH", help="Read a transient receiving nsec from a chmod-600 file, or '-' for stdin.")
+@click.option("--event-id", default=None, help="Receive a specific kind 1059 gift-wrap event id; bypasses recipient tag and cursor query.")
+@click.option("--no-advance", is_flag=True, help="Do not advance the stored Clear receive cursor.")
+@click.option("--preview", is_flag=True, help="Show pending Clear transfers without storing receipts or advancing the cursor.")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def receive_clear(
+    since,
+    relay,
+    page_size,
+    max_pages,
+    receive_key,
+    receive_nsec_file,
+    event_id,
+    no_advance,
+    preview,
+    json_output,
+):
+    receive_nsec = _private_key_from_secure_input(receive_key, receive_nsec_file)
+    if receive_nsec is not None:
+        try:
+            Keys(priv_k=receive_nsec)
+        except Exception as exc:
+            raise click.ClickException(f"Invalid receiving nsec: {exc}") from exc
+    sweep_relays = [_normalize_relay(relay)] if relay else None
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    try:
+        asyncio.run(acorn_obj.load_data())
+        result = asyncio.run(
+            acorn_obj.sweep_clear_transfers(
+                since=since,
+                relays=sweep_relays,
+                limit=page_size,
+                max_pages=max_pages,
+                advance_cursor=False if preview else not no_advance,
+                receive_nsec=receive_nsec,
+                event_id=event_id,
+                preview_only=preview,
+            )
+        )
+        pending_clear = _summarize_clear_receipts(
+            asyncio.run(acorn_obj.get_clear_receipts())
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Receive Clear failed: {exc}") from exc
+
+    result["pending_clear"] = pending_clear
+    if json_output:
+        _emit_json(result)
+        return
+
+    if receive_nsec:
+        click.echo("Used transient receive key; key was not stored.")
+    if result.get("event_id"):
+        click.echo(f"Direct event lookup: {result['event_id']}")
+    click.echo(
+        f"Queried {result['queried']} Clear transfer event(s) across "
+        f"{len(result.get('query_pages') or [result.get('query_filter')])} relay page(s)."
+    )
+    if preview:
+        if result["previewed_count"]:
+            click.echo(
+                f"Pending Clear transfers: {result['previewed_amount']} unit(s) "
+                f"in {result['previewed_count']} transfer event(s)."
+            )
+        else:
+            click.echo("No pending Clear transfers found.")
+        click.echo("Preview only: Clear receipts and receive cursor were unchanged.")
+        return
+    if result["stored_count"]:
+        click.echo(
+            f"Stored {result['stored_amount']} Clear unit(s) from "
+            f"{result['stored_count']} pending transfer receipt(s)."
+        )
+    else:
+        click.echo("No Clear transfers stored.")
+    if pending_clear["pending"]:
+        click.echo(_format_pending_clear(pending_clear))
+    if result.get("failed"):
+        click.echo(f"Stopped after {len(result['failed'])} failed Clear transfer event(s).")
 
 @click.command("delete-ecash-transfers", help="Delete direct kind 7378 ecash transfer events authored by this Acorn")
 @click.option("--relay", "-r", default=None, help="Relay to delete transfer events from; defaults to home relay")
@@ -2694,6 +2848,7 @@ cli.add_command(get_user_records)
 cli.add_command(balance)
 cli.add_command(ecash_transfer)
 cli.add_command(receive_ecash)
+cli.add_command(receive_clear)
 cli.add_command(delete_ecash_transfers)
 cli.add_command(zap)
 cli.add_command(accept_token)
