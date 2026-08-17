@@ -934,6 +934,135 @@ async def test_store_clear_receipt_uses_separate_journal() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_pending_clear_receipt_erases_token_and_hides_tombstone() -> None:
+    acorn = wallet()
+    event_id = "e" * 64
+    receipts = [
+        {
+            "event_id": event_id,
+            "status": "pending",
+            "token": "cashuAsecret",
+            "amount": 25,
+            "unit": "cmu-test",
+        }
+    ]
+
+    async def load(_label):
+        return json.dumps(receipts)
+
+    async def save(_label, value, **_kwargs):
+        receipts[:] = json.loads(value)
+        return {"status": "OK"}
+
+    acorn.get_wallet_info = AsyncMock(side_effect=load)
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+
+    result = await acorn.delete_pending_clear_receipt(event_id)
+
+    assert result == {"status": "OK", "event_id": event_id, "deleted": True}
+    assert receipts[0]["event_id"] == event_id
+    assert receipts[0]["status"] == "deleted"
+    assert "token" not in receipts[0]
+    assert await acorn.get_clear_receipts() == []
+    assert (await acorn.get_clear_receipts(include_deleted=True))[0]["status"] == "deleted"
+    acorn.set_wallet_info.assert_awaited_once()
+    assert acorn.set_wallet_info.await_args.kwargs["verify"] is True
+
+
+@pytest.mark.asyncio
+async def test_delete_clear_receipt_rejects_non_pending_receipt() -> None:
+    acorn = wallet()
+    event_id = "f" * 64
+    acorn.get_wallet_info = AsyncMock(
+        return_value=json.dumps([{"event_id": event_id, "status": "finalized"}])
+    )
+    acorn.set_wallet_info = AsyncMock()
+
+    with pytest.raises(ValueError, match="Only pending"):
+        await acorn.delete_pending_clear_receipt(event_id)
+
+    acorn.set_wallet_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_deleted_clear_receipt_is_not_restored_by_targeted_rescan(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    token = clear_token([proof(1, "deleted")])
+    outer = Event(
+        id="7" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        content="encrypted-clear-transfer",
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="44" * 32,
+        created_at=132,
+    )
+    inner = Event(
+        id="6" * 64,
+        sig=None,
+        kind=CLEAR_TRANSFER_KIND,
+        content=json.dumps(
+            {
+                "type": "clear-token",
+                "token": token,
+                "amount": 1,
+                "unit": "cmu-test",
+                "keyset_ids": [KEYSET],
+            }
+        ),
+        tags=[],
+        pub_key="55" * 32,
+        created_at=131,
+    )
+
+    class FakeClientPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def query(self, _filters):
+            return [outer]
+
+    async def unwrap(_self, _event):
+        return inner
+
+    monkeypatch.setattr(acorn_module, "ClientPool", FakeClientPool)
+    monkeypatch.setattr(acorn_module.KindOtherGiftWrap, "unwrap", unwrap)
+    acorn._store_clear_receipt = AsyncMock(
+        return_value={
+            "event_id": outer.id,
+            "status": "deleted",
+            "deleted_at": 133,
+        }
+    )
+
+    result = await acorn.sweep_clear_transfers(
+        relays=["wss://relay.example"],
+        event_id=outer.id,
+    )
+
+    assert result["status"] == "OK"
+    assert result["stored_count"] == 0
+    assert result["failed"] == []
+    assert result["skipped"] == [
+        {
+            "event_id": outer.id,
+            "reason": "pending_receipt_deleted",
+            "timestamp": 132,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_sweep_clear_transfers_stores_pending_without_ecash_accept(
     monkeypatch,
 ) -> None:

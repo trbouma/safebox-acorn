@@ -5225,6 +5225,7 @@ class Acorn:
         self,
         *,
         include_tokens: bool = False,
+        include_deleted: bool = False,
         status: str | None = None,
     ) -> List[Dict[str, Any]]:
         """Return persisted Clear receipts without changing wallet balance."""
@@ -5244,6 +5245,8 @@ class Acorn:
         visible_receipts: List[Dict[str, Any]] = []
         for receipt in receipts:
             receipt_status = str(receipt.get("status") or "pending")
+            if receipt_status == "deleted" and not include_deleted:
+                continue
             if status is not None and receipt_status != str(status):
                 continue
             visible = dict(receipt)
@@ -5258,6 +5261,61 @@ class Acorn:
             ),
             reverse=True,
         )
+
+    async def delete_pending_clear_receipt(self, event_id: str) -> Dict[str, Any]:
+        """Erase a pending Clear bearer token while retaining a rescan tombstone."""
+
+        normalized_id = self._normalize_clear_event_ids(
+            [event_id],
+            field="event_id",
+        )[0]
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CLEAR_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Clear receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Clear receipt journal has an invalid format")
+
+            receipt_index = next(
+                (
+                    index
+                    for index, item in enumerate(receipts)
+                    if str(item.get("event_id") or "").lower() == normalized_id
+                ),
+                None,
+            )
+            if receipt_index is None:
+                raise ValueError("Pending Clear receipt was not found")
+
+            receipt = receipts[receipt_index]
+            if str(receipt.get("status") or "pending") != "pending":
+                raise ValueError("Only pending Clear receipts can be deleted")
+
+            receipts[receipt_index] = {
+                "event_id": normalized_id,
+                "status": "deleted",
+                "deleted_at": int(datetime.now().timestamp()),
+            }
+            await self.set_wallet_info(
+                CLEAR_RECEIPTS_LABEL,
+                json.dumps(receipts, separators=(",", ":")),
+                verify=True,
+            )
+            return {
+                "status": "OK",
+                "event_id": normalized_id,
+                "deleted": True,
+            }
+        finally:
+            if lock_acquired:
+                await self.release_lock()
 
     async def sweep_clear_transfers(
         self,
@@ -5445,9 +5503,20 @@ class Acorn:
                         outer_kind=each_event.kind,
                         inner_kind=inner_kind,
                     )
-                    stored.append(
-                        {key: value for key, value in receipt.items() if key != "token"}
-                    )
+                    if str(receipt.get("status") or "pending") == "deleted":
+                        skipped.append({
+                            "event_id": each_event.id,
+                            "reason": "pending_receipt_deleted",
+                            "timestamp": event_ts,
+                        })
+                    else:
+                        stored.append(
+                            {
+                                key: value
+                                for key, value in receipt.items()
+                                if key != "token"
+                            }
+                        )
                 latest_checkpoint = max(latest_checkpoint, event_checkpoint)
             except (RuntimeError, ValueError, TypeError, KeyError, json.JSONDecodeError, httpx.HTTPError) as exc:
                 failed.append({

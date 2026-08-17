@@ -79,6 +79,21 @@ path is added.
 `Acorn.get_clear_receipts()` returns pending Clear receipt metadata without
 including bearer tokens by default.
 
+## Deleting a pending receipt
+
+`Acorn.delete_pending_clear_receipt(event_id)` lets a wallet user discard a
+pending Clear Payment before finalization. The operation is limited to receipts
+whose status is `pending`.
+
+Deletion removes the Cashu bearer token and all payment metadata from the
+relay-backed `clear_receipts` record. It retains only the source event ID,
+`deleted` status, and deletion timestamp as a tombstone. A later relay rescan
+recognizes that tombstone and skips the kind `7379` transfer instead of
+restoring it. Deleted tombstones are excluded from normal receipt listings.
+
+This operation does not delete finalized kind `7380` proof state or kind
+`7381` transaction history.
+
 ## CLI
 
 Sweep Clear transfers:
