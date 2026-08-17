@@ -12,7 +12,7 @@ must be checked against the current Nostr kind registry before a stable release.
 
 ## Summary
 
-Acorn already receives Clear Payments as NIP-59 kind `1059` gift wraps whose
+Acorn already receives Clear transfers as NIP-59 kind `1059` gift wraps whose
 inner event is kind `7379`. It validates the Clear token and stores it in the
 separate `clear_receipts` pending journal. This note defines the next stage:
 accepting a pending receipt into a spendable Clear balance without mixing Clear
@@ -180,7 +180,7 @@ or superseded.
 
 Supported initial operations should be:
 
-- `accept`: pending incoming Clear Payment accepted into a balance;
+- `accept`: pending incoming Clear transfer accepted into a balance;
 - `send`: Clear proofs exported or delivered to another wallet;
 - `receive`: reserved for a future direct finalized receive path;
 - `retire`: proofs redeemed or retired without a recipient; and

@@ -27,12 +27,17 @@ many operations, but the meaning of an issued, presented, transferred, or
 revoked record also depends on issuer rules, holder intent, delegation,
 counterparty recognition, and applicable legal context.
 
-This model has two major record classes:
+This model initially used two major record classes:
 
 - transferable records, where control can move from one wallet to another; and
 - non-transferable private issued records, where an issuer creates a private
   record for a holder, but the record is not itself a spendable transferable
   asset.
+
+The [Uniform Resource Model](UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md) extends
+this initial transferability split with fungibility as a second independent
+axis. It also distinguishes the conceptual resource from protocol records,
+representations, identifiers, control state, issuer policy, and verification.
 
 Ecash is the most concrete transferable-record example. Private issued records
 are the complementary Safebox record primitive.

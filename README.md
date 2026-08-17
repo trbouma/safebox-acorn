@@ -14,6 +14,20 @@ provides:
 This package is intended to make Acorn installable into other Python projects
 without requiring the Safebox web application.
 
+## Current Clear transfer milestone
+
+Acorn now receives NIP-59 kind `1059` gift wraps containing inner kind `7379`
+Clear transfers, validates them, and stores them in a pending journal separate
+from ordinary cash/ecash. It groups Clear state by exact mint and CMU, exposes
+kind `7380` proof-state and kind `7381` history foundations, and supports
+durable deletion of pending transfers without relay rediscovery.
+
+Safebox Web uses this path to show organization-issued Clear Balances beside,
+but never inside, the sat-denominated Cash Balance. Acceptance into spendable
+Clear proof state and onward wallet spending remain under development.
+
+[Read the Clear Transfer Wallet Milestone](./docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md).
+
 Record listings request up to 1,024 relay events by default. This is a
 configurable query boundary, not a hardcoded wallet ceiling. Set
 `ACORN_RECORD_LIMIT` for a deployment-wide default, pass `record_limit=` when
@@ -64,6 +78,7 @@ implemented and reviewed.
 - [Acorn Product North Star](./docs/ACORN-PRODUCT-NORTH-STAR.md)
 - [Acorn Component Boundary](./docs/ACORN-COMPONENT-BOUNDARY.md)
 - [Acorn Record Model](./docs/ACORN-RECORD-MODEL.md)
+- [Uniform Resource Model Design Note](./docs/UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md)
 - [Bitcoin Silent Payments Capability](./docs/BITCOIN-SILENT-PAYMENTS-SPEC.md)
 - [Record Encryption Specification](./docs/RECORD-ENCRYPTION-SPEC.md)
 - [Acorn Record Transfer Specification](./docs/RECORD-TRANSFER-SPEC.md)
@@ -76,6 +91,9 @@ implemented and reviewed.
 - [Safebox App Boundary](./docs/SAFEBOX-APP-BOUNDARY.md)
 - [Stateless Web Integration](./docs/STATELESS-WEB-INTEGRATION.md)
 - [Ecash Transfer Kind 7378 Design Note](./docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
+- [Clear Transfer Kind 7379 Design Note](./docs/CLEAR-TRANSFER-KIND-7379-DESIGN.md)
+- [Clear Spendable Proof State Kinds 7380 and 7381](./docs/CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md)
+- [Clear Transfer Wallet Milestone](./docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md)
 - [Acorn Lightning-Address Gateway Design](./docs/ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Mainstay Product Vision](./docs/MAINSTAY-PRODUCT-VISION.md)

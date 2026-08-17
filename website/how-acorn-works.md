@@ -74,6 +74,10 @@ The mint remains authoritative about whether the ecash it issued is valid,
 pending, or spent. Acorn gives the user control of the wallet and its recovery
 path; it does not replace the mint's validation rules.
 
+Organization-issued Clear transfers use a separate wallet path. Acorn groups
+them by exact mint and CMU, keeps them out of the Cash Balance, and preserves
+pending receipts until the user accepts or deletes them.
+
 </article>
 
 <article class="acorn-card" markdown>
@@ -217,6 +221,11 @@ to become permanent loss of continuity.
 Acorn has demonstrated encrypted private records, Cashu and Lightning flows,
 gift-wrapped ecash delivery, wallet recovery, relay replication, and operation
 against independently run relays and mints.
+
+It has also demonstrated private kind `7379` Clear transfer receipt from a
+public Clear mint, multi-mint Clear balance identity, Safebox Web display, and
+durable pending-transfer deletion. Finalization into spendable Clear state and
+onward Clear spending remain under development.
 
 Current work is focused on interrupted-transfer recovery, incoming-transfer
 idempotency, failure injection, clean async lifecycle handling, package

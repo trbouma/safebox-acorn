@@ -59,6 +59,11 @@ Acorn currently supports two principal classes:
 | Transferable funds | Hold, spend, transfer, receive, refresh, and recover ecash proofs. | The issuing mint validates whether proofs are spendable. |
 | Private records | Encrypt, store, retrieve, present, replicate, migrate, and request deletion. | An issuer or legal framework determines whether a claim is authentic or meaningful. |
 
+The emerging [Uniform Resource Model](uniform-resource-model.md) extends this
+initial split with a second independent axis: fungibility. That produces four
+resource classes covering transferable and non-transferable, fungible and
+non-fungible records.
+
 ## Funds are transferable controlled records
 
 Ecash is Acorn's concrete example of a transferable record. A mint issues
@@ -150,6 +155,7 @@ depend exclusively on one application interface.
 ## Reference basis
 
 - [Acorn Record Model](https://github.com/trbouma/safebox-acorn/blob/main/docs/ACORN-RECORD-MODEL.md)
+- [Uniform Resource Model Design Note](https://github.com/trbouma/safebox-acorn/blob/main/docs/UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md)
 - [Record Encryption Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/RECORD-ENCRYPTION-SPEC.md)
 - [Ecash Transfer Design](https://github.com/trbouma/safebox-acorn/blob/main/docs/ECASH-TRANSFER-KIND-7378-DESIGN.md)
 - [Mint Configuration Specification](https://github.com/trbouma/safebox-acorn/blob/main/docs/MINT-CONFIGURATION-SPEC.md)

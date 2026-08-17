@@ -82,10 +82,10 @@ including bearer tokens by default.
 ## Deleting a pending receipt
 
 `Acorn.delete_pending_clear_receipt(event_id)` lets a wallet user discard a
-pending Clear Payment before finalization. The operation is limited to receipts
+pending Clear transfer before finalization. The operation is limited to receipts
 whose status is `pending`.
 
-Deletion removes the Cashu bearer token and all payment metadata from the
+Deletion removes the Cashu bearer token and all transfer metadata from the
 relay-backed `clear_receipts` record. It retains only the source event ID,
 `deleted` status, and deletion timestamp as a tombstone. A later relay rescan
 recognizes that tombstone and skips the kind `7379` transfer instead of
@@ -164,10 +164,10 @@ validation happens after the gift wrap is decrypted.
 
 ## Current boundary
 
-Pending Clear receipts are visible and stored, but they are not yet refreshed
-into a spendable Clear balance. A future wallet layer should add explicit Clear
-receipt listing, accept/reject/finalize commands, mint-specific balance
-grouping, and spending rules by mint and CMU.
+Pending Clear transfers are visible, grouped by mint and CMU, and deletable,
+but they are not yet refreshed into a spendable Clear balance. The next wallet
+layer must add crash-recoverable accept/reject/finalize commands and spending
+rules for one exact mint and CMU.
 
 The proposed finalized wallet model is defined in
 [Acorn Clear Spendable Proof State Kinds 7380 and 7381](CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md).
