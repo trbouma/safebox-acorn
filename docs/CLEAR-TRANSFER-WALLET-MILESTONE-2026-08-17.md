@@ -14,7 +14,8 @@ recipient's Acorn key. The same Acorn continues to manage its sat-denominated
 Cash Balance independently.
 
 This is a working receive and storage milestone. Acceptance into spendable
-Clear proof state and onward wallet spending are not yet implemented.
+Pending receipt acceptance into separate Clear proof state is implemented.
+Onward Clear spending is not yet implemented.
 
 ## Why Acorn is the boundary
 

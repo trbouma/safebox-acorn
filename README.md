@@ -19,12 +19,15 @@ without requiring the Safebox web application.
 Acorn now receives NIP-59 kind `1059` gift wraps containing inner kind `7379`
 Clear transfers, validates them, and stores them in a pending journal separate
 from ordinary cash/ecash. It groups Clear state by exact mint and CMU, exposes
-kind `7380` proof-state and kind `7381` history foundations, and supports
-durable deletion of pending transfers without relay rediscovery.
+kind `7380` spendable proof state and kind `7381` append-only history, and
+supports durable acceptance or deletion of pending transfers without relay
+rediscovery.
 
 Safebox Web uses this path to show organization-issued Clear Balances beside,
-but never inside, the sat-denominated Cash Balance. Acceptance into spendable
-Clear proof state and onward wallet spending remain under development.
+but never inside, the sat-denominated Cash Balance. A user can accept a pending
+transfer in Safebox Web or with `acorn clear accept <event-id>`, then inspect it
+with `acorn clear balances` and `acorn clear history`. Onward Clear spending and
+the stronger pre-swap crash-recovery journal remain under development.
 
 [Read the Clear Transfer Wallet Milestone](./docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md).
 

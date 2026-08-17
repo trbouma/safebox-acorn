@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock
 
@@ -9,7 +10,7 @@ from monstr.event.event import Event
 
 from acorn import acorn as acorn_module
 from acorn.acorn import Acorn, CLEAR_HISTORY_KIND, CLEAR_PROOF_KIND
-from acorn.models import Proof
+from acorn.models import Proof, TokenV3, TokenV3Token
 
 
 class PlaintextNip44:
@@ -209,3 +210,71 @@ async def test_malformed_clear_proof_event_fails_without_changing_cash_state():
 
     assert acorn.balance == 999
     assert acorn.proofs[0].id == "cash-keyset"
+
+
+@pytest.mark.asyncio
+async def test_accept_pending_clear_receipt_refreshes_into_separate_state():
+    acorn = wallet()
+    acorn.known_mints = {}
+    acorn.acquire_lock = AsyncMock()
+    acorn.release_lock = AsyncMock()
+    event_id = "d" * 64
+    incoming = proof(25, "incoming-keyset", "7")
+    refreshed = proof(25, "active-keyset", "8")
+    token = TokenV3(
+        token=[TokenV3Token(mint="https://clear.example", proofs=[incoming])],
+        memo="guest passes",
+        unit="cmu-example",
+    ).serialize()
+    receipts = [{
+        "event_id": event_id,
+        "sender_pubkey": "sender-pubkey",
+        "token": token,
+        "mint": "https://clear.example",
+        "amount": 25,
+        "unit": "cmu-example",
+        "comment": "guest passes",
+        "timestamp": 1_786_430_400,
+        "status": "pending",
+    }]
+    written: list[list[dict]] = []
+
+    acorn.get_wallet_info = AsyncMock(return_value=json.dumps(receipts))
+
+    async def save_receipts(_label, value, verify):
+        assert verify is True
+        written.append(json.loads(value))
+
+    acorn.set_wallet_info = AsyncMock(side_effect=save_receipts)
+    acorn._load_clear_proof_state = AsyncMock(return_value=[])
+    acorn.swap_proofs = AsyncMock(return_value=[refreshed])
+    acorn.add_clear_proof_event = AsyncMock(
+        return_value={"event_id": "e" * 64, "verified": True}
+    )
+    acorn.get_clear_transaction_history = AsyncMock(return_value=[])
+    acorn.add_clear_transaction_history = AsyncMock(
+        return_value={"event_id": "f" * 64, "verified": True}
+    )
+    cash_proofs = list(acorn.proofs)
+
+    result = await acorn.accept_pending_clear_receipt(event_id)
+
+    assert result["accepted"] is True
+    assert result["amount"] == 25
+    acorn.swap_proofs.assert_awaited_once_with(
+        [incoming],
+        mint_base="https://clear.example",
+        unit="cmu-example",
+    )
+    acorn.add_clear_proof_event.assert_awaited_once_with(
+        mint="https://clear.example",
+        unit="cmu-example",
+        proofs=[refreshed],
+        source_receipts=[event_id],
+        verify=True,
+    )
+    acorn.add_clear_transaction_history.assert_awaited_once()
+    assert written[0][0]["status"] == "accepted"
+    assert "token" not in written[0][0]
+    assert acorn.balance == 999
+    assert acorn.proofs == cash_proofs

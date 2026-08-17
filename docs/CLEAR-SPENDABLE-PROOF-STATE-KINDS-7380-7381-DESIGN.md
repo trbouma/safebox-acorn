@@ -2,9 +2,10 @@
 
 ## Status
 
-Foundation implemented: encrypted event writing, strict loading, grouped
-balances, append-only history, read-only CLI access, replication, and wallet
-burn coverage. Receipt acceptance, mint refresh, recovery journaling, and
+Initial acceptance implemented: encrypted event writing, strict loading,
+grouped balances, mint refresh, append-only history, CLI acceptance and
+inspection, Safebox Web acceptance, replication, and cash-wallet isolation
+coverage. The pre-swap recovery journal, proof verification, and onward
 spending remain proposed.
 
 Kind assignments `7380` and `7381` are provisional Acorn application kinds and
@@ -387,8 +388,8 @@ The implementation must preserve all of these invariants:
 ## Compatibility and migration
 
 No migration is required for the current implementation. Existing kind `7379`
-receipts remain pending in `clear_receipts` until the acceptance workflow is
-available.
+receipts remain pending in `clear_receipts` until the user accepts or deletes
+them.
 
 Older Acorn clients will ignore kinds `7380` and `7381`. They will therefore
 under-report Clear balances but must continue to load cash safely. A wallet

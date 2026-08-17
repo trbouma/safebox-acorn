@@ -2085,6 +2085,35 @@ def clear_balances(json_output):
     click.echo(_format_clear_balances(balances))
 
 
+@clear_wallet.command("accept", help="Accept a pending Clear transfer")
+@click.argument("event_id")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def clear_accept(event_id, json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    try:
+        asyncio.run(acorn_obj.load_data())
+        result = asyncio.run(acorn_obj.accept_pending_clear_receipt(event_id))
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Unable to accept Clear transfer: {exc}") from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+    click.echo(
+        f"Accepted {result['amount']} {result['unit']} into the spendable "
+        f"Clear balance for {result['mint']}."
+    )
+
+
 @clear_wallet.command("history", help="Show append-only Clear transaction history")
 @click.option("--mint", default=None, help="Filter by exact mint URL.")
 @click.option("--unit", default=None, help="Filter by canonical CMU.")

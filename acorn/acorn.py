@@ -5317,6 +5317,175 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+    async def accept_pending_clear_receipt(self, event_id: str) -> Dict[str, Any]:
+        """Refresh one pending Clear transfer into spendable Clear proof state."""
+
+        normalized_id = self._normalize_clear_event_ids(
+            [event_id],
+            field="event_id",
+        )[0]
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            raw_receipts = await self.get_wallet_info(CLEAR_RECEIPTS_LABEL)
+            try:
+                receipts = json.loads(raw_receipts) if raw_receipts else []
+            except (ValueError, TypeError, json.JSONDecodeError) as exc:
+                raise RuntimeError("Clear receipt journal is unreadable") from exc
+            if not isinstance(receipts, list) or not all(
+                isinstance(item, dict) for item in receipts
+            ):
+                raise RuntimeError("Clear receipt journal has an invalid format")
+
+            receipt_index = next(
+                (
+                    index
+                    for index, item in enumerate(receipts)
+                    if str(item.get("event_id") or "").lower() == normalized_id
+                ),
+                None,
+            )
+            if receipt_index is None:
+                raise ValueError("Pending Clear receipt was not found")
+
+            receipt = receipts[receipt_index]
+            receipt_status = str(receipt.get("status") or "pending")
+            if receipt_status == "accepted":
+                return {
+                    "status": "OK",
+                    "event_id": normalized_id,
+                    "accepted": True,
+                    "already_accepted": True,
+                    "amount": int(receipt.get("amount") or 0),
+                    "mint": str(receipt.get("mint") or ""),
+                    "unit": str(receipt.get("unit") or ""),
+                    "proof_event_ids": list(receipt.get("proof_event_ids") or []),
+                }
+            if receipt_status != "pending":
+                raise ValueError("Only pending Clear receipts can be accepted")
+
+            token = str(receipt.get("token") or "")
+            if not token:
+                raise RuntimeError("Pending Clear receipt has no bearer token")
+            token_obj = TokenV3.deserialize(token)
+            mint = normalize_mint_url(str(receipt.get("mint") or ""))
+            unit = self._normalize_clear_unit(receipt.get("unit"))
+            token_mints = {
+                normalize_mint_url(str(candidate))
+                for candidate in token_obj.get_mints()
+            }
+            if token_mints != {mint}:
+                raise ValueError("Clear receipt mint does not match its token")
+            if self._normalize_clear_unit(token_obj.unit) != unit:
+                raise ValueError("Clear receipt unit does not match its token")
+            incoming_proofs = token_obj.get_proofs()
+            amount = int(token_obj.get_amount())
+            if amount <= 0 or amount != int(receipt.get("amount") or 0):
+                raise ValueError("Clear receipt amount does not match its token")
+
+            proof_records = [
+                record
+                for record in await self._load_clear_proof_state()
+                if normalized_id in record["state"].source_receipts
+            ]
+            if proof_records:
+                if any(
+                    record["state"].mint != mint or record["state"].unit != unit
+                    for record in proof_records
+                ):
+                    raise RuntimeError(
+                        "Existing Clear proof state does not match its receipt"
+                    )
+                unique_refreshed = {
+                    (str(proof.id), str(proof.secret)): proof
+                    for record in proof_records
+                    for proof in record["state"].proofs
+                }
+                refreshed_proofs = list(unique_refreshed.values())
+                proof_event_ids = [record["event_id"] for record in proof_records]
+            else:
+                for proof in incoming_proofs:
+                    self.known_mints[str(proof.id)] = mint
+                refreshed_proofs = await self.swap_proofs(
+                    incoming_proofs,
+                    mint_base=mint,
+                    unit=unit,
+                )
+                if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
+                    raise RuntimeError("Mint swap returned the wrong Clear amount")
+                proof_result = await self.add_clear_proof_event(
+                    mint=mint,
+                    unit=unit,
+                    proofs=refreshed_proofs,
+                    source_receipts=[normalized_id],
+                    verify=True,
+                )
+                proof_event_ids = [str(proof_result["event_id"])]
+            if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
+                raise RuntimeError("Stored Clear proof amount does not match its receipt")
+            for proof in refreshed_proofs:
+                self.known_mints[str(proof.id)] = mint
+
+            history_entries = await self.get_clear_transaction_history(
+                operation="accept"
+            )
+            history_result = next(
+                (
+                    entry
+                    for entry in history_entries
+                    if str(entry.get("source_event") or "") == normalized_id
+                ),
+                None,
+            )
+            if history_result is None:
+                history_result = await self.add_clear_transaction_history(
+                    direction="in",
+                    operation="accept",
+                    amount=amount,
+                    mint=mint,
+                    unit=unit,
+                    memo=str(receipt.get("comment") or ""),
+                    created=proof_event_ids,
+                    source_event=normalized_id,
+                    counterparty=str(receipt.get("sender_pubkey") or ""),
+                    verify=True,
+                )
+
+            accepted_receipt = {
+                key: value
+                for key, value in receipt.items()
+                if key != "token"
+            }
+            accepted_receipt.update(
+                {
+                    "status": "accepted",
+                    "accepted_at": int(datetime.now().timestamp()),
+                    "proof_event_ids": proof_event_ids,
+                    "history_event_id": str(history_result.get("event_id") or ""),
+                }
+            )
+            receipts[receipt_index] = accepted_receipt
+            await self.set_wallet_info(
+                CLEAR_RECEIPTS_LABEL,
+                json.dumps(receipts, separators=(",", ":")),
+                verify=True,
+            )
+            return {
+                "status": "OK",
+                "event_id": normalized_id,
+                "accepted": True,
+                "already_accepted": False,
+                "amount": amount,
+                "mint": mint,
+                "unit": unit,
+                "proof_event_ids": proof_event_ids,
+                "history_event_id": str(history_result.get("event_id") or ""),
+            }
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
     async def sweep_clear_transfers(
         self,
         since: int | None = None,
@@ -9806,7 +9975,13 @@ class Acorn:
             "verified": bool(verify),
         }
 
-    async def swap_proofs(self, incoming_swap_proofs: List[Proof]):
+    async def swap_proofs(
+        self,
+        incoming_swap_proofs: List[Proof],
+        *,
+        mint_base: str | None = None,
+        unit: str | None = None,
+    ):
         '''This function swaps proofs'''
         self.logger.debug("Swap proofs")
         if not incoming_swap_proofs:
@@ -9822,15 +9997,28 @@ class Acorn:
         
         #keyset_url = f"{self.mints[0]}/v1/keysets"
         proof_keyset = incoming_swap_proofs[0].id
-        mint_base = self.known_mints.get(proof_keyset)
+        mint_base = mint_base or self.known_mints.get(proof_keyset)
         if not mint_base:
             raise RuntimeError(f"Unknown mint for keyset id: {proof_keyset}")
+        mint_base = normalize_mint_url(mint_base)
 
         keyset_url = f"{mint_base}/v1/keysets"
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(keyset_url, headers=headers)
             response.raise_for_status()
-            keyset = response.json()['keysets'][0]['id']
+            keysets = response.json().get("keysets") or []
+            if unit is not None:
+                normalized_unit = self._normalize_clear_unit(unit)
+                keysets = [
+                    candidate
+                    for candidate in keysets
+                    if str(candidate.get("unit") or "").strip() == normalized_unit
+                    and candidate.get("active", True)
+                ]
+            if not keysets:
+                qualifier = f" for unit {unit}" if unit is not None else ""
+                raise RuntimeError(f"Mint has no active keyset{qualifier}")
+            keyset = keysets[0]["id"]
 
         swap_url = f"{mint_base}/v1/swap"
         swap_proofs = []
