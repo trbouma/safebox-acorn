@@ -1166,6 +1166,115 @@ def test_receive_clear_command_stores_pending_receipts(monkeypatch, tmp_path):
     assert "Pending Clear transactions: 25 unit(s) in 1 receipt(s)" in result.output
 
 
+def test_clear_balances_command_reports_each_mint_and_unit(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def load_data(self):
+            return None
+
+        async def get_clear_balances(self):
+            return [
+                {
+                    "mint": "https://clear.one",
+                    "unit": "cmu-one",
+                    "amount": 25,
+                    "proof_count": 3,
+                    "event_ids": ["a" * 64],
+                    "keysets": [
+                        {"keyset": "keyset-one", "amount": 25, "proof_count": 3}
+                    ],
+                },
+                {
+                    "mint": "https://clear.two",
+                    "unit": "cmu-two",
+                    "amount": 8,
+                    "proof_count": 1,
+                    "event_ids": ["b" * 64],
+                    "keysets": [
+                        {"keyset": "keyset-two", "amount": 8, "proof_count": 1}
+                    ],
+                },
+            ]
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    text_result = CliRunner().invoke(cli.clear_wallet, ["balances"])
+    json_result = CliRunner().invoke(cli.clear_wallet, ["balances", "--json"])
+
+    assert text_result.exit_code == 0
+    assert "Clear balances:" in text_result.output
+    assert "25 cmu-one from https://clear.one in 3 proof(s)" in text_result.output
+    assert "8 cmu-two from https://clear.two in 1 proof(s)" in text_result.output
+    assert "keyset keyset-one: 25 in 3 proof(s)" in text_result.output
+    assert json_result.exit_code == 0
+    payload = json.loads(json_result.output)
+    assert payload["status"] == "OK"
+    assert len(payload["balances"]) == 2
+    assert payload["balances"][0]["unit"] == "cmu-one"
+
+
+def test_clear_history_command_filters_and_formats_journal(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+    calls = []
+
+    class FakeAcorn:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+        async def load_data(self):
+            return None
+
+        async def get_clear_transaction_history(self, **kwargs):
+            calls.append(kwargs)
+            return [
+                {
+                    "event_id": "c" * 64,
+                    "direction": "out",
+                    "operation": "send",
+                    "amount": 5,
+                    "mint": "https://clear.one",
+                    "unit": "cmu-one",
+                    "timestamp": 100,
+                    "memo": "community supplies",
+                }
+            ]
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(
+        cli.clear_wallet,
+        [
+            "history",
+            "--mint",
+            "https://clear.one",
+            "--unit",
+            "cmu-one",
+            "--direction",
+            "out",
+            "--operation",
+            "send",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert "Clear transaction history:" in result.output
+    assert "-5 cmu-one send" in result.output
+    assert "Mint: https://clear.one" in result.output
+    assert "Memo: community supplies" in result.output
+    assert calls == [
+        {
+            "mint": "https://clear.one",
+            "unit": "cmu-one",
+            "direction": "out",
+            "operation": "send",
+        }
+    ]
+
+
 def test_format_proof_check_emphasizes_read_only_result(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 

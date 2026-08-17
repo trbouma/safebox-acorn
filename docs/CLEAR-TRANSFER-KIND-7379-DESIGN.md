@@ -154,3 +154,5 @@ into a spendable Clear balance. A future wallet layer should add explicit Clear
 receipt listing, accept/reject/finalize commands, mint-specific balance
 grouping, and spending rules by mint and CMU.
 
+The proposed finalized wallet model is defined in
+[Acorn Clear Spendable Proof State Kinds 7380 and 7381](CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md).

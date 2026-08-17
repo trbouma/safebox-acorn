@@ -74,7 +74,7 @@ from acorn.secp import PrivateKey, PublicKey
 from acorn.lightning import lightning_address_pay, lnaddress_to_lnurl, zap_address_pay
 from acorn.nostr import bech32_to_hex, hex_to_bech32, nip05_to_npub, create_nembed_compressed,parse_nembed_compressed
 
-from acorn.models import nostrProfile, SafeboxItem, mintRequest, mintQuote, BlindedMessage, Proof, Proofs, proofEvent, proofEvents, KeysetsResponse, PostMeltQuoteResponse, walletQuote, NIP60Proofs
+from acorn.models import nostrProfile, SafeboxItem, mintRequest, mintQuote, BlindedMessage, Proof, Proofs, proofEvent, proofEvents, KeysetsResponse, PostMeltQuoteResponse, walletQuote, NIP60Proofs, ClearProofState, ClearTransactionHistory
 from acorn.models import TokenV3, TokenV3Token, cliQuote, proofsByKeyset, Zevent
 from acorn.models import TokenV4, TokenV4Token
 from acorn.models import WalletConfig, WalletRecord,WalletReservedRecords
@@ -135,13 +135,27 @@ ECASH_TRANSFER_LEGACY_EVENT_ID: str = "f" * 64
 CLEAR_TRANSFER_KIND: int = 7379
 CLEAR_TRANSFER_CURSOR_LABEL: str = "clear_transfer_latest"
 CLEAR_RECEIPTS_LABEL: str = "clear_receipts"
+CLEAR_PROOF_KIND: int = 7380
+CLEAR_HISTORY_KIND: int = 7381
 
 
 class MalformedIncomingTransfer(ValueError):
     """An incoming transfer is structurally invalid and safe to skip."""
 
 
-BURN_DEFAULT_KINDS: List[int] = [0, 5, 37375, 37376, 7375, ECASH_TRANSFER_KIND, 30000, 30001, 30002]
+BURN_DEFAULT_KINDS: List[int] = [
+    0,
+    5,
+    37375,
+    37376,
+    7375,
+    ECASH_TRANSFER_KIND,
+    CLEAR_PROOF_KIND,
+    CLEAR_HISTORY_KIND,
+    30000,
+    30001,
+    30002,
+]
 RECEIVE_PROOF_MAINTENANCE_ENABLED: bool = os.getenv(
     "RECEIVE_PROOF_MAINTENANCE_ENABLED",
     "false",
@@ -434,6 +448,8 @@ class Acorn:
             37375,
             37376,
             7375,
+            CLEAR_PROOF_KIND,
+            CLEAR_HISTORY_KIND,
             30000,
             30001,
             30002,
@@ -2631,6 +2647,378 @@ class Acorn:
                 tx_history.append(json_obj)         
            
         return tx_history
+
+
+    @staticmethod
+    def _normalize_clear_unit(unit: str) -> str:
+        normalized = str(unit or "").strip()
+        if not normalized or len(normalized) > 128 or not normalized.startswith("cmu-"):
+            raise ValueError("Clear unit must be a canonical CMU beginning with 'cmu-'")
+        if any(character.isspace() for character in normalized):
+            raise ValueError("Clear unit must not contain whitespace")
+        return normalized
+
+    @staticmethod
+    def _normalize_clear_event_ids(values: List[str] | None, *, field: str) -> List[str]:
+        normalized: List[str] = []
+        for value in values or []:
+            event_id = str(value or "").strip().lower()
+            if len(event_id) != 64 or any(character not in string.hexdigits for character in event_id):
+                raise ValueError(f"{field} must contain 64-character hexadecimal event IDs")
+            if event_id not in normalized:
+                normalized.append(event_id)
+        return normalized
+
+    @classmethod
+    def _validate_clear_proof_state(cls, payload: object) -> ClearProofState:
+        state = ClearProofState.model_validate(payload)
+        state.mint = normalize_mint_url(state.mint)
+        state.unit = cls._normalize_clear_unit(state.unit)
+        state.deleted_event_ids = cls._normalize_clear_event_ids(
+            state.deleted_event_ids,
+            field="del",
+        )
+        state.source_receipts = cls._normalize_clear_event_ids(
+            state.source_receipts,
+            field="source_receipts",
+        )
+        if not state.proofs:
+            raise ValueError("Clear proof state must contain at least one proof")
+        identities: set[tuple[str, str]] = set()
+        for proof in state.proofs:
+            if not proof.id or not str(proof.secret) or not str(proof.C):
+                raise ValueError("Every Clear proof requires id, secret, and C")
+            if int(proof.amount) <= 0:
+                raise ValueError("Every Clear proof amount must be positive")
+            identity = (str(proof.id), str(proof.secret))
+            if identity in identities:
+                raise ValueError("Clear proof state contains a duplicate proof")
+            identities.add(identity)
+        return state
+
+    @classmethod
+    def _validate_clear_history(cls, payload: object) -> ClearTransactionHistory:
+        entry = ClearTransactionHistory.model_validate(payload)
+        entry.mint = normalize_mint_url(entry.mint)
+        entry.unit = cls._normalize_clear_unit(entry.unit)
+        if int(entry.amount) <= 0:
+            raise ValueError("Clear transaction amount must be positive")
+        if int(entry.timestamp) <= 0:
+            raise ValueError("Clear transaction timestamp must be positive")
+        entry.created = cls._normalize_clear_event_ids(entry.created, field="created")
+        entry.destroyed = cls._normalize_clear_event_ids(
+            entry.destroyed,
+            field="destroyed",
+        )
+        if entry.source_event:
+            entry.source_event = cls._normalize_clear_event_ids(
+                [entry.source_event],
+                field="source_event",
+            )[0]
+        return entry
+
+    async def _publish_clear_event(
+        self,
+        *,
+        kind: int,
+        payload_json: str,
+        verify: bool,
+        verify_timeout: float,
+    ) -> dict:
+        encrypted = NIP44Encrypt(self.k).encrypt(
+            payload_json,
+            to_pub_k=self.pubkey_hex,
+        )
+        event = Event(kind=kind, content=encrypted, pub_key=self.pubkey_hex)
+        event.sign(self.privkey_hex)
+        event_id = str(event.id)
+
+        async with ClientPool([self.home_relay]) as client:
+            client.publish(event)
+            await asyncio.sleep(0.2)
+
+        if verify:
+            verify_filter = [{
+                "limit": 1,
+                "authors": [self.pubkey_hex],
+                "kinds": [kind],
+                "ids": [event_id],
+            }]
+            deadline = monotonic() + max(0.5, float(verify_timeout))
+            observed = False
+            last_error = None
+            while monotonic() < deadline:
+                try:
+                    async with ClientPool([self.home_relay]) as client:
+                        readback = await client.query(verify_filter)
+                    observed = any(str(each.id) == event_id for each in readback)
+                    if observed:
+                        break
+                    async with ClientPool([self.home_relay]) as client:
+                        client.publish(event)
+                except Exception as exc:
+                    last_error = exc
+                await asyncio.sleep(0.4)
+            if not observed:
+                detail = f" Last relay error: {last_error}" if last_error else ""
+                raise RuntimeError(
+                    f"Clear kind {kind} publish could not be verified on "
+                    f"{self.home_relay}. Event ID: {event_id}." + detail
+                )
+
+        return {
+            "status": "OK",
+            "kind": kind,
+            "event_id": event_id,
+            "relay": self.home_relay,
+            "verified": bool(verify),
+        }
+
+    async def add_clear_proof_event(
+        self,
+        *,
+        mint: str,
+        unit: str,
+        proofs: List[Proof | dict],
+        deleted_event_ids: List[str] | None = None,
+        source_receipts: List[str] | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> dict:
+        """Publish one encrypted spendable Clear proof-state event."""
+
+        state = self._validate_clear_proof_state(
+            {
+                "type": "clear-proof-state",
+                "version": 1,
+                "mint": mint,
+                "unit": unit,
+                "proofs": proofs,
+                "del": deleted_event_ids or [],
+                "source_receipts": source_receipts or [],
+            }
+        )
+        return await self._publish_clear_event(
+            kind=CLEAR_PROOF_KIND,
+            payload_json=state.model_dump_json(by_alias=True, exclude_none=True),
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def _load_clear_proof_state(self) -> List[dict]:
+        proof_filter = [{
+            "limit": RECORD_LIMIT,
+            "authors": [self.pubkey_hex],
+            "kinds": [CLEAR_PROOF_KIND],
+        }]
+        deletion_filter = [{
+            "limit": RECORD_LIMIT,
+            "authors": [self.pubkey_hex],
+            "kinds": [Event.KIND_DELETE],
+        }]
+        async with ClientPool([self.home_relay]) as client:
+            events = await client.query(proof_filter)
+            deletion_events = await client.query(deletion_filter)
+
+        deleted_event_ids = {
+            str(tag[1]).lower()
+            for deletion_event in deletion_events
+            for tag in (deletion_event.tags or [])
+            if len(tag) >= 2 and tag[0] == "e"
+        }
+        decryptor = NIP44Encrypt(self.k)
+        parsed: List[dict] = []
+        superseded_event_ids: set[str] = set()
+        for event in events:
+            event_id = str(event.id).lower()
+            try:
+                content = decryptor.decrypt(event.content, self.pubkey_hex)
+                state = self._validate_clear_proof_state(json.loads(content))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Clear proof-state event {event_id} is invalid"
+                ) from exc
+            superseded_event_ids.update(state.deleted_event_ids)
+            parsed.append({"event_id": event_id, "state": state})
+
+        return [
+            record
+            for record in parsed
+            if record["event_id"] not in deleted_event_ids
+            and record["event_id"] not in superseded_event_ids
+        ]
+
+    async def get_clear_proofs(self, mint: str, unit: str) -> List[Proof]:
+        """Return deduplicated proofs for one exact Clear balance."""
+
+        normalized_mint = normalize_mint_url(mint)
+        normalized_unit = self._normalize_clear_unit(unit)
+        unique: dict[tuple[str, str], Proof] = {}
+        for record in await self._load_clear_proof_state():
+            state: ClearProofState = record["state"]
+            if state.mint != normalized_mint or state.unit != normalized_unit:
+                continue
+            for proof in state.proofs:
+                unique.setdefault((str(proof.id), str(proof.secret)), proof)
+        return list(unique.values())
+
+    async def get_clear_balances(self) -> List[dict]:
+        """Return spendable Clear balances grouped by exact mint and CMU."""
+
+        balances: dict[tuple[str, str], dict] = {}
+        seen: set[tuple[str, str, str, str]] = set()
+        for record in await self._load_clear_proof_state():
+            state: ClearProofState = record["state"]
+            key = (state.mint, state.unit)
+            row = balances.setdefault(
+                key,
+                {
+                    "mint": state.mint,
+                    "unit": state.unit,
+                    "amount": 0,
+                    "proof_count": 0,
+                    "event_ids": [],
+                    "keysets": {},
+                },
+            )
+            if record["event_id"] not in row["event_ids"]:
+                row["event_ids"].append(record["event_id"])
+            for proof in state.proofs:
+                identity = (state.mint, state.unit, str(proof.id), str(proof.secret))
+                if identity in seen:
+                    continue
+                seen.add(identity)
+                amount = int(proof.amount)
+                row["amount"] += amount
+                row["proof_count"] += 1
+                keyset = row["keysets"].setdefault(
+                    str(proof.id),
+                    {"keyset": str(proof.id), "amount": 0, "proof_count": 0},
+                )
+                keyset["amount"] += amount
+                keyset["proof_count"] += 1
+
+        result: List[dict] = []
+        for row in balances.values():
+            row["event_ids"] = sorted(row["event_ids"])
+            row["keysets"] = sorted(
+                row["keysets"].values(),
+                key=lambda keyset: keyset["keyset"],
+            )
+            result.append(row)
+        return sorted(result, key=lambda row: (row["mint"], row["unit"]))
+
+    async def delete_clear_proof_events(
+        self,
+        event_ids: List[str],
+        *,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> dict:
+        normalized_ids = self._normalize_clear_event_ids(event_ids, field="event_ids")
+        return await self._async_delete_events_by_ids(
+            normalized_ids,
+            record_kind=CLEAR_PROOF_KIND,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def add_clear_transaction_history(
+        self,
+        *,
+        direction: str,
+        operation: str,
+        amount: int,
+        mint: str,
+        unit: str,
+        memo: str = "",
+        created: List[str] | None = None,
+        destroyed: List[str] | None = None,
+        source_event: str = "",
+        counterparty: str = "",
+        timestamp: int | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> dict:
+        """Append one encrypted, informational Clear transaction entry."""
+
+        entry = self._validate_clear_history(
+            {
+                "type": "clear-transaction",
+                "version": 1,
+                "direction": direction,
+                "operation": operation,
+                "amount": amount,
+                "mint": mint,
+                "unit": unit,
+                "timestamp": int(timestamp or time()),
+                "memo": str(memo or ""),
+                "created": created or [],
+                "destroyed": destroyed or [],
+                "source_event": source_event,
+                "counterparty": str(counterparty or ""),
+            }
+        )
+        return await self._publish_clear_event(
+            kind=CLEAR_HISTORY_KIND,
+            payload_json=entry.model_dump_json(exclude_none=True),
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def get_clear_transaction_history(
+        self,
+        *,
+        mint: str | None = None,
+        unit: str | None = None,
+        direction: str | None = None,
+        operation: str | None = None,
+    ) -> List[dict]:
+        """Read the append-only Clear journal newest-first."""
+
+        normalized_mint = normalize_mint_url(mint) if mint else None
+        normalized_unit = self._normalize_clear_unit(unit) if unit else None
+        if direction is not None and direction not in {"in", "out"}:
+            raise ValueError("Clear history direction must be 'in' or 'out'")
+        allowed_operations = {"accept", "send", "receive", "retire", "repair"}
+        if operation is not None and operation not in allowed_operations:
+            raise ValueError("Unknown Clear history operation")
+
+        history_filter = [{
+            "limit": RECORD_LIMIT,
+            "authors": [self.pubkey_hex],
+            "kinds": [CLEAR_HISTORY_KIND],
+        }]
+        async with ClientPool([self.home_relay]) as client:
+            events = await client.query(history_filter)
+
+        decryptor = NIP44Encrypt(self.k)
+        entries: List[dict] = []
+        for event in events:
+            event_id = str(event.id).lower()
+            try:
+                content = decryptor.decrypt(event.content, self.pubkey_hex)
+                entry = self._validate_clear_history(json.loads(content))
+            except Exception as exc:
+                raise RuntimeError(
+                    f"Clear transaction-history event {event_id} is invalid"
+                ) from exc
+            if normalized_mint is not None and entry.mint != normalized_mint:
+                continue
+            if normalized_unit is not None and entry.unit != normalized_unit:
+                continue
+            if direction is not None and entry.direction != direction:
+                continue
+            if operation is not None and entry.operation != operation:
+                continue
+            rendered = entry.model_dump(mode="json")
+            rendered["event_id"] = event_id
+            entries.append(rendered)
+        return sorted(
+            entries,
+            key=lambda entry: (int(entry["timestamp"]), entry["event_id"]),
+            reverse=True,
+        )
 
 
     async def set_wallet_config(self):

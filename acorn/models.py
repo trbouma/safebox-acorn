@@ -1,5 +1,5 @@
-from pydantic import BaseModel, ConfigDict
-from typing import Union, List, Optional
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal, Union, List, Optional
 from typing import Any, Dict
 import hashlib
 from binascii import hexlify
@@ -633,6 +633,36 @@ class Zevent(Event):
 class NIP60Proofs(BaseModel):
     mint: str
     proofs: List[Proof] = []
+
+
+class ClearProofState(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    type: Literal["clear-proof-state"] = "clear-proof-state"
+    version: Literal[1] = 1
+    mint: str
+    unit: str
+    proofs: List[Proof] = Field(default_factory=list)
+    deleted_event_ids: List[str] = Field(default_factory=list, alias="del")
+    source_receipts: List[str] = Field(default_factory=list)
+
+
+class ClearTransactionHistory(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["clear-transaction"] = "clear-transaction"
+    version: Literal[1] = 1
+    direction: Literal["in", "out"]
+    operation: Literal["accept", "send", "receive", "retire", "repair"]
+    amount: int
+    mint: str
+    unit: str
+    timestamp: int
+    memo: str = ""
+    created: List[str] = Field(default_factory=list)
+    destroyed: List[str] = Field(default_factory=list)
+    source_event: str = ""
+    counterparty: str = ""
 
 class TxHistory(BaseModel):
     create_time: int

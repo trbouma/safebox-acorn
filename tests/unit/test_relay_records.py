@@ -498,3 +498,37 @@ async def test_replication_requires_target_readback_and_reports_limit(monkeypatc
 
     assert limited["status"] == "PARTIAL"
     assert limited["source_may_be_truncated"] is True
+
+
+@pytest.mark.asyncio
+async def test_default_replication_includes_clear_proof_state_and_history(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    observed_filters = []
+
+    class EmptyReplicationPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def publish(self, _event):
+            pass
+
+        async def query(self, filters):
+            observed_filters.append(filters[0])
+            return []
+
+    monkeypatch.setattr(acorn_module, "ClientPool", EmptyReplicationPool)
+    monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+
+    result = await wallet.replicate_to_relay(target_relay="ws://target:7777")
+
+    assert 7380 in result["kinds"]
+    assert 7381 in result["kinds"]
+    assert observed_filters[0]["kinds"] == result["kinds"]

@@ -492,13 +492,36 @@ amount, and per-unit totals. These totals are not part of
 
 See [Acorn Clear Transfer Kind 7379](CLEAR-TRANSFER-KIND-7379-DESIGN.md).
 
-JSON output for these commands should include enough protocol detail for
+### Finalized Clear wallet state
+
+Finalized Clear wallet state uses separate provisional application kinds:
+
+```text
+spendable Clear proof state: kind 7380
+append-only Clear history: kind 7381
+```
+
+Read spendable Clear balances and history without changing proofs or contacting
+a mint:
+
+```sh
+acorn clear balances
+acorn clear balances --json
+acorn clear history
+acorn clear history --mint https://clear.example --unit cmu-example
+```
+
+Balances are grouped by exact `(mint, CMU)` identity and partitioned by keyset.
+They are not included in the sats balance. See
+[Acorn Clear Spendable Proof State Kinds 7380 and 7381](CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md).
+
+JSON output for Clear receive commands should include enough protocol detail for
 scripts to distinguish transport from transfer intent, including:
 
 ```json
 {
   "kind": 1059,
-  "transfer_kind": 7378,
+  "transfer_kind": 7379,
   "mode": "gift-wrapped"
 }
 ```

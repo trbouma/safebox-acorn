@@ -408,6 +408,42 @@ def _format_pending_clear(summary: dict) -> str:
     return "\n".join(lines)
 
 
+def _format_clear_balances(balances: list[dict]) -> str:
+    if not balances:
+        return "No spendable Clear balances."
+    lines = ["Clear balances:"]
+    for balance in balances:
+        lines.append(
+            f"- {balance['amount']} {balance['unit']} from {balance['mint']} "
+            f"in {balance['proof_count']} proof(s)"
+        )
+        for keyset in balance.get("keysets") or []:
+            lines.append(
+                f"  - keyset {keyset['keyset']}: {keyset['amount']} "
+                f"in {keyset['proof_count']} proof(s)"
+            )
+    return "\n".join(lines)
+
+
+def _format_clear_history(entries: list[dict]) -> str:
+    if not entries:
+        return "No Clear transaction history."
+    lines = ["Clear transaction history:"]
+    for entry in entries:
+        created = datetime.fromtimestamp(int(entry["timestamp"])).strftime(
+            "%Y-%m-%d %H:%M:%S"
+        )
+        sign = "+" if entry["direction"] == "in" else "-"
+        lines.append(
+            f"- {created} {sign}{entry['amount']} {entry['unit']} "
+            f"{entry['operation']}"
+        )
+        lines.append(f"  Mint: {entry['mint']}")
+        if entry.get("memo"):
+            lines.append(f"  Memo: {entry['memo']}")
+    return "\n".join(lines)
+
+
 def _lightning_capacity(acorn_obj: Acorn) -> dict:
     all_proofs, keyset_amounts = acorn_obj._proofs_by_keyset()
     candidates = [
@@ -2018,6 +2054,76 @@ def balance(json_output, show_mints, verify_mint_state):
         if show_mints:
             click.echo(_format_balance_by_mint(mint_balances))
 
+
+@click.group("clear", help="Inspect spendable Clear balances and history")
+def clear_wallet():
+    pass
+
+
+@clear_wallet.command("balances", help="Show spendable Clear balances")
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def clear_balances(json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    try:
+        asyncio.run(acorn_obj.load_data())
+        balances = asyncio.run(acorn_obj.get_clear_balances())
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Unable to load Clear balances: {exc}") from exc
+
+    if json_output:
+        _emit_json({"status": "OK", "balances": balances})
+        return
+    click.echo(_format_clear_balances(balances))
+
+
+@clear_wallet.command("history", help="Show append-only Clear transaction history")
+@click.option("--mint", default=None, help="Filter by exact mint URL.")
+@click.option("--unit", default=None, help="Filter by canonical CMU.")
+@click.option("--direction", type=click.Choice(["in", "out"]), default=None)
+@click.option(
+    "--operation",
+    type=click.Choice(["accept", "send", "receive", "retire", "repair"]),
+    default=None,
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def clear_history(mint, unit, direction, operation, json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    try:
+        asyncio.run(acorn_obj.load_data())
+        entries = asyncio.run(
+            acorn_obj.get_clear_transaction_history(
+                mint=mint,
+                unit=unit,
+                direction=direction,
+                operation=operation,
+            )
+        )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Unable to load Clear history: {exc}") from exc
+
+    if json_output:
+        _emit_json({"status": "OK", "transactions": entries})
+        return
+    click.echo(_format_clear_history(entries))
+
 @click.command("receive-ecash", help="Receive incoming funds transfers into this Acorn")
 @click.option("--since", default=None, type=int, help="Override the incoming funds transfer cursor.")
 @click.option("--relay", "-r", default=None, help="Relay to sweep for incoming kind 1059 gift wraps or direct kind 7378 transfers.")
@@ -2846,6 +2952,7 @@ cli.add_command(delete_kind)
 cli.add_command(burn)
 cli.add_command(get_user_records)
 cli.add_command(balance)
+cli.add_command(clear_wallet)
 cli.add_command(ecash_transfer)
 cli.add_command(receive_ecash)
 cli.add_command(receive_clear)
