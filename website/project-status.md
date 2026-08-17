@@ -26,6 +26,7 @@ The project has working implementations of:
   while preserving pending or unknown proof state;
 - process-local and owned relay-lease serialization for wallet mutations;
 - NIP-59 gift-wrapped private ecash delivery;
+- separate pending receipt storage for NIP-59 Clear CMU token transfers;
 - transaction history shared between the CLI and Safebox web application;
 - relay replication, readback verification, and migration workflows;
 - operation against controlled and independently operated relays and mints;
@@ -117,6 +118,8 @@ or make large balances safe.
 Current users should assume that:
 
 - interfaces and stored payloads may still evolve;
+- pending Clear CMU receipts are visible but not yet finalized into a
+  spendable Clear balance;
 - interrupted value transfers need further hardening;
 - relays vary substantially in compatibility and retention;
 - mint reliability and liability remain outside Acorn's control;

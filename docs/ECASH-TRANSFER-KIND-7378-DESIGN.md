@@ -19,6 +19,8 @@ state:
 - kind `7375` remains the canonical encrypted wallet proof state;
 - kind `7377` remains transaction history;
 - kind `7378` identifies an incoming Acorn ecash transfer after unwrap;
+- kind `7379` identifies an incoming Clear token transfer after unwrap and is
+  stored separately as a pending Clear receipt;
 - kind `1059` is the default relay-visible delivery envelope.
 
 This separation is deliberate. A gift-wrapped kind `7375` could technically be
@@ -26,6 +28,10 @@ interpreted as a transfer, but it would overload the meaning of `7375`. Acorn
 keeps `7375` for durable spendable proof state and `7378` for transfer intent.
 After a transfer is accepted, refreshed proofs are merged into kind `7375`; the
 kind `7378` payload remains delivery/inbox material, not wallet state.
+
+Clear token transfers deliberately use inner kind `7379` instead. The ordinary
+ecash receiver skips those events so it does not treat Clear CMU tokens as
+malformed sats ecash. See [Acorn Clear Transfer Kind 7379](CLEAR-TRANSFER-KIND-7379-DESIGN.md).
 
 ## Motivation
 

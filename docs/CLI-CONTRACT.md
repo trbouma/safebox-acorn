@@ -453,6 +453,45 @@ command argument values or test environment variables. Named secret files must
 be regular files with mode `0600`; `-` means stdin. See
 [Secret Input Specification](SECRET-INPUT-SPEC.md).
 
+## Clear receive commands
+
+`acorn receive-clear` exposes the Clear token transfer path. It receives
+NIP-59 kind `1059` gift wraps containing inner kind `7379` Clear transfers and
+stores them as pending Clear receipts.
+
+Default Clear receive mode:
+
+```text
+outer relay-visible event: kind 1059
+inner Clear transfer: kind 7379
+pending storage label: clear_receipts
+receive cursor label: clear_transfer_latest
+```
+
+Clear receive is explicit and mutating, but it does not mutate ordinary sats
+proof state. It must not call `accept_token`, merge proofs into kind `7375`, or
+change the sats balance. It stores the Clear Cashu token and metadata in the
+separate pending Clear receipt journal.
+
+```sh
+acorn receive-clear
+acorn receive-clear --preview
+acorn receive-clear --json
+```
+
+`acorn balance` reports a pending Clear indication when pending receipts exist:
+
+```text
+Pending Clear transactions: 25 unit(s) in 1 receipt(s).
+- cmu-00ce29eeaf094301: 25 unit(s) in 1 receipt(s)
+```
+
+`acorn balance --json` includes a `pending_clear` object with aggregate count,
+amount, and per-unit totals. These totals are not part of
+`relay_visible_balance`, which remains the ordinary sats proof balance.
+
+See [Acorn Clear Transfer Kind 7379](CLEAR-TRANSFER-KIND-7379-DESIGN.md).
+
 JSON output for these commands should include enough protocol detail for
 scripts to distinguish transport from transfer intent, including:
 
