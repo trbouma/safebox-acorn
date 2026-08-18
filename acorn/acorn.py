@@ -21,12 +21,11 @@ from binascii import unhexlify
 import hashlib
 import signal, sys, string, cbor2, base64,os
 import contextlib
-from cryptography.exceptions import InvalidTag
 
 
 
 from monstr.encrypt import Keys
-from monstr.encrypt import NIP44Encrypt, NIP4Encrypt
+from monstr.encrypt import NIP44Encrypt
 from monstr.client.client import Client, ClientPool
 from monstr.event.event import Event
 
@@ -238,6 +237,7 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
         CLEAR_TRANSFER_CURSOR_LABEL,
         "home_relay",
         "index",
+        # Retired NIP-04 cursor; keep legacy records out of user-visible lists.
         "last_dm",
         "lock",
         "mints",
@@ -981,7 +981,6 @@ class Acorn:
         asyncio.run(self.set_wallet_info(label="relays", label_info=json.dumps(self.relays)))
         asyncio.run(self.set_wallet_info(label="quote", label_info='[]'))
         asyncio.run(self.set_wallet_info(label="index", label_info='{}'))
-        asyncio.run(self.set_wallet_info(label="last_dm", label_info='0'))
         asyncio.run(self.set_wallet_info(label="user_records", label_info='[]'))
         asyncio.run(self.set_wallet_info(label="payment_request", label_info='[]'))
 
@@ -1746,10 +1745,6 @@ class Acorn:
             self.logger.debug("op=replicate_safebox status=index")
             await self.set_wallet_info(label="index", label_info=index, replicate_relays=replicate_relays)
             
-            last_dm = await self.get_wallet_info(label="last_dm")
-            self.logger.debug("op=replicate_safebox status=last_dm")
-            await self.set_wallet_info(label="last_dm", label_info=last_dm, replicate_relays=replicate_relays)
-            
             self.logger.debug("op=replicate_safebox status=proofs count=%s", len(self.proofs))
             await self.add_proofs_obj(self.proofs, replicate_relays=replicate_relays)
             return profile
@@ -1797,31 +1792,6 @@ class Acorn:
            
             return posts
 
-    async def send_ecash_dm(self,amount: int, nrecipient: str, ecash_relays:List[str], comment: str ="Sent!"):
-        #FIXME Deprecate this function
-        relays = []
-        try:
-            if '@' in nrecipient:
-                npub_hex, relays = nip05_to_npub(nrecipient)
-                npub = hex_to_bech32(npub_hex)
-                self.logger.debug("op=send_ecash_dm status=resolved_npub npub=%s", npub)
-            else:
-                npub = nrecipient
-        except (ValueError, TypeError) as exc:
-            self.logger.warning("op=send_ecash_dm status=invalid_recipient recipient=%s error=%s", nrecipient, exc)
-            return "error"
-        try:
-            token_amount = await self.issue_token(amount=amount)
-            token_msg = comment +"\n\n" + token_amount
-        except (RuntimeError, ValueError, TypeError) as exc:
-            self.logger.warning("op=send_ecash_dm status=issue_failed amount=%s error=%s", amount, exc)
-            return "insufficient funds"
-        
-        self.logger.debug("op=send_ecash_dm status=sending relays=%s", ecash_relays)
-        out_msg = await self.secure_dm(nrecipient=npub,message=token_msg,dm_relays=ecash_relays)
-        # out_msg= asyncio.run(self._async_send_ecash_dm(token_msg,npub, ecash_relays+relays ))
-        return out_msg
-
     async def send_ecash(self,amount: int, nrecipient: str, ecash_relays:List[str], comment: str ="Sent!"):
         #FIXME Deprecate this function
         relays = []
@@ -1847,148 +1817,6 @@ class Acorn:
         
         return f" {amount} {out_msg}"    
 
-    async def _async_send_ecash_dm(self,token_message: str, npub: str, ecash_relays:List[str]):
-        self.logger.debug("op=send_ecash_dm status=npub npub=%s", npub)
-        
-        my_enc = NIP4Encrypt(self.k)
-        k_to_send = Keys(pub_k=npub)
-        k_to_send_pubkey_hex = k_to_send.public_key_hex()
-        self.logger.debug("op=send_ecash_dm status=to_pubkey pubkey=%s", k_to_send_pubkey_hex)
-        ecash_msg = token_message
-        # ecash_info_encrypt = my_enc.encrypt(ecash_msg,to_pub_k=k_to_send_pubkey_hex)
-
-        self.logger.debug("op=send_ecash_dm status=relays relays=%s", ecash_relays)
-        async with ClientPool(ecash_relays) as c:
-            n_msg = Event(kind=Event.KIND_ENCRYPT,
-                      content=ecash_msg,
-                      pub_key=k_to_send_pubkey_hex)
-
-            # print("are we here_async?", ecash_relays)
-            # returns event we to_p_tag and content encrypted
-            n_msg = my_enc.encrypt_event(evt=n_msg,
-                                    to_pub_k=k_to_send_pubkey_hex)
-
-            n_msg.sign(self.privkey_hex)
-            c.publish(n_msg)
-        
-        return f"{token_message} {ecash_msg} to {npub} {ecash_relays}"    
-    
-    
-    async def get_ecash_dm(self):
-        
-        
-        tags = ["#p", self.pubkey_hex]
-        # last_dm = float(self.get_wallet_info("last_dm"))
-        try:
-            last_dm = float(self.wallet_reserved_records['last_dm'])
-        except (KeyError, TypeError, ValueError) as exc:
-            last_dm = 0
-
-        # last_dm = 0
-        self.logger.debug("op=get_ecash_dm status=last_dm last_dm=%s", last_dm)
-        #TODO need to figure out why the kind is not 1059
-        dm_filter = [{
-            
-            'limit': RECORD_LIMIT, 
-            '#p'  :  [self.pubkey_hex],
-            'since': int(last_dm +1)
-            
-        }]
-        final_dm, tokens =await self._async_query_ecash_dm(dm_filter)
-        # final_dm, tokens =asyncio.run(self._async_query_secure_ecash_dm(dm_filter))
-        self.logger.debug("op=get_ecash_dm status=tokens_found count=%s", len(tokens))
-        for each in  tokens:
-            self.accept_token(each)
-        
-        self.logger.debug("op=get_ecash_dm status=final_dm final_dm=%s", final_dm)
-        await self.set_wallet_info("last_dm", str(final_dm))
-        # self.swap_multi_each()
-        
-        return final_dm
-    
-    async def _async_query_ecash_dm(self, filter: List[dict]):
-    # does a one off query to relay prints the events and exits
-        my_enc = NIP4Encrypt(self.k)
-        posts = ""
-        tags = []
-        tokens =[]
-        try:
-            last_dm = self.wallet_reserved_records['last_dm']
-        except (KeyError, TypeError, ValueError) as exc:
-            last_dm = 0
-        
-        final_dm = int(last_dm)
-        self.logger.debug("op=query_ecash_dm status=filter filter=%s", filter)
-        relay_pool = [self.home_relay] + self.relays
-        self.logger.debug("op=query_ecash_dm status=relays relays=%s", relay_pool)
-        async with ClientPool(relay_pool) as c:
-        # async with Client(relay) as c:
-            events: List[Event] = await c.query(filter)
-            self.logger.debug("op=query_ecash_dm status=events count=%s", len(events))
-            if events:
-                self.logger.debug("op=query_ecash_dm status=events_present")
-                for each in events:
-                    try:
-                        decrypt_content = my_enc.decrypt_event(each)
-                    except (InvalidTag, ValueError, TypeError) as exc:
-                        self.logger.debug("op=query_ecash_dm status=decrypt_skip")
-                        self.logger.debug("op=query_ecash_dm status=decrypt_failed event=%s error=%s", each.id, exc)
-                        continue
-                    
-                    self.logger.debug("op=query_ecash_dm status=message event_id=%s kind=%s", each.id, each.kind)
-                    # last_dm = each.created_at.timestamp() if each.created_at.timestamp() > last_dm else last_dm
-                    # print("last event update", datetime.fromtimestamp(last_dm),)
-
-                    dm_timestamp = int(each.created_at.timestamp())
-                    print ("final_dm, dm_timestamp:",final_dm, dm_timestamp)
-                    final_dm = dm_timestamp if dm_timestamp > final_dm else final_dm
-                    print ("final_dm, dm_timestamp:",final_dm, dm_timestamp)
-                    array_token = decrypt_content.content.splitlines()
-                    self.logger.debug("op=query_ecash_dm status=token_lines count=%s", len(array_token))
-                    
-                    for each in array_token:
-                        if self._is_cashu_token(each):
-                            self.logger.debug("op=query_ecash_dm status=token_found")
-                            token = each
-                            tokens.append(token)
-                            break
-            else:
-                self.logger.debug("op=query_ecash_dm status=no_events")
-                
-                
-        self.logger.debug("op=query_ecash_dm status=complete last_dm=%s", last_dm)
-        return final_dm, tokens          
-
-    async def _async_query_secure_ecash_dm(self, filter: List[dict]):
-    # does a one off query to relay prints the events and exits
-        my_enc = NIP4Encrypt(self.k)
-        posts = ""
-        tags = []
-        tokens =[]
-        
-        last_dm = self.wallet_reserved_records['last_dm']
-        final_dm = int(last_dm)
-        self.logger.debug("op=query_secure_ecash_dm status=filter filter=%s", filter)
-        relay_pool = [self.home_relay]+self.relays
-        self.logger.debug("op=query_secure_ecash_dm status=relays relays=%s", relay_pool)
-        async with ClientPool(relay_pool) as c:
-        # async with Client(relay) as c:
-            events: List[Event] = await c.query(filter)
-            self.logger.debug("op=query_secure_ecash_dm status=events count=%s", len(events))
-            if events:
-                self.logger.debug("op=query_secure_ecash_dm status=events_present")
-                for each in events:
-                   
-                    
-                    self.logger.debug("op=query_secure_ecash_dm status=message event_id=%s kind=%s", each.id, each.kind)
-                   
-            else:
-                self.logger.debug("op=query_secure_ecash_dm status=no_events")
-                
-                
-        self.logger.debug("op=query_secure_ecash_dm status=complete last_dm=%s", last_dm)
-        return final_dm, tokens               
-       
     async def delete_dms(self, tags):
          async with ClientPool([self.home_relay]+self.relays) as c:
             self.logger.debug("op=delete_dms status=start")

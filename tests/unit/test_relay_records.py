@@ -326,19 +326,6 @@ async def test_verified_record_write_reads_back_canonical_event(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_get_ecash_dm_awaits_cursor_write():
-    wallet = wallet_with_key()
-    wallet.wallet_reserved_records = {"last_dm": "0"}
-    wallet._async_query_ecash_dm = AsyncMock(return_value=(42, []))
-    wallet.set_wallet_info = AsyncMock(return_value={"status": "OK"})
-
-    result = await wallet.get_ecash_dm()
-
-    assert result == 42
-    wallet.set_wallet_info.assert_awaited_once_with("last_dm", "42")
-
-
-@pytest.mark.asyncio
 async def test_deferred_recovery_round_trip_stores_status_without_secrets(monkeypatch):
     wallet = wallet_with_key()
     stored = {}
