@@ -38,6 +38,7 @@ nav:
   - Understand Acorn:
       - How Acorn Works: how-acorn-works.md
       - Uniform Resource Model: uniform-resource-model.md
+      - Deep Verification: deep-verification.md
       - Clear Transfers: clear-transfers.md
       - Safebox and the Digital Lock Box: digital-lock-box.md
       - User-Controlled Keys, Funds and Records: user-controlled-funds-and-records.md

@@ -25,6 +25,11 @@ trusted hosted service, or dedicated appliance can use the same component model.
 This matters because the application does not have to become the only place
 where the user's state can be understood or recovered.
 
+The same component boundary supports
+[Deep Verification](deep-verification.md): Acorn preserves exact Original
+Record bytes and digests, while applications and external control layers add
+representations, signed evidence, recognition, and verifier policy.
+
 ## Keys provide continuity and authority
 
 Acorn safeguards and exercises the cryptographic keys of the component or

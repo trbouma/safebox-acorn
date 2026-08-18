@@ -258,6 +258,58 @@ Blossom MUST NOT be required to:
 Acorn owns artifact metadata. Applications own presentation and download
 headers based on Acorn's returned `effective_mime`.
 
+## Application Rendering Contract
+
+Effective MIME is intended to let applications choose specific handling without
+making Acorn or Blossom domain-specific.
+
+For example, Safebox Web can render:
+
+| Effective MIME | Application behavior |
+| --- | --- |
+| `image/jpeg` or `image/png` | Show an inline image preview. |
+| `application/pdf` | Offer an inline PDF representation and a download. |
+| `application/vnd.apple.pkpass` | Render a Wallet-pass preview and keep the install/download link. |
+| unknown or unsupported types | Return the blob as an attachment. |
+
+This dispatch happens after Acorn has retrieved, authenticated, and decrypted
+the Original Record. The application receives the effective MIME and plaintext
+bytes through Acorn's public API and may render a bounded representation for
+the user. Acorn does not need to know whether the application chooses an image
+tag, a PDF viewer, a Wallet-pass card, or a generic download.
+
+PKPASS demonstrates why this is useful. The package bytes are ZIP-shaped and
+may be detected as `application/zip`, but the user-facing artifact is a Wallet
+pass. If the caller declares:
+
+```text
+application/vnd.apple.pkpass
+```
+
+Acorn stores that value as the effective MIME while optionally retaining
+`detected_mime = application/zip`. A web application can then parse `pass.json`
+for preview purposes, render declared QR or Aztec barcode symbols, and still
+serve the exact original package bytes for Wallet installation.
+
+This keeps the feature boundary clean:
+
+- Acorn stores and returns the effective artifact type.
+- Acorn preserves the original bytes and integrity metadata.
+- Blossom stores opaque encrypted bytes.
+- Applications own allowlisted preview behavior.
+- Wallet software remains responsible for Wallet-specific install and signature
+  behavior.
+
+Applications MUST treat `effective_mime` as classification metadata, not proof
+that the content is safe to inline. A declared value can be wrong or malicious.
+Each application should maintain a narrow renderer allowlist and apply its own
+size, parser, and response-header safeguards.
+
+For verification workflows, `effective_mime` should be paired with the
+plaintext Original Record digest. The MIME type helps select a representation;
+the digest identifies the exact artifact being verified. See
+[Original Record Verification Anchor Design](ORIGINAL-RECORD-VERIFICATION-ANCHOR-DESIGN.md).
+
 ## Duplicate Original Uploads
 
 If two Acorn users upload the same plaintext original blob, Acorn should treat
