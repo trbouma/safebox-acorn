@@ -356,6 +356,9 @@ class SafeboxRecord(BaseModel):
     payload: Any                       # can hold any JSON-serializable value
     blobref: str|None = None
     blobtype: str|None = None
+    effective_mime: str|None = None
+    effective_mime_source: Literal["declared", "detected", "default"]|None = None
+    detected_mime: str|None = None
     # blobdata: bytes|None = None
     blobsha256: str|None = None
     origsha256: str|None = None

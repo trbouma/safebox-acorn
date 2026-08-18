@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -11,6 +12,10 @@ from monstr.encrypt import Keys
 from acorn import acorn as acorn_module
 from acorn.acorn import Acorn
 from acorn.models import EncryptionParms
+
+
+PKPASS_MIME = "application/vnd.apple.pkpass"
+PKPASS_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "Example.pkpass"
 
 
 def wallet_with_existing_attachment() -> Acorn:
@@ -81,7 +86,8 @@ async def test_put_record_replaces_attachment_after_verified_record_publish(monk
         def __init__(self, **kwargs):
             pass
 
-        def upload_blob(self, server, data, description):
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            assert mime_type == "application/octet-stream"
             return {
                 "sha256": "new-cipher-sha",
                 "url": f"{server}/new-cipher-sha",
@@ -106,3 +112,43 @@ async def test_put_record_replaces_attachment_after_verified_record_publish(monk
     assert stored["origsha256"] != "plain-sha"
     assert deleted == [("https://blossom.example", "cipher-sha")]
     assert result["replaced_blob_cleanup"]["deleted"] is True
+
+
+@pytest.mark.asyncio
+async def test_put_record_preserves_declared_pkpass_effective_mime(monkeypatch):
+    wallet = wallet_with_existing_attachment()
+    wallet.get_record_safebox = AsyncMock(side_effect=ValueError("No event found"))
+    wallet.blossom_home_server = "https://blossom.example"
+    wallet.blossom_servers = [wallet.blossom_home_server]
+
+    uploaded: dict[str, bytes] = {}
+
+    class FakeBlossomClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            assert mime_type == "application/octet-stream"
+            uploaded["data"] = data
+            return {
+                "sha256": "cipher-sha",
+                "url": f"{server}/cipher-sha",
+            }
+
+    monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
+
+    result = await wallet.put_record(
+        "Boarding Pass",
+        {"filename": "Example.pkpass"},
+        blob_data=PKPASS_FIXTURE.read_bytes(),
+        blob_type=PKPASS_MIME,
+        return_result=True,
+    )
+
+    stored = json.loads(wallet.set_wallet_info.await_args.args[1])
+    assert stored["blobtype"] == PKPASS_MIME
+    assert stored["effective_mime"] == PKPASS_MIME
+    assert stored["effective_mime_source"] == "declared"
+    assert stored["detected_mime"] == "application/zip"
+    assert result["effective_mime"] == PKPASS_MIME
+    assert uploaded["data"] != PKPASS_FIXTURE.read_bytes()

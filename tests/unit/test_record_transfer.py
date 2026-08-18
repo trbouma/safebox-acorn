@@ -137,7 +137,8 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
 
-        def upload_blob(self, server, data, description):
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            assert mime_type == "application/octet-stream"
             digest = hashlib.sha256(data).hexdigest()
             stored_blobs[digest] = data
             return {"sha256": digest, "url": f"{server}/{digest}"}
@@ -179,12 +180,83 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
         {"note": "portable"},
         record_type="generic",
         blob_data=None,
+        blob_type=None,
     )
     assert result["transfer_deleted"] is True
     assert deleted == [
         ("https://blossom.example", transfer["ciphertext_sha256"])
     ]
     assert stored_blobs == {}
+
+
+@pytest.mark.asyncio
+async def test_component_transfer_import_preserves_effective_blob_type(monkeypatch) -> None:
+    stored_blobs: dict[str, bytes] = {}
+    deleted: list[tuple[str, str]] = []
+
+    class FakeBlob:
+        def __init__(self, data: bytes) -> None:
+            self._data = data
+
+        def get_bytes(self) -> bytes:
+            return self._data
+
+    class FakeBlossomClient:
+        def __init__(self, **kwargs) -> None:
+            pass
+
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            assert mime_type == "application/octet-stream"
+            digest = hashlib.sha256(data).hexdigest()
+            stored_blobs[digest] = data
+            return {"sha256": digest, "url": f"{server}/{digest}"}
+
+        def get_blob(self, server, sha256):
+            return FakeBlob(stored_blobs[sha256])
+
+        def delete_blob(self, server, sha256):
+            deleted.append((server, sha256))
+            stored_blobs.pop(sha256)
+            return True
+
+    monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
+
+    sender = object.__new__(Acorn)
+    sender.blossom_xfer_server = "https://blossom.example"
+    sender.logger = logging.getLogger("record-transfer-pkpass-sender-test")
+    sender.get_record_safebox = AsyncMock(
+        return_value=SimpleNamespace(
+            type="generic",
+            payload={"filename": "Example.pkpass"},
+            blobref="https://blossom.example/cipher",
+            blobtype="application/zip",
+            effective_mime="application/vnd.apple.pkpass",
+        )
+    )
+    sender.get_record_blobdata = AsyncMock(
+        return_value=("application/vnd.apple.pkpass", b"pkpass bytes")
+    )
+    transfer = await sender.create_record_transfer("Boarding Pass", expires_in=3600)
+
+    receiver = object.__new__(Acorn)
+    receiver.logger = logging.getLogger("record-transfer-pkpass-receiver-test")
+    receiver.put_record = AsyncMock()
+    result = await receiver.accept_record_transfer(
+        transfer["descriptor"],
+        allowed_servers=["https://blossom.example"],
+    )
+
+    receiver.put_record.assert_awaited_once_with(
+        "Boarding Pass",
+        {"filename": "Example.pkpass"},
+        record_type="generic",
+        blob_data=b"pkpass bytes",
+        blob_type="application/vnd.apple.pkpass",
+    )
+    assert result["status"] == "OK"
+    assert deleted == [
+        ("https://blossom.example", transfer["ciphertext_sha256"])
+    ]
 
 
 @pytest.mark.asyncio
@@ -202,7 +274,8 @@ async def test_presentation_envelope_cannot_be_imported_as_transfer(monkeypatch)
         def __init__(self, **kwargs) -> None:
             pass
 
-        def upload_blob(self, server, data, description):
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            assert mime_type == "application/octet-stream"
             digest = hashlib.sha256(data).hexdigest()
             stored_blobs[digest] = data
             return {"sha256": digest, "url": f"{server}/{digest}"}

@@ -94,6 +94,8 @@ from python_blossom import BlossomClient, Blob as BlossomBlob
 from tempfile import NamedTemporaryFile
 import mimetypes
 
+DEFAULT_BLOB_MIME = "application/octet-stream"
+
 
 def _positive_limit(value: object, *, name: str) -> int:
     """Return a positive integer configuration limit with a clear error."""
@@ -105,6 +107,45 @@ def _positive_limit(value: object, *, name: str) -> int:
     if normalized <= 0:
         raise ValueError(f"{name} must be a positive integer")
     return normalized
+
+
+def _normalize_mime_type(value: object) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).split(";", 1)[0].strip().lower()
+    return normalized or None
+
+
+def _detect_blob_mime(blob_data: bytes | None) -> str | None:
+    if not blob_data:
+        return None
+    return _normalize_mime_type(filetype.guess_mime(blob_data))
+
+
+def _effective_blob_mime(
+    blob_data: bytes | None,
+    *,
+    declared_mime: str | None = None,
+) -> tuple[str, str, str | None]:
+    detected_mime = _detect_blob_mime(blob_data)
+    normalized_declared = _normalize_mime_type(declared_mime)
+    if normalized_declared:
+        return normalized_declared, "declared", detected_mime
+    if detected_mime:
+        return detected_mime, "detected", detected_mime
+    return DEFAULT_BLOB_MIME, "default", None
+
+
+def _record_effective_mime(
+    record: SafeboxRecord,
+    blob_data: bytes | None = None,
+) -> str:
+    return (
+        _normalize_mime_type(getattr(record, "effective_mime", None))
+        or _normalize_mime_type(getattr(record, "blobtype", None))
+        or _detect_blob_mime(blob_data)
+        or DEFAULT_BLOB_MIME
+    )
 
 
 def _positive_timeout(value: object, *, name: str) -> float:
@@ -4081,6 +4122,7 @@ class Acorn:
             )
             return None, None
 
+        blob_type = _normalize_mime_type(orginal_record.origmimetype)
         self.logger.debug("op=get_original_blob status=mime mime=%s", blob_retrieve.mime_type)
         if blob_retrieve.mime_type == "application/octet-stream":
             self.logger.debug("op=get_original_blob status=decrypting")
@@ -4090,7 +4132,7 @@ class Acorn:
                                                         key=bytes.fromhex(orginal_record.encryptparms.key),
                                                         iv = bytes.fromhex(orginal_record.encryptparms.iv)
                                                     )
-                blob_type = filetype.guess_mime(blob_data)
+                blob_type = blob_type or _effective_blob_mime(blob_data)[0]
             except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
                 self.logger.warning("op=get_original_blob status=decrypt_failed error=%s", e)
             if delete and blob_data:
@@ -4107,6 +4149,7 @@ class Acorn:
         else:
             self.logger.debug("op=get_original_blob status=no_decrypt_needed")
             blob_data = blob_retrieve.get_bytes()
+            blob_type = blob_type or _normalize_mime_type(blob_retrieve.mime_type) or _effective_blob_mime(blob_data)[0]
 
 
         return blob_data, blob_type
@@ -4121,7 +4164,6 @@ class Acorn:
     ) -> tuple[str | None, bytes | None]:
         blob_data: bytes = None
         blob_type:  str = None
-        guessed_blob_type: str = None
         my_enc = NIP44Encrypt(self.k)
 
         blossom_servers = self.blossom_servers
@@ -4178,52 +4220,53 @@ class Acorn:
         try:
             safebox_record: SafeboxRecord = SafeboxRecord(**json.loads(decrypt_content))
             blob_sha256 = safebox_record.blobsha256
-            blob_type = safebox_record.blobtype
-            if blob_sha256:
-                blob_retrieve: BlossomBlob | None = None
-                last_blob_error: Exception | None = None
-                for server in blossom_servers:
-                    try:
-                        blob_retrieve = client.get_blob(
-                            server=server,
-                            sha256=blob_sha256,
-                        )
-                        break
-                    except Exception as exc:
-                        last_blob_error = exc
-                if blob_retrieve is None:
-                    raise RuntimeError(
-                        f"Blob {blob_sha256} was not available from configured "
-                        f"servers: {last_blob_error}"
+            if not blob_sha256:
+                return None, None
+            blob_type = _record_effective_mime(safebox_record)
+            blob_retrieve: BlossomBlob | None = None
+            last_blob_error: Exception | None = None
+            for server in blossom_servers:
+                try:
+                    blob_retrieve = client.get_blob(
+                        server=server,
+                        sha256=blob_sha256,
                     )
-                
-                retrieved_bytes = blob_retrieve.get_bytes()
-                if safebox_record.encryptparms is not None:
-                    try:
-                        blob_data = decrypt_and_verify_record_blob(
-                            cipherbytes=retrieved_bytes,
-                            encryptparms=safebox_record.encryptparms,
-                            blobsha256=blob_sha256,
-                            origsha256=safebox_record.origsha256,
-                        )
-                    except (ValueError, TypeError) as exc:
-                        self.logger.warning(
-                            "op=get_record_blobdata status=blob_integrity_failed kind=%s",
-                            record_kind,
-                        )
-                        raise RuntimeError(
-                            "Encrypted blob integrity verification failed"
-                        ) from exc
-                else:
-                    # Compatibility path for records created before Acorn's
-                    # encrypted blob metadata was introduced.
-                    blob_data = retrieved_bytes
+                    break
+                except Exception as exc:
+                    last_blob_error = exc
+            if blob_retrieve is None:
+                raise RuntimeError(
+                    f"Blob {blob_sha256} was not available from configured "
+                    f"servers: {last_blob_error}"
+                )
+
+            retrieved_bytes = blob_retrieve.get_bytes()
+            if safebox_record.encryptparms is not None:
+                try:
+                    blob_data = decrypt_and_verify_record_blob(
+                        cipherbytes=retrieved_bytes,
+                        encryptparms=safebox_record.encryptparms,
+                        blobsha256=blob_sha256,
+                        origsha256=safebox_record.origsha256,
+                    )
+                except (ValueError, TypeError) as exc:
+                    self.logger.warning(
+                        "op=get_record_blobdata status=blob_integrity_failed kind=%s",
+                        record_kind,
+                    )
+                    raise RuntimeError(
+                        "Encrypted blob integrity verification failed"
+                    ) from exc
+            else:
+                # Compatibility path for records created before Acorn's
+                # encrypted blob metadata was introduced.
+                blob_data = retrieved_bytes
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             self.logger.warning("op=get_record_blobdata status=parse_failed kind=%s error=%s", record_kind, exc)
             return None, None
 
         if blob_data:
-            guessed_blob_type = filetype.guess_mime(blob_data)
+            blob_type = _record_effective_mime(safebox_record, blob_data)
             # with NamedTemporaryFile(
             #   mode="wb",
             #    suffix=guessed_extension,
@@ -4235,10 +4278,10 @@ class Acorn:
             self.logger.debug(
                 "op=get_record_blobdata status=ok kind=%s mime=%s",
                 record_kind,
-                guessed_blob_type,
+                blob_type,
             )
 
-        return guessed_blob_type, blob_data
+        return blob_type, blob_data
 
    
     def get_proofs(self):
@@ -6504,8 +6547,11 @@ class Acorn:
                 )
                 return {"status": "HASH_MISMATCH", "reason": "transferred_hash_mismatch"}
 
-            guessed_blob_type = filetype.guess_mime(blob_data) or "application/octet-stream"
-            self.logger.debug("op=transfer_blob status=decrypted mime=%s", guessed_blob_type)
+            effective_mime, effective_mime_source, detected_mime = _effective_blob_mime(
+                blob_data,
+                declared_mime=blobxfer_obj.origmimetype,
+            )
+            self.logger.debug("op=transfer_blob status=decrypted mime=%s", effective_mime)
 
             safebox_record = await self.get_record_safebox(record_name=record_name, record_kind=record_kind)
             self.logger.debug("op=transfer_blob status=loaded_record")
@@ -6523,6 +6569,7 @@ class Acorn:
             upload_result = client.upload_blob(
                 blossom_server,
                 data=final_blob_data,
+                mime_type=DEFAULT_BLOB_MIME,
                 description='Blob to server',
             )
             sha256 = upload_result['sha256']
@@ -6534,7 +6581,10 @@ class Acorn:
                 type=safebox_record.type,
                 payload=safebox_record.payload,
                 blobref=blob_ref,
-                blobtype=guessed_blob_type,
+                blobtype=effective_mime,
+                effective_mime=effective_mime,
+                effective_mime_source=effective_mime_source,
+                detected_mime=detected_mime,
                 blobsha256=sha256,
                 origsha256=blobxfer_obj.origsha256,
                 encryptparms=encrypt_parms,
@@ -6639,7 +6689,7 @@ class Acorn:
                 record_type=str(record.type),
                 payload=record.payload,
                 blob_data=blob_data,
-                blob_type=blob_type or record.blobtype,
+                blob_type=blob_type or _record_effective_mime(record),
                 capability=_capability,
             )
         )
@@ -6651,6 +6701,7 @@ class Acorn:
         upload = client.upload_blob(
             server,
             data=ciphertext,
+            mime_type=DEFAULT_BLOB_MIME,
             description=f"Temporary Acorn record {_capability}",
         )
         ciphertext_sha256 = hashlib.sha256(ciphertext).hexdigest()
@@ -6821,6 +6872,7 @@ class Acorn:
             envelope.payload,
             record_type=envelope.record_type,
             blob_data=envelope.blob_data,
+            blob_type=envelope.blob_type,
         )
         deleted = False
         delete_error = None
@@ -6853,6 +6905,7 @@ class Acorn:
         record_kind: int = 37375,
         record_origin: str = None,
         blob_data: bytes = None,
+        blob_type: str = None,
         relays: List[str] | str | None = None,
         verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
         return_result: bool = False,
@@ -6874,6 +6927,8 @@ class Acorn:
 
         blossom_server = self._default_blossom_home_server()
         mime_type_guess = None
+        effective_mime_source = None
+        detected_mime = None
         origsha256 = None
         encrypt_parms = None
         blob_ref = None
@@ -6896,9 +6951,13 @@ class Acorn:
         if blob_data:
             self.logger.debug("op=put_record status=blob_upload_start")
             origsha256 = hashlib.sha256(blob_data).hexdigest()
-            guessed = filetype.guess(blob_data)
-            mime_type_guess = (
-                guessed.mime if guessed else "application/octet-stream"
+            (
+                mime_type_guess,
+                effective_mime_source,
+                detected_mime,
+            ) = _effective_blob_mime(
+                blob_data,
+                declared_mime=blob_type,
             )
             blob_key = os.urandom(32)
             encrypt_result: EncryptionResult = encrypt_bytes(blob_data, blob_key)
@@ -6914,6 +6973,7 @@ class Acorn:
             upload_result = client.upload_blob(
                 blossom_server,
                 data=encrypt_result.cipherbytes,
+                mime_type=DEFAULT_BLOB_MIME,
                 description="Blob to server",
             )
             sha256 = upload_result["sha256"]
@@ -6930,7 +6990,9 @@ class Acorn:
             # encrypted attachment. The relay record remains authoritative for
             # the attachment metadata and decryption material.
             blob_ref = existing_blob.blobref
-            mime_type_guess = existing_blob.blobtype
+            mime_type_guess = _record_effective_mime(existing_blob)
+            effective_mime_source = getattr(existing_blob, "effective_mime_source", None)
+            detected_mime = getattr(existing_blob, "detected_mime", None)
             sha256 = existing_blob.blobsha256
             origsha256 = existing_blob.origsha256
             encrypt_parms = existing_blob.encryptparms
@@ -6941,6 +7003,9 @@ class Acorn:
             payload=record_value,
             blobref=blob_ref,
             blobtype=mime_type_guess,
+            effective_mime=mime_type_guess,
+            effective_mime_source=effective_mime_source,
+            detected_mime=detected_mime,
             blobsha256=sha256,
             origsha256=origsha256,
             encryptparms=encrypt_parms,
@@ -7008,6 +7073,7 @@ class Acorn:
                 "verified": publish_result["verified"],
                 "verification": publish_result["verification"],
                 "blobref": blob_ref,
+                "effective_mime": mime_type_guess,
                 "blobsha256": sha256,
                 "replaced_blob_cleanup": replaced_blob_cleanup,
             }
@@ -12282,7 +12348,7 @@ class Acorn:
             self.logger.debug("op=create_grant_from_offer status=encrypt_blob")
             origsha256 = hashlib.sha256(blob_data).hexdigest()
             self.logger.debug("op=create_grant_from_offer status=origsha256")
-            origmime_type_guess = filetype.guess(blob_data).mime
+            origmime_type_guess = _normalize_mime_type(blob_type) or _effective_blob_mime(blob_data)[0]
             self.logger.debug("op=create_grant_from_offer status=mime mime=%s", origmime_type_guess)
             if shared_secret_hex:
                 blob_key = bytes.fromhex(shared_secret_hex)
@@ -12303,6 +12369,7 @@ class Acorn:
             blob_nsec = Keys().private_key_bech32()
             client_xfer = BlossomClient(nsec=blob_nsec, default_servers=[blossom_xfer_server])
             upload_result = client_xfer.upload_blob(blossom_xfer_server, data=final_blob_data,
+                            mime_type=DEFAULT_BLOB_MIME,
                             description='Blob to server')
             sha256 = upload_result['sha256']
             blob_ref = upload_result.get('url', f"{blossom_xfer_server}/{sha256}")
@@ -12387,7 +12454,7 @@ class Acorn:
             self.logger.debug("op=create_request_from_grant status=encrypt_blob")
             origsha256 = hashlib.sha256(blob_data).hexdigest()
             self.logger.debug("op=create_request_from_grant status=origsha256")
-            origmime_type_guess = filetype.guess(blob_data).mime
+            origmime_type_guess = _normalize_mime_type(blob_type) or _effective_blob_mime(blob_data)[0]
             self.logger.debug("op=create_request_from_grant status=mime mime=%s", origmime_type_guess)
             if shared_secret_hex:
                 blob_key = bytes.fromhex(shared_secret_hex)
@@ -12408,6 +12475,7 @@ class Acorn:
             blob_nsec = Keys().private_key_bech32()
             client_xfer = BlossomClient(nsec=blob_nsec, default_servers=[blossom_xfer_server])
             upload_result = client_xfer.upload_blob(blossom_xfer_server, data=final_blob_data,
+                            mime_type=DEFAULT_BLOB_MIME,
                             description='Blob to server')
             sha256 = upload_result['sha256']
             blob_ref = upload_result.get('url', f"{blossom_xfer_server}/{sha256}")

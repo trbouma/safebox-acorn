@@ -99,6 +99,39 @@ async def test_get_record_safebox_scopes_lookup_by_kind_and_relays(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_record_blobdata_returns_none_for_record_without_blob(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    event = record_event(
+        event_id="a" * 64,
+        created_at=20,
+        content=(
+            '{"tag":["field-notes"],"type":"generic",'
+            '"payload":"no attachment","effective_mime":"application/pdf"}'
+        ),
+    )
+
+    class PlaintextNip44:
+        def __init__(self, keys):
+            pass
+
+        def decrypt(self, content, pubkey):
+            return content
+
+    async def get_event(filters, label_hash, relays=None):
+        return event
+
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    wallet._async_get_wallet_info = get_event
+
+    blob_type, blob_data = await wallet.get_record_blobdata("field-notes")
+
+    assert blob_type is None
+    assert blob_data is None
+
+
+@pytest.mark.asyncio
 async def test_put_record_rejects_internal_record_names():
     wallet = wallet_with_key()
 

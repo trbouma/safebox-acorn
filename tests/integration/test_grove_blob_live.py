@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import os
+from pathlib import Path
 from uuid import uuid4
 
 import pytest
@@ -86,12 +87,24 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
     test_relay = test_wallet_config["home_relay"]
     label = f"pytest-grove-blob-{uuid4().hex[:12]}"
     payload = f"blob metadata from pytest {uuid4().hex}"
-    blob_data = (
-        b"%PDF-1.4\n"
-        b"% Acorn Grove live blob round trip\n"
-        + uuid4().hex.encode("ascii")
-        + b"\n%%EOF\n"
-    )
+    fixture_path = os.getenv("ACORN_TEST_BLOB_FIXTURE")
+    expected_blob_type = os.getenv("ACORN_TEST_BLOB_MIME")
+    if fixture_path:
+        blob_data = Path(fixture_path).expanduser().read_bytes()
+        payload = {
+            "filename": Path(fixture_path).name,
+            "description": payload,
+            "content_type": expected_blob_type,
+            "size": len(blob_data),
+        }
+    else:
+        blob_data = (
+            b"%PDF-1.4\n"
+            b"% Acorn Grove live blob round trip\n"
+            + uuid4().hex.encode("ascii")
+            + b"\n%%EOF\n"
+        )
+        expected_blob_type = "application/pdf"
 
     acorn = Acorn(
         nsec=test_nsec,
@@ -117,6 +130,7 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
                 payload,
                 record_type="blob-test",
                 blob_data=blob_data,
+                blob_type=expected_blob_type,
                 relays=[test_relay],
                 return_result=True,
             ),
@@ -134,18 +148,20 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
             timeout,
         )
         assert record.payload == payload
+        assert record.blobtype == expected_blob_type
+        assert record.effective_mime == expected_blob_type
         assert record.blobsha256 == result["blobsha256"]
         assert record.origsha256 == hashlib.sha256(blob_data).hexdigest()
         assert record.encryptparms is not None
 
         live_progress("Grove blob test: retrieving and decrypting blob", sha256=result["blobsha256"][:12])
-        blob_type, restored = await _await_or_skip(
+        restored_blob_type, restored = await _await_or_skip(
             acorn.get_record_blobdata(label, relays=[test_relay]),
             "Grove blob retrieval",
             timeout,
         )
         assert restored == blob_data
-        assert blob_type == "application/pdf"
+        assert restored_blob_type == expected_blob_type
 
         relay_suitable(
             relay_scenario,
