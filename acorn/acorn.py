@@ -7090,7 +7090,7 @@ class Acorn:
             )
             return False, None
 
-        if mint_quote.paid == True:
+        if mint_quote.paid == True or mint_quote.state.upper() == "PAID":
             self.logger.debug("op=check_quote status=paid amount=%s", amount)
             try:
                 success_mint = await self._mint_proofs(mint_quote.quote, amount, mint_base_url)

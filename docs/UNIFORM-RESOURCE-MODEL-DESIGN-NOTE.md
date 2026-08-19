@@ -17,6 +17,7 @@ identifiable resource whose useful meaning includes more than content.
 A resource may have:
 
 - one or more identifiers;
+- one or more Uniform Digest Anchors for exact representations or records;
 - one or more representations;
 - an issuer or origin authority;
 - a current controller or holder;
@@ -113,7 +114,9 @@ URM should:
 7. support encrypted and selectively disclosed resources;
 8. support portable state across applications and infrastructure;
 9. make lifecycle transitions auditable and recoverable; and
-10. allow incremental profiles over existing protocols such as Nostr, Cashu,
+10. provide a uniform way to bind attestations and control evidence to exact
+    artifacts without owning their native formats or signature schemes; and
+11. allow incremental profiles over existing protocols such as Nostr, Cashu,
     HTTPS, and Blossom.
 
 ## Non-goals
@@ -184,6 +187,47 @@ The same resource may have:
 Copying a representation does not necessarily create a new resource or
 transfer control of the existing resource.
 
+### Uniform Digest Anchor
+
+A **Uniform Digest Anchor (UDA)** is a cryptographic digest of the exact bytes
+within a declared scope. It gives every artifact format the same kind of stable
+evidence reference:
+
+```text
+uniform_digest_anchor = hash(exact_target_bytes)
+```
+
+The target scope and hash algorithm must be explicit. A UDA may identify an
+Original Record, one representation of a resource, or a canonical descriptor
+defined by a URM profile. For an immutable artifact, the UDA may also serve as
+its canonical artifact identifier. A mutable resource or a resource with
+several renditions may have several anchors without becoming several conceptual
+resources.
+
+Uniform means the binding mechanism is consistent across formats. It does not
+mean that different encodings, renditions, or versions produce the same digest.
+A PDF, PKPASS, mdoc, SD-JWT VC, image, or opaque binary object can each be
+anchored without URM interpreting its native signature or verification scheme.
+
+A UDA allows signed evidence to state precisely which bytes it concerns:
+
+```text
+resource
+  -> exact representation
+  -> Uniform Digest Anchor
+  -> native verification, attestations, provenance, and control events
+```
+
+The anchor establishes byte identity only. It does not establish truth,
+authorship, issuer authority, current validity, operative control, ownership,
+or legal effect. Those conclusions belong to native verification, attestation,
+control, recognition, and policy layers.
+
+For encrypted Original Records, the plaintext artifact digest and encrypted
+storage digest have different scopes. Acorn's `origsha256` is a UDA for the
+original plaintext bytes. A Blossom digest identifies the stored ciphertext
+and must not silently replace the artifact anchor.
+
 ### Identifier
 
 An **identifier** names a resource, record, representation, state event, or
@@ -236,6 +280,19 @@ Cryptographic verification can establish exact bytes, signatures, and event
 relationships. A verifier still decides whether the issuer is recognized,
 whether the policy applies, whether the evidence is current, and what
 real-world consequence follows.
+
+### Attester and notarization
+
+An **attester** signs a statement about a resource, record, representation, or
+Uniform Digest Anchor. Anyone may be able to create an attestation; whether it
+has effect depends on the attester's recognized identity, authority, evidence,
+policy, and context.
+
+**Notarization** is an attestation profile with defined statement types,
+signer requirements, time semantics, and verifier policy. It may express
+creation, inspection, custody, provenance, control, transfer, acceptance,
+revocation, or supersession. Calling an event a notarization does not itself
+make the signer a legally recognized notary or make the statement true.
 
 ## Two independent classification axes
 
@@ -396,6 +453,7 @@ fields encrypted.
 resource_id       canonical identifier within a declared scope
 resource_type     schema or profile identifier
 version           model or schema version
+digest_anchors    scoped algorithm-and-digest references to exact bytes
 issuer            issuing or originating authority
 controller        current operative controller, when applicable
 holder            intended holder or audience, when applicable
@@ -405,6 +463,7 @@ representation    inline data or references to representations
 policy            rules for use, transfer, expiry, redemption, and revocation
 state             current lifecycle state
 provenance        origin and derivation evidence
+attestations      signed statements bound to the resource or an exact anchor
 history           state-transition or control-history references
 resolver          methods for locating current state or representations
 verifier          policy or method for evaluating evidence
@@ -426,6 +485,7 @@ which operations are valid.
 | issue | create or authorize a new resource |
 | resolve | locate current state or available representations |
 | retrieve | obtain one representation |
+| attest | make a signed statement about a resource, record, representation, or Uniform Digest Anchor |
 | present | disclose evidence or a representation for a purpose |
 | share | grant bounded access without changing operative control |
 | transfer | change operative control |
@@ -514,7 +574,7 @@ URM resources may be represented across several storage systems:
 signed event       -> authority, metadata, state transition, references
 encrypted content  -> private structured record or wallet state
 blob               -> large exact representation
-content hash       -> integrity and exact-byte identity
+Uniform Digest Anchor -> scoped integrity and exact-byte identity
 resolver hint      -> where a representation may be retrieved
 ```
 
@@ -661,6 +721,11 @@ boundaries:
 - operator access versus user authority; and
 - cryptographic evidence versus legal effect.
 
+A matching Uniform Digest Anchor proves that the target bytes match. It does
+not prove that an attestation is true, that its signer has relevant authority,
+or that a control event has legal effect. Profiles must also provide algorithm
+agility and must reject ambiguous anchor scopes.
+
 Bearer capabilities and proofs are secrets. They must not appear in logs,
 public tags, URLs not designed as bearer descriptors, analytics, or
 transaction-history records.
@@ -677,6 +742,12 @@ reveal metadata.
 
 Selective disclosure should be profile-specific. It must not be represented as
 perfect privacy or proof that a recipient did not retain disclosed content.
+
+A public UDA is also a durable correlation handle. Publishing an anchor for a
+sensitive or predictable artifact can reveal that two parties hold the same
+bytes and may permit dictionary testing. Profiles should support private
+attestations, access-controlled evidence, or salted commitments where a public
+plaintext digest would disclose too much.
 
 ## Recovery and continuity
 
@@ -700,7 +771,8 @@ claiming authority that belongs to the resource issuer or verifier.
 ## Proposed implementation sequence
 
 1. Adopt URM terminology in the Acorn Record Model and product architecture.
-2. Define a small typed resource descriptor independent of any one event kind.
+2. Define a small typed resource descriptor, including scoped Uniform Digest
+   Anchors, independent of any one event kind.
 3. Map existing private record, record presentation, ecash, and Clear payloads
    into URM profiles without changing their wire formats.
 4. Define explicit `share`, `present`, `copy`, and `transfer` capability
@@ -723,6 +795,10 @@ claiming authority that belongs to the resource issuer or verifier.
   or resource record?
 - Does a stable resource need one canonical identifier, or can profiles define
   an identifier set with scoped equivalence?
+- When is a Uniform Digest Anchor also a canonical resource identifier, and
+  when does it identify only one representation?
+- Which commitment schemes should be supported when publishing a plaintext
+  digest would create an unacceptable correlation handle?
 - How should controller rotation differ from transfer?
 - How should shared or multi-party control be represented?
 - Which state belongs in replaceable records and which belongs in append-only

@@ -1365,7 +1365,7 @@ def deposit(amount: int, mint:str):
     end_time = start_time + 60
 
     while time() < end_time:
-        click.echo("checking...")
+        click.echo(f"checking quote {cli_quote.quote} at {effective_mint}...")
         success, lninvoice = asyncio.run(
             acorn_obj.check_quote(cli_quote.quote, int(amount), effective_mint)
         )

@@ -10,14 +10,15 @@ control and provenance systems.
 
 Acorn stores the exact original bytes, encrypts them before Blossom upload, and
 records integrity metadata for the plaintext artifact. The resulting plaintext
-digest, such as `origsha256`, is the stable evidence anchor. Applications may
+digest, such as `origsha256`, is the artifact's **Uniform Digest Anchor (UDA)**.
+Applications may
 render the artifact according to `effective_mime`, but verification binds to
 the unchanged bytes.
 
 This creates a layered model:
 
 ```text
-exact bytes -> plaintext digest -> control evidence -> verifier policy
+exact bytes -> Uniform Digest Anchor -> control evidence -> verifier policy
 ```
 
 The digest gives external systems such as OpenETR a precise object identity
@@ -55,7 +56,8 @@ or any other exact artifact that can be hashed.
 
 ## Design Principle
 
-The Original Record digest is a byte-level identity, not a rendering decision.
+The Original Record's Uniform Digest Anchor is a byte-level identity, not a
+rendering decision.
 
 Applications may have many representations for the same bytes:
 

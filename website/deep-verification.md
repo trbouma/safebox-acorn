@@ -26,7 +26,8 @@ An Original Record may be a PDF, image, Wallet pass, credential, ticket, bill of
 lading, or another artifact. Acorn should preserve the exact bytes and record a
 plaintext digest before encryption.
 
-That digest is the verification anchor. It answers:
+That digest is the Original Record's **Uniform Digest Anchor (UDA)**. It
+answers:
 
 ```text
 Are these the exact bytes the evidence refers to?
@@ -34,6 +35,11 @@ Are these the exact bytes the evidence refers to?
 
 It does not answer every trust question. A matching digest proves byte equality,
 not truth, legal effect, issuer identity, or current validity.
+
+The term is uniform because the same exact-byte anchoring mechanism works for
+every artifact format. Native verification, third-party attestations,
+notarization, provenance, and control history can all refer to the anchor while
+remaining independent evidence layers.
 
 ## Effective MIME is a rendering hint
 

@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import httpx
 import pytest
 import requests
 from monstr.encrypt import Keys
@@ -30,6 +31,45 @@ def successful_quote_response():
             "expiry": 0,
         },
     )
+
+
+class FakeAsyncQuoteResponse:
+    status_code = 200
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {
+            "quote": "quote-id",
+            "request": "lnbc1test",
+            "amount": 21,
+            "unit": "sat",
+            "method": "bolt11",
+            "amount_paid": 21,
+            "amount_issued": 0,
+            "updated_at": 1787169463,
+            "state": "PAID",
+            "expiry": None,
+            "pubkey": "",
+        }
+
+
+class FakeAsyncQuoteClient:
+    requested_urls = []
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def get(self, url, **kwargs):
+        self.requested_urls.append(url)
+        return FakeAsyncQuoteResponse()
 
 
 def test_deposit_strips_trailing_slashes_from_explicit_mint(monkeypatch):
@@ -98,3 +138,36 @@ def test_deposit_retries_transient_timeout(monkeypatch):
         wallet.deposit(21)
 
     assert attempts == 4
+
+
+@pytest.mark.asyncio
+async def test_check_quote_accepts_paid_state_response(monkeypatch):
+    wallet = wallet_with_key()
+    minted = {}
+    FakeAsyncQuoteClient.requested_urls = []
+
+    async def fake_mint_proofs(quote, amount, mint):
+        minted["quote"] = quote
+        minted["amount"] = amount
+        minted["mint"] = mint
+        return True
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncQuoteClient)
+    wallet._mint_proofs = fake_mint_proofs
+
+    paid, invoice = await wallet.check_quote(
+        "quote-id",
+        21,
+        "https://mint.safebox.dev",
+    )
+
+    assert paid is True
+    assert invoice == "lnbc1test"
+    assert FakeAsyncQuoteClient.requested_urls == [
+        "https://mint.safebox.dev/v1/mint/quote/bolt11/quote-id"
+    ]
+    assert minted == {
+        "quote": "quote-id",
+        "amount": 21,
+        "mint": "https://mint.safebox.dev",
+    }

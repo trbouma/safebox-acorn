@@ -98,6 +98,45 @@ This lets Grove preserve an opaque original, Spurline preserve signed events,
 Acorn preserve control state, and Safebox Web present a useful human view
 without making any one product the whole resource.
 
+## Uniform Digest Anchor
+
+A **Uniform Digest Anchor (UDA)** is a cryptographic digest of exact bytes
+within an explicit scope.
+
+> A Uniform Digest Anchor provides a format-independent reference to which
+> native verification results, attestations, provenance, and control events
+> can be bound.
+
+```text
+exact artifact bytes
+    -> Uniform Digest Anchor
+    -> native verification
+    -> attestations and notarization
+    -> provenance and control history
+    -> verifier policy
+```
+
+The same mechanism works for a PDF, PKPASS, mdoc, SD-JWT VC, image, or opaque
+binary object without requiring Acorn or Grove to understand the artifact's
+native signature scheme.
+
+Uniform does not mean that different renditions share a digest. The anchor
+identifies one exact byte sequence. A resource with several representations may
+therefore have several scoped anchors. For an immutable Original Record, its
+plaintext `origsha256` can be the canonical artifact anchor; the encrypted
+Blossom digest still identifies different bytes with a different storage
+scope.
+
+A matching anchor proves byte equality, not truth, authority, ownership,
+control, or legal effect. Anyone may sign an attestation about an anchor, but a
+verifier decides whether that signer and statement are recognized. A
+notarization scheme is therefore a URM attestation profile with explicit signer,
+statement, time, and policy rules rather than a built-in declaration of truth.
+
+Public anchors can correlate holders of the same artifact. Sensitive profiles
+may require private attestations, access-controlled evidence, or salted
+commitments instead of publishing a plaintext digest.
+
 ## Existing examples
 
 ### Private records
