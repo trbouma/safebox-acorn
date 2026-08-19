@@ -10,6 +10,7 @@ from monstr.encrypt import Keys
 
 from acorn import acorn as acorn_module
 from acorn.acorn import Acorn
+from acorn.models import PostMeltQuoteResponse, Proof
 
 
 def wallet_with_key() -> Acorn:
@@ -17,6 +18,8 @@ def wallet_with_key() -> Acorn:
     wallet.k = Keys(priv_k="11" * 32)
     wallet.home_mint = "https://mint.example/"
     wallet.logger = logging.getLogger("deposit-quote-test")
+    wallet.known_mints = {}
+    wallet.proofs = []
     return wallet
 
 
@@ -171,3 +174,65 @@ async def test_check_quote_accepts_paid_state_response(monkeypatch):
         "amount": 21,
         "mint": "https://mint.safebox.dev",
     }
+
+
+def test_source_mint_keysets_filters_and_sorts_by_mint():
+    wallet = wallet_with_key()
+    wallet.known_mints = {
+        "source-small": "https://mint.source",
+        "source-large": "https://mint.source/",
+        "other": "https://mint.other",
+    }
+    wallet.proofs = [
+        Proof(id="source-small", amount=2, secret="a", C="c", Y="ya"),
+        Proof(id="source-large", amount=8, secret="b", C="c", Y="yb"),
+        Proof(id="other", amount=32, secret="c", C="c", Y="yc"),
+    ]
+
+    rows = wallet._source_mint_keysets("mint.source")
+
+    assert [row["keyset"] for row in rows] == ["source-large", "source-small"]
+    assert [row["amount"] for row in rows] == [8, 2]
+
+
+def test_melt_quote_response_accepts_state_without_paid_boolean():
+    quote = PostMeltQuoteResponse(
+        quote="melt-quote",
+        amount=21,
+        fee_reserve=2,
+        state="UNPAID",
+        expiry=None,
+    )
+
+    assert quote.paid is False
+    assert quote.state == "UNPAID"
+
+
+@pytest.mark.asyncio
+async def test_prepare_mint_transfer_full_amount_reduces_for_source_fee():
+    wallet = wallet_with_key()
+    requested_amounts = []
+
+    def fake_deposit(amount, mint):
+        requested_amounts.append(amount)
+        return SimpleNamespace(quote=f"dest-{amount}", invoice=f"invoice-{amount}")
+
+    async def fake_melt_quote(mint, invoice):
+        return SimpleNamespace(quote=f"source-{invoice}", fee_reserve=2)
+
+    wallet.deposit = fake_deposit
+    wallet._request_melt_quote_for_invoice = fake_melt_quote
+
+    result = await wallet._prepare_mint_transfer_quotes(
+        source_mint="https://mint.source",
+        destination_mint="https://mint.dest",
+        receive_amount=10,
+        source_available=10,
+        full_amount=True,
+    )
+
+    assert requested_amounts == [10, 8]
+    assert result["receive_amount"] == 8
+    assert result["source_fee_reserve"] == 2
+    assert result["source_debit"] == 10
+    assert result["destination_quote"].quote == "dest-8"

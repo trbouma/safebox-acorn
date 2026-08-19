@@ -1072,8 +1072,11 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert text_result.exit_code == 0
     assert "Relay-visible balance: 132 sats in 2 proofs" in text_result.output
     assert "Mint state not checked" in text_result.output
-    assert "up to 131 sats before mint fees" in text_result.output
+    assert "Single Lightning payment capacity: up to 131 sats before mint fees" in text_result.output
     assert "one keyset per Lightning payment" in text_result.output
+    assert "Mint balances:" in text_result.output
+    assert "- https://mint.one: 131 sats in 1 proofs" in text_result.output
+    assert "- https://mint.two: 1 sats in 1 proofs" in text_result.output
     assert "Pending Clear transactions: 25 unit(s) in 1 receipt(s)" in text_result.output
     assert "- cmu-test: 25 unit(s) in 1 receipt(s)" in text_result.output
 
@@ -1083,6 +1086,36 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert payload["balance"] == 132
     assert payload["balance_basis"] == "relay-visible"
     assert payload["relay_visible_balance"] == 132
+    assert payload["mints"] == [
+        {
+            "mint": "https://mint.one",
+            "balance": 131,
+            "unit": "sat",
+            "proof_count": 1,
+            "keysets": [
+                {
+                    "keyset": "keyset-large",
+                    "balance": 131,
+                    "unit": "sat",
+                    "proof_count": 1,
+                }
+            ],
+        },
+        {
+            "mint": "https://mint.two",
+            "balance": 1,
+            "unit": "sat",
+            "proof_count": 1,
+            "keysets": [
+                {
+                    "keyset": "keyset-small",
+                    "balance": 1,
+                    "unit": "sat",
+                    "proof_count": 1,
+                }
+            ],
+        },
+    ]
     assert payload["lightning_capacity"] == {
         "amount": 131,
         "unit": "sat",
@@ -1118,6 +1151,56 @@ def test_balance_command_includes_lightning_capacity_in_text_and_json(
     assert verified_payload["relay_visible_balance"] == 132
     assert verified_payload["mint_confirmed_balance"] == 52
     assert verified_payload["mint_verification"]["status"] == "repair-recommended"
+
+
+def test_mint_transfer_requires_amount_or_full_amount(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.mint_transfer,
+        ["mint.one", "mint.two"],
+    )
+
+    assert result.exit_code != 0
+    assert "AMOUNT is required unless --full-amount is used" in result.output
+
+
+def test_mint_transfer_rejects_amount_with_full_amount(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    result = CliRunner().invoke(
+        cli.mint_transfer,
+        ["mint.one", "mint.two", "21", "--full-amount"],
+    )
+
+    assert result.exit_code != 0
+    assert "Use either AMOUNT or --full-amount" in result.output
+
+
+def test_format_mint_transfer_result(monkeypatch, tmp_path):
+    cli = _load_cli(monkeypatch, tmp_path)
+
+    rendered = cli._format_mint_transfer_result(
+        {
+            "source_mint": "https://mint.one",
+            "destination_mint": "https://mint.two",
+            "receive_amount": 19,
+            "source_debit": 21,
+            "source_fee_reserve": 2,
+            "source_balance_before": 21,
+            "source_balance_after": 0,
+            "source_keyset": "keyset-one",
+            "source_melt_quote": "melt-quote",
+            "destination_quote": "mint-quote",
+            "wallet_balance": 42,
+            "proof_count": 6,
+        }
+    )
+
+    assert "Mint transfer complete" in rendered
+    assert "Received at destination: 19 sats" in rendered
+    assert "Source debit: 21 sats" in rendered
+    assert "Source fee reserve: 2 sats" in rendered
 
 
 def test_receive_clear_command_stores_pending_receipts(monkeypatch, tmp_path):

@@ -294,6 +294,96 @@ async def test_payment_pre_swap_check_ignores_incorrect_cached_proof_y(monkeypat
 
 
 @pytest.mark.asyncio
+async def test_swap_for_payment_multi_subtracts_input_fee_from_outputs(monkeypatch):
+    wallet = wallet_with_key()
+    keyset = "fee-keyset"
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet._preflight_proof_persistence = AsyncMock()
+    wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
+    proofs = [
+        Proof(amount=64, id=keyset, secret="sixty-four", C="02" + "11" * 32),
+        Proof(amount=16, id=keyset, secret="sixteen", C="02" + "22" * 32),
+        Proof(amount=4, id=keyset, secret="four", C="02" + "33" * 32),
+        Proof(amount=1, id=keyset, secret="one", C="02" + "44" * 32),
+    ]
+    captured = {}
+
+    serialized_point = "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    dummy_point = SimpleNamespace(serialize=lambda: bytes.fromhex(serialized_point))
+    monkeypatch.setattr(
+        acorn_module,
+        "step1_alice",
+        lambda secret: (dummy_point, object(), dummy_point),
+    )
+    monkeypatch.setattr(acorn_module, "step3_alice", lambda *args: dummy_point)
+
+    class Response:
+        def __init__(self, payload=None, status_code=200, text=""):
+            self._payload = payload or {}
+            self.status_code = status_code
+            self.text = text
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            if url.endswith("/v1/keysets"):
+                return Response(
+                    {"keysets": [{"id": keyset, "active": True, "input_fee_ppk": 100}]}
+                )
+            return Response(
+                {
+                    "keysets": [
+                        {
+                            "keys": {
+                                "1": serialized_point,
+                                "2": serialized_point,
+                                "4": serialized_point,
+                                "8": serialized_point,
+                                "16": serialized_point,
+                                "32": serialized_point,
+                            }
+                        }
+                    ]
+                }
+            )
+
+        async def post(self, url, **kwargs):
+            if url.endswith("/v1/checkstate"):
+                return Response({"states": [{"state": "UNSPENT"} for _ in proofs]})
+            captured["swap"] = kwargs["json"]
+            return Response(
+                {
+                    "signatures": [
+                        {"amount": output["amount"], "C_": serialized_point}
+                        for output in kwargs["json"]["outputs"]
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
+
+    replacements = await wallet.swap_for_payment_multi(keyset, proofs, 21)
+
+    assert sum(output["amount"] for output in captured["swap"]["outputs"]) == 84
+    assert sum(proof.amount for proof in replacements) == 84
+    wallet.add_proofs_obj.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_write_proofs_rejects_same_balance_with_wrong_proof_identity():
     wallet = wallet_with_key()
     keyset = "test-keyset"

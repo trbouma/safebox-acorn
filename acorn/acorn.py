@@ -7271,6 +7271,257 @@ class Acorn:
         return success, lninvoice
         
     
+    async def _request_melt_quote_for_invoice(
+        self,
+        mint: str,
+        invoice: str,
+        *,
+        timeout: httpx.Timeout | None = None,
+    ) -> PostMeltQuoteResponse:
+        mint_base_url = normalize_mint_url(mint)
+        melt_quote_url = f"{mint_base_url}/v1/melt/quote/bolt11"
+        headers = {"Content-Type": "application/json"}
+        data_to_send = {"request": invoice, "unit": "sat"}
+        async with httpx.AsyncClient(
+            timeout=timeout or httpx.Timeout(30.0, connect=5.0)
+        ) as client:
+            response = await client.post(
+                url=melt_quote_url,
+                json=data_to_send,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return PostMeltQuoteResponse(**response.json())
+
+    @staticmethod
+    def _input_fee_sats(input_fee_ppk: int, input_count: int) -> int:
+        if input_fee_ppk <= 0 or input_count <= 0:
+            return 0
+        return math.ceil((int(input_fee_ppk) * int(input_count)) / 1000)
+
+    def _source_mint_keysets(self, source_mint: str) -> list[dict]:
+        source_mint = normalize_mint_url(source_mint)
+        all_proofs, keyset_amounts = self._proofs_by_keyset()
+        rows = []
+        for keyset, amount in keyset_amounts.items():
+            mint = self.known_mints.get(keyset)
+            if not mint:
+                continue
+            if normalize_mint_url(mint) != source_mint:
+                continue
+            rows.append(
+                {
+                    "keyset": keyset,
+                    "mint": source_mint,
+                    "amount": int(amount),
+                    "proofs": list(all_proofs.get(keyset, [])),
+                }
+            )
+        return sorted(rows, key=lambda row: (-row["amount"], row["keyset"]))
+
+    async def _prepare_mint_transfer_quotes(
+        self,
+        *,
+        source_mint: str,
+        destination_mint: str,
+        receive_amount: int,
+        source_available: int,
+        full_amount: bool,
+    ) -> dict:
+        candidate = int(receive_amount)
+        if candidate <= 0:
+            raise ValueError("transfer amount must be positive")
+
+        while candidate > 0:
+            destination_quote = self.deposit(candidate, destination_mint)
+            source_melt_quote = await self._request_melt_quote_for_invoice(
+                source_mint,
+                destination_quote.invoice,
+            )
+            source_fee = int(source_melt_quote.fee_reserve)
+            source_debit = candidate + source_fee
+            if source_debit <= source_available:
+                return {
+                    "receive_amount": candidate,
+                    "source_fee_reserve": source_fee,
+                    "source_debit": source_debit,
+                    "destination_quote": destination_quote,
+                    "source_melt_quote": source_melt_quote,
+                }
+            if not full_amount:
+                raise ValueError(
+                    f"source mint keyset has {source_available} sats, but "
+                    f"{source_debit} sats are required to transfer {candidate} "
+                    f"sats with fee reserve {source_fee}"
+                )
+            next_candidate = source_available - source_fee
+            candidate = next_candidate if next_candidate < candidate else candidate - 1
+
+        raise ValueError("source mint balance is too small to cover Lightning fees")
+
+    async def mint_transfer(
+        self,
+        source_mint: str,
+        destination_mint: str,
+        amount: int | None = None,
+        *,
+        full_amount: bool = False,
+        comment: str = "mint transfer",
+    ) -> dict:
+        """Move value from one mint to another by paying a destination invoice."""
+
+        source_mint = normalize_mint_url(source_mint)
+        destination_mint = normalize_mint_url(destination_mint)
+        if source_mint == destination_mint:
+            raise ValueError("source and destination mints must be different")
+        if full_amount:
+            amount = None
+        elif amount is None or int(amount) <= 0:
+            raise ValueError("amount is required unless full_amount is true")
+
+        await self.acquire_lock()
+        try:
+            await self._reconcile_spent_proofs_locked()
+            await self._require_resolved_pending_melts()
+
+            source_keysets = self._source_mint_keysets(source_mint)
+            if not source_keysets:
+                raise ValueError(f"no spendable proofs found for source mint {source_mint}")
+
+            source_keyset = source_keysets[0]
+            source_available = int(source_keyset["amount"])
+            receive_amount = source_available if full_amount else int(amount)
+            prepared = await self._prepare_mint_transfer_quotes(
+                source_mint=source_mint,
+                destination_mint=destination_mint,
+                receive_amount=receive_amount,
+                source_available=source_available,
+                full_amount=full_amount,
+            )
+
+            amount_needed = int(prepared["source_debit"])
+            keyset_proofs, _keyset_amounts = self._proofs_by_keyset()
+            proofs_from_keyset = list(keyset_proofs[source_keyset["keyset"]])
+            proofs_to_use = []
+            proof_amount = 0
+            while proof_amount < amount_needed:
+                pay_proof = proofs_from_keyset.pop()
+                proofs_to_use.append(pay_proof)
+                proof_amount += int(pay_proof.amount)
+
+            proofs_remaining = await self.swap_for_payment_multi(
+                source_keyset["keyset"],
+                proofs_to_use,
+                amount_needed,
+            )
+            sum_proofs = 0
+            spend_proofs = []
+            keep_proofs = []
+            for proof in proofs_remaining:
+                sum_proofs += int(proof.amount)
+                if sum_proofs <= amount_needed:
+                    spend_proofs.append(proof)
+                else:
+                    keep_proofs.append(proof)
+
+            source_melt_quote = prepared["source_melt_quote"]
+            destination_quote = prepared["destination_quote"]
+            melt_url = f"{source_mint}/v1/melt/bolt11"
+            melt_payload = {
+                "quote": source_melt_quote.quote,
+                "inputs": [proof.to_dict() for proof in spend_proofs],
+            }
+
+            keyset_proofs[source_keyset["keyset"]] = (
+                proofs_from_keyset + spend_proofs + keep_proofs
+            )
+            checkpoint_proofs: List[Proof] = []
+            for key in keyset_proofs:
+                checkpoint_proofs.extend(keyset_proofs[key])
+            self.proofs = checkpoint_proofs
+            self.balance = sum(each.amount for each in checkpoint_proofs)
+            await self.write_proofs()
+
+            payment_hash = None
+            description_hash = None
+            try:
+                decoded_invoice = bolt11.decode(destination_quote.invoice)
+                payment_hash = decoded_invoice.payment_hash
+                description_hash = decoded_invoice.description_hash
+            except Exception:
+                pass
+
+            pending_entry = {
+                "quote": source_melt_quote.quote,
+                "mint": source_mint,
+                "keyset": source_keyset["keyset"],
+                "spend_ys": [self._canonical_proof_y(each) for each in spend_proofs],
+                "amount": int(prepared["receive_amount"]),
+                "fee_reserve": int(prepared["source_fee_reserve"]),
+                "comment": comment,
+                "tendered_amount": None,
+                "tendered_currency": "SAT",
+                "invoice": destination_quote.invoice,
+                "payment_hash": payment_hash,
+                "invoice_description_hash": description_hash,
+                "created_at": int(datetime.now().timestamp()),
+                "operation": "mint_transfer",
+                "destination_mint": destination_mint,
+                "destination_quote": destination_quote.quote,
+            }
+            await self._upsert_pending_melt(pending_entry)
+
+            outcome = await self._resolve_melt_submission(
+                melt_url=melt_url,
+                mint=source_mint,
+                quote=source_melt_quote.quote,
+                request_payload=melt_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=httpx.Timeout(30.0, connect=5.0),
+            )
+            if outcome["state"] == "UNPAID":
+                await self._remove_pending_melt(source_melt_quote.quote)
+                raise PaymentFailedError(
+                    "mint transfer Lightning payment was not paid; "
+                    "post-swap proofs remain in the wallet"
+                )
+
+            await self._finalize_paid_melt(pending_entry, outcome["payload"])
+            await self._mint_proofs(
+                destination_quote.quote,
+                int(prepared["receive_amount"]),
+                destination_mint,
+            )
+            await self.add_tx_history(
+                tx_type="C",
+                amount=int(prepared["receive_amount"]),
+                comment=f"{comment} from {source_mint}",
+            )
+            await self.load_data()
+            remaining_source = sum(
+                row["amount"] for row in self._source_mint_keysets(source_mint)
+            )
+            return {
+                "status": "OK",
+                "source_mint": source_mint,
+                "destination_mint": destination_mint,
+                "source_keyset": source_keyset["keyset"],
+                "source_balance_before": source_available,
+                "source_balance_after": remaining_source,
+                "receive_amount": int(prepared["receive_amount"]),
+                "source_fee_reserve": int(prepared["source_fee_reserve"]),
+                "source_debit": int(prepared["source_debit"]),
+                "destination_quote": destination_quote.quote,
+                "source_melt_quote": source_melt_quote.quote,
+                "payment_hash": payment_hash,
+                "melt_source": outcome["source"],
+                "wallet_balance": self.get_balance(),
+                "proof_count": len(self.proofs),
+            }
+        finally:
+            await self.release_lock()
+
+
     def withdraw(self, lninvoice:str):
 
         msg_out = asyncio.run(self.pay_multi_invoice(lninvoice=lninvoice))
@@ -10683,7 +10934,15 @@ class Acorn:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.get(keyset_url, headers=headers)
             response.raise_for_status()
-            keyset = response.json()['keysets'][0]['id']
+            keyset_response = response.json()
+            keysets = keyset_response['keysets']
+            keyset_info = keysets[0]
+            input_keyset_info = next(
+                (item for item in keysets if item.get("id") == keyset_to_use),
+                keyset_info,
+            )
+            keyset = keyset_info['id']
+            input_fee_ppk = int(input_keyset_info.get("input_fee_ppk") or 0)
 
         swap_url = f"{self.known_mints[keyset_to_use]}/v1/swap"
         checkstate_url = f"{self.known_mints[keyset_to_use]}/v1/checkstate"
@@ -10738,7 +10997,15 @@ class Acorn:
         proofs_to_use_amount = 0
         for each in proofs_to_use:
             proofs_to_use_amount += each.amount
-       
+
+        swap_fee = self._input_fee_sats(input_fee_ppk, len(proofs_to_use))
+        output_amount = proofs_to_use_amount - swap_fee
+        if output_amount < payment_amount:
+            raise RuntimeError(
+                f"selected proofs total {proofs_to_use_amount} sats cannot cover "
+                f"{payment_amount} sats after {swap_fee} sats swap input fee"
+            )
+
         powers_of_2_payment = self.powers_of_2_sum(payment_amount)
         
 
@@ -10753,8 +11020,8 @@ class Acorn:
                                                         Y = Y.serialize().hex(),
                                                         ).model_dump()
                                     )
-        if proofs_to_use_amount > payment_amount:
-            powers_of_2_leftover = self.powers_of_2_sum(proofs_to_use_amount- payment_amount)
+        if output_amount > payment_amount:
+            powers_of_2_leftover = self.powers_of_2_sum(output_amount - payment_amount)
             for each in powers_of_2_leftover:
                 secret = secrets.token_hex(32)
                 B_, r, Y = step1_alice(secret)

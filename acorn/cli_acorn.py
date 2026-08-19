@@ -481,13 +481,13 @@ def _format_lightning_capacity(capacity: dict) -> str:
     amount = int(capacity["amount"])
     if amount <= 0:
         return (
-            "Lightning payment capacity: 0 sats "
+            "Single Lightning payment capacity: 0 sats "
             "(no mint-mapped spendable keyset)."
         )
 
     return "\n".join(
         [
-            f"Lightning payment capacity: up to {amount} sats before mint fees.",
+            f"Single Lightning payment capacity: up to {amount} sats before mint fees.",
             f"  Mint: {capacity['mint']}",
             f"  Keyset: {capacity['keyset']}",
             "  Limit: one keyset per Lightning payment.",
@@ -1383,6 +1383,80 @@ def deposit(amount: int, mint:str):
     click.echo(f"Balance: {acorn_obj.get_balance()} sats in {len(acorn_obj.proofs)} proofs")
     # asyncio.run(acorn_obj.get_tx_history())
  
+
+def _format_mint_transfer_result(result: dict) -> str:
+    return "\n".join(
+        [
+            "Mint transfer complete.",
+            f"Source mint: {result['source_mint']}",
+            f"Destination mint: {result['destination_mint']}",
+            f"Received at destination: {result['receive_amount']} sats",
+            f"Source debit: {result['source_debit']} sats",
+            f"Source fee reserve: {result['source_fee_reserve']} sats",
+            f"Source balance before: {result['source_balance_before']} sats",
+            f"Source balance after: {result['source_balance_after']} sats",
+            f"Source keyset: {result['source_keyset']}",
+            f"Source melt quote: {result['source_melt_quote']}",
+            f"Destination quote: {result['destination_quote']}",
+            f"Wallet balance: {result['wallet_balance']} sats in {result['proof_count']} proofs",
+        ]
+    )
+
+
+@click.command("mint-transfer", help="transfer funds from one mint to another over Lightning")
+@click.argument("source_mint")
+@click.argument("destination_mint")
+@click.argument("amount", required=False, type=int)
+@click.option(
+    "--full-amount",
+    is_flag=True,
+    help="Transfer the largest source-mint keyset amount minus Lightning fees.",
+)
+@click.option(
+    "--json",
+    "json_output",
+    is_flag=True,
+    help="Emit JSON output.",
+)
+def mint_transfer(source_mint: str, destination_mint: str, amount: int | None, full_amount: bool, json_output: bool):
+    if full_amount and amount is not None:
+        raise click.ClickException("Use either AMOUNT or --full-amount, not both.")
+    if not full_amount and amount is None:
+        raise click.ClickException("AMOUNT is required unless --full-amount is used.")
+
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    asyncio.run(acorn_obj.load_data())
+    source_mint = _normalize_mint(source_mint)
+    destination_mint = _normalize_mint(destination_mint)
+    if not json_output:
+        requested = "full amount" if full_amount else f"{amount} sats"
+        click.echo(
+            f"Transferring {requested} from {source_mint} to {destination_mint}..."
+        )
+    try:
+        result = asyncio.run(
+            acorn_obj.mint_transfer(
+                source_mint=source_mint,
+                destination_mint=destination_mint,
+                amount=amount,
+                full_amount=full_amount,
+            )
+        )
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
+
+    if json_output:
+        _emit_json(result)
+    else:
+        click.echo(_format_mint_transfer_result(result))
+
+
 @click.command("proofs", help="list proofs") 
 def proofs():
     
@@ -1974,7 +2048,12 @@ def get_user_records(kind, since, relays, labels, raw, json_output):
 
 @click.command("balance", help="show balance")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
-@click.option("--mints", "show_mints", is_flag=True, help="Show balance grouped by mint and keyset.")
+@click.option(
+    "--mints",
+    "show_mints",
+    is_flag=True,
+    help="Show balance grouped by mint and keyset.",
+)
 @click.option(
     "--verify",
     "verify_mint_state",
@@ -1997,7 +2076,7 @@ def balance(json_output, show_mints, verify_mint_state):
     balance_sats = acorn_obj.get_balance()
     proof_count = len(acorn_obj.proofs)
     lightning_capacity = _lightning_capacity(acorn_obj)
-    mint_balances = _balance_by_mint(acorn_obj) if show_mints else []
+    mint_balances = _balance_by_mint(acorn_obj)
     pending_clear = _summarize_clear_receipts(
         asyncio.run(acorn_obj.get_clear_receipts())
     )
@@ -2013,6 +2092,7 @@ def balance(json_output, show_mints, verify_mint_state):
             "relay_visible_balance": balance_sats,
             "unit": "sat",
             "proof_count": proof_count,
+            "mints": mint_balances,
             "lightning_capacity": lightning_capacity,
             "pending_clear": pending_clear,
         }
@@ -2022,8 +2102,6 @@ def balance(json_output, show_mints, verify_mint_state):
                 "mint_confirmed_unspent"
             ]["amount"]
             payload["lightning_capacity_verified"] = verification["status"] == "clean"
-        if show_mints:
-            payload["mints"] = mint_balances
         _emit_json(payload)
     else:
         click.echo(
@@ -2051,8 +2129,7 @@ def balance(json_output, show_mints, verify_mint_state):
             click.echo(_format_lightning_capacity(lightning_capacity))
         if pending_clear["pending"]:
             click.echo(_format_pending_clear(pending_clear))
-        if show_mints:
-            click.echo(_format_balance_by_mint(mint_balances))
+        click.echo(_format_balance_by_mint(mint_balances))
 
 
 @click.group("clear", help="Inspect spendable Clear balances and history")
@@ -2965,6 +3042,7 @@ cli.add_command(react)
 cli.add_command(reply)
 cli.add_command(tx_history)
 cli.add_command(deposit)
+cli.add_command(mint_transfer)
 cli.add_command(proofs)
 cli.add_command(swap)
 cli.add_command(check_proofs)
