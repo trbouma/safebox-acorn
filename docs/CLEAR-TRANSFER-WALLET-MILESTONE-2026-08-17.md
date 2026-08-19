@@ -5,8 +5,8 @@ Date: 2026-08-17
 ## Summary
 
 Safebox Acorn now provides the wallet-side protocol boundary for receiving
-organization-issued Clear Mint Units (CMUs) without mixing them with ordinary
-cash/ecash proofs.
+organization-issued transferable units, represented as Clear Mint Units
+(CMUs), without mixing them with ordinary cash/ecash proofs.
 
 The demonstrated flow begins at a public Clear mint, passes through a private
 NIP-59 transfer, and ends as a pending Clear transfer controlled by the

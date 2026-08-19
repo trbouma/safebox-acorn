@@ -41,6 +41,17 @@ Transferability and fungibility are independent properties.
 The classification describes policy, not merely data structure. A resource may
 change class or transfer rules over its lifecycle.
 
+The fungible, transferable class can be described as **transferable units**:
+quantities that can move between holders and are interchangeable only within a
+defined issuer and policy domain. The category includes cash proofs, Clear Mint
+Units, guest passes, and service credits. It does not imply that every such
+unit is money or universally accepted.
+
+Clear provides the issuance, circulation and redemption machinery. The same
+technical lifecycle can support a mundane voucher or a highly regulated
+financial instrument, but each retains its own meaning, governing authority,
+transfer rules, redemption effects, and legal framework.
+
 ## Transfer means control changes
 
 Copying bytes is not necessarily transfer.
@@ -102,9 +113,10 @@ non-fungible control model.
 
 ### Cash and Clear
 
-Cashu ecash and Clear Mint Units represent fungible quantities through unique
-bearer proofs. Acorn keeps cash and Clear in separate proof-state and history
-profiles because their issuers, units, policies, and settlement models differ.
+Cashu ecash and Clear Mint Units are transferable units represented through
+unique bearer proofs. Acorn keeps cash and Clear in separate proof-state and
+history profiles because their issuers, units, policies, and settlement models
+differ.
 
 ### Transferable gym guest passes
 
@@ -128,7 +140,7 @@ program but cannot necessarily move to another holder.
 | --- | --- |
 | **Acorn** | keys, control state, encrypted records, transfer, and recovery |
 | **Safebox Web** | human workflows, presentation, and confirmation |
-| **Clear** | fungible organization-issued units |
+| **Clear** | organization-issued transferable units represented as CMUs |
 | **OpenETR** | provenance and non-fungible control history |
 | **Grove** | content-addressed representations |
 | **Spurline** | signed event availability and synchronization |

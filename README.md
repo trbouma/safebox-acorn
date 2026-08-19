@@ -23,6 +23,10 @@ kind `7380` spendable proof state and kind `7381` append-only history, and
 supports durable acceptance or deletion of pending transfers without relay
 rediscovery.
 
+In this model, a **transferable unit** is the broad category for a fungible unit
+that can move between holders under issuer policy. A CMU is Clear's exact,
+keyset-bound transferable unit; Acorn keeps each one in its own balance domain.
+
 Safebox Web uses this path to show organization-issued Clear Balances beside,
 but never inside, the sat-denominated Cash Balance. A user can accept a pending
 transfer in Safebox Web or with `acorn clear accept <event-id>`, then inspect it

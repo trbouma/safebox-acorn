@@ -69,9 +69,9 @@ wallet's recovery path independent from any single application interface.
 Mints continue to determine the validity and spend state of the value they
 issue.
 
-Acorn also receives organization-issued Clear transfers through a separate
-kind `7379` path. It keeps each Clear balance partitioned by exact mint and CMU
-and never adds those units to the sat-denominated Cash Balance.
+Acorn also receives organization-issued transferable units through a separate
+Clear kind `7379` path. It keeps each Clear balance partitioned by exact mint
+and CMU and never adds those units to the sat-denominated Cash Balance.
 
 </article>
 

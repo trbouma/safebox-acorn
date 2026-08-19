@@ -55,7 +55,8 @@ application features:
 - Cashu proofs behaved like wallet funds;
 - private records behaved like encrypted documents or structured data;
 - transferable electronic records required control history;
-- Clear introduced organization-issued fungible units; and
+- Clear introduced organization-issued units that are both fungible and
+  transferable; and
 - presentations and temporary record transfers introduced constrained
   capabilities over representations.
 
@@ -255,6 +256,26 @@ This produces four principal classes:
 These are resource profiles, not universal declarations. A ticket may be
 transferable before an event and non-transferable after check-in. A regulatory
 rule may restrict transfer of an otherwise bearer-like resource.
+
+### Transferable units
+
+A **transferable unit** is the fungible, transferable resource class expressed
+as a quantity within a defined equivalence domain. Control of the quantity can
+move between holders, and equivalent quantities can satisfy the same
+issuer-defined obligation.
+
+The term describes a resource property, not a claim that the resource is money.
+Cash, a Clear Mint Unit, a gym guest pass, and a service credit may all be
+transferable units while having different issuers, acceptance rules,
+redemption effects, and legal character. A CMU is Clear's concrete,
+keyset-bound implementation of a transferable unit.
+
+Clear provides the issuance, circulation and redemption machinery. That common
+machinery may support instruments ranging from drink vouchers and guest passes
+to ownership interests or regulated securities. The applicable URM profile
+must preserve the instrument's actual authority, policy, transfer restrictions,
+redemption effects, and legal or regulatory character rather than infer them
+from the shared token machinery.
 
 ## Transferability
 
@@ -546,6 +567,9 @@ for this resource class.
 ### Transferable, fungible
 
 Cashu ecash and Clear Mint Units fit this class at the represented-unit level.
+Both are transferable units, but only the sat-denominated ecash path is
+presented as the wallet's general-purpose Cash Balance. Clear units remain
+issuer-specific Clear Balances.
 
 Cash transfer:
 
@@ -609,7 +633,7 @@ The Mainstay product family provides a practical decomposition:
 | --- | --- |
 | Acorn | keys, controller authority, encrypted resource state, transfer and recovery mechanics |
 | Safebox Web | human workflows, presentation, confirmation, and explanation |
-| Clear | issuance, validation, transfer, redemption, and retirement of fungible CMUs |
+| Clear | issuance, validation, transfer, redemption, and retirement of fungible transferable units represented as CMUs |
 | OpenETR | provenance and control history for non-fungible transferable records |
 | Grove | opaque content-addressed representations |
 | Spurline | event storage, synchronization, and availability |

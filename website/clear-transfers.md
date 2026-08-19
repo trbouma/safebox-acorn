@@ -5,8 +5,10 @@ description: How Acorn keeps organization-issued Clear balances separate from ca
 
 # Clear transfers
 
-Acorn can now receive private transfers of organization-issued Clear Mint Units
-without treating them as sats or adding them to the wallet's Cash Balance.
+Acorn can now receive private transfers of organization-issued transferable
+units without treating them as sats or adding them to the wallet's Cash
+Balance. Clear represents each such unit as a keyset-bound Clear Mint Unit
+(CMU).
 
 This gives one wallet two deliberately different value models:
 
@@ -68,4 +70,3 @@ spending, security review, and release hardening are complete.
 [Read the technical milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md){ .md-button .md-button--primary }
 [How Acorn works](how-acorn-works.md){ .md-button }
 [Project status](project-status.md){ .md-button }
-
