@@ -1382,6 +1382,45 @@ def deposit(amount: int, mint:str):
     click.echo(f"Mint: {effective_mint}")
     click.echo(f"Balance: {acorn_obj.get_balance()} sats in {len(acorn_obj.proofs)} proofs")
     # asyncio.run(acorn_obj.get_tx_history())
+
+
+@click.command(
+    "claim-deposit",
+    help="Claim proofs from an existing paid mint quote without creating a new invoice.",
+)
+@click.argument("quote")
+@click.argument("amount", type=click.IntRange(min=1))
+@click.option("--mint", "-m", required=True, help="Mint that issued the quote")
+def claim_deposit(quote: str, amount: int, mint: str):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    asyncio.run(acorn_obj.load_data())
+    effective_mint = _normalize_mint(mint)
+    success, _ = asyncio.run(
+        acorn_obj.check_quote(quote, int(amount), effective_mint)
+    )
+    if not success:
+        raise click.ClickException(
+            "The quote is not paid or the mint did not issue its proofs. "
+            "Run again with --verbose to see the mint response."
+        )
+
+    asyncio.run(
+        acorn_obj.add_tx_history(
+            tx_type="C",
+            amount=int(amount),
+            comment="acorn claimed deposit",
+        )
+    )
+    click.echo("Deposit claimed.")
+    click.echo(f"Amount: {int(amount)} sats")
+    click.echo(f"Mint: {effective_mint}")
+    click.echo(f"Balance: {acorn_obj.get_balance()} sats in {len(acorn_obj.proofs)} proofs")
  
 
 def _format_mint_transfer_result(result: dict) -> str:
@@ -3042,6 +3081,7 @@ cli.add_command(react)
 cli.add_command(reply)
 cli.add_command(tx_history)
 cli.add_command(deposit)
+cli.add_command(claim_deposit)
 cli.add_command(mint_transfer)
 cli.add_command(proofs)
 cli.add_command(swap)

@@ -540,6 +540,8 @@ async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
             return None
 
     class FakeHttpClient:
+        mint_payload = None
+
         def __init__(self, *args, **kwargs):
             pass
 
@@ -554,7 +556,16 @@ async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
                 return Response(
                     {
                         "keysets": [
-                            {"id": "deposit-keyset", "unit": "sat", "active": True}
+                            {
+                                "id": "inactive-keyset",
+                                "unit": "sat",
+                                "active": False,
+                            },
+                            {
+                                "id": "deposit-keyset",
+                                "unit": "sat",
+                                "active": True,
+                            },
                         ]
                     }
                 )
@@ -573,6 +584,7 @@ async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
             )
 
         async def post(self, url, **kwargs):
+            self.__class__.mint_payload = kwargs["json"]
             return Response(
                 {
                     "signatures": [
@@ -592,6 +604,10 @@ async def test_mint_proofs_updates_balance_after_verified_deposit(monkeypatch):
     assert sum(proof.amount for proof in wallet.proofs) == 52
     assert len(wallet.proofs) == 4
     assert wallet.known_mints["deposit-keyset"] == "https://mint.example"
+    assert {output["id"] for output in FakeHttpClient.mint_payload["outputs"]} == {
+        "deposit-keyset"
+    }
+    assert all("Y" not in output for output in FakeHttpClient.mint_payload["outputs"])
     wallet.add_proofs_obj.assert_awaited_once()
     persisted_proofs = wallet.add_proofs_obj.await_args.args[0]
     assert sum(proof.amount for proof in persisted_proofs) == 21

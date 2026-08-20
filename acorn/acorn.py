@@ -6952,11 +6952,20 @@ class Acorn:
                 response = await client.get(keyset_url, headers=headers)
                 response.raise_for_status()
                 keysets_json = response.json()
-
-                keyset = keysets_json['keysets'][0]['id']
                 keysets_obj = KeysetsResponse(**keysets_json)
+                active_sat_keyset = next(
+                    (
+                        each
+                        for each in keysets_obj.keysets
+                        if each.active and each.unit.lower() == "sat"
+                    ),
+                    None,
+                )
+                if active_sat_keyset is None:
+                    raise ValueError("mint does not advertise an active sat keyset")
+                keyset = active_sat_keyset.id
 
-            self.known_mints[keysets_obj.keysets[0].id] = mint_base_url
+            self.known_mints[keyset] = mint_base_url
 
             # print("id:", keysets_obj.keysets[0].id)
 
@@ -6973,8 +6982,7 @@ class Acorn:
                 blinded_messages.append(    BlindedMessage( amount=each,
                                                             id=keyset,
                                                             B_=B_.serialize().hex(),
-                                                            Y = Y.serialize().hex(),
-                                                            ).model_dump()
+                                                            ).model_dump(exclude={"Y"})
                                                             
                                         )
             # print("blinded values, blinded messages:", blinded_values, blinded_messages)
@@ -7046,13 +7054,20 @@ class Acorn:
             self.proofs = self._deduplicate_proofs([*self.proofs, *proof_objs])
             self.balance = sum(each.amount for each in self.proofs)
         except (httpx.HTTPError, KeyError, ValueError, TypeError) as e:
+            error_detail = str(e)
+            if isinstance(e, httpx.HTTPStatusError):
+                response_detail = e.response.text.strip()
+                if response_detail:
+                    error_detail = f"{error_detail}; mint response: {response_detail}"
             self.logger.error(
                 "op=mint_proofs status=failed amount=%s mint=%s error=%s",
                 amount,
                 mint,
-                e,
+                error_detail,
             )
-            raise RuntimeError(f"Error in mint_proofs ({type(e).__name__}): {e}") from e
+            raise RuntimeError(
+                f"Error in mint_proofs ({type(e).__name__}): {error_detail}"
+            ) from e
         
         finally:
             if lock_acquired:

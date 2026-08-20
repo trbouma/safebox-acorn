@@ -40,6 +40,58 @@ def test_normalize_mint_adds_https(monkeypatch, tmp_path):
     assert cli._normalize_mint("testnut.cashu.space///") == "https://testnut.cashu.space"
 
 
+def test_claim_deposit_uses_existing_quote_without_creating_invoice(
+    monkeypatch,
+    tmp_path,
+):
+    cli = _load_cli(monkeypatch, tmp_path)
+    calls = {}
+
+    class FakeAcorn:
+        proofs = [object(), object()]
+
+        def __init__(self, **kwargs):
+            pass
+
+        async def load_data(self):
+            return None
+
+        async def check_quote(self, quote, amount, mint):
+            calls["claim"] = (quote, amount, mint)
+            return True, "lnbc1existing"
+
+        async def add_tx_history(self, **kwargs):
+            calls["history"] = kwargs
+
+        def get_balance(self):
+            return 100
+
+    monkeypatch.setattr(cli, "Acorn", FakeAcorn)
+
+    result = CliRunner().invoke(
+        cli.claim_deposit,
+        [
+            "paid-quote",
+            "100",
+            "--mint",
+            "https://mint.minibits.cash/Bitcoin/",
+        ],
+    )
+
+    assert result.exit_code == 0
+    assert calls["claim"] == (
+        "paid-quote",
+        100,
+        "https://mint.minibits.cash/Bitcoin",
+    )
+    assert calls["history"] == {
+        "tx_type": "C",
+        "amount": 100,
+        "comment": "acorn claimed deposit",
+    }
+    assert "Deposit claimed." in result.output
+
+
 def test_split_csv_trims_spaces(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 
