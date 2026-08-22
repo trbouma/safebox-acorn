@@ -158,6 +158,13 @@ def _positive_timeout(value: object, *, name: str) -> float:
     return normalized
 
 
+def _exception_detail(exc: BaseException) -> str:
+    """Return useful diagnostics even when a dependency raises a blank error."""
+
+    message = str(exc).strip()
+    return message if message else repr(exc)
+
+
 RECORD_LIMIT: int = _positive_limit(
     os.getenv("ACORN_RECORD_LIMIT", "1024"),
     name="ACORN_RECORD_LIMIT",
@@ -10478,24 +10485,12 @@ class Acorn:
                             "inputs":   swap_proofs,
                             "outputs": blinded_messages
                             
-            } 
+        }
         
         try:
                 async with httpx.AsyncClient(timeout=timeout) as client:
-                    response = await client.post(url=swap_url, json=data_to_send, headers=headers)
-                    if response.status_code >= 400:
-                        body = response.text[:500]
-                        self.logger.error(
-                            "op=swap_proofs status=swap_http_error mint=%s keyset=%s code=%s body=%s",
-                            mint_base,
-                            proof_keyset,
-                            response.status_code,
-                            body,
-                        )
-                    response.raise_for_status()
-                    promises = response.json()['signatures']
-
                     mint_key_url = f"{mint_base}/v1/keys/{keyset}"
+                    request_url = mint_key_url
                     response = await client.get(mint_key_url, headers=headers)
                     if response.status_code >= 400:
                         body = response.text[:500]
@@ -10507,24 +10502,124 @@ class Acorn:
                             body,
                         )
                     response.raise_for_status()
-                    keys = response.json()["keysets"][0]["keys"]
+                    key_payload = response.json()
+                    if not isinstance(key_payload, dict):
+                        raise RuntimeError("Mint key response was not a JSON object")
+                    key_responses = key_payload.get("keysets") or []
+                    if not isinstance(key_responses, list):
+                        raise RuntimeError("Mint key response keysets was not a list")
+                    matching_keyset = next(
+                        (
+                            candidate
+                            for candidate in key_responses
+                            if isinstance(candidate, dict)
+                            if str(candidate.get("id") or "") == str(keyset)
+                        ),
+                        None,
+                    )
+                    if matching_keyset is None:
+                        returned_ids = [
+                            str(candidate.get("id") or "")
+                            for candidate in key_responses
+                            if isinstance(candidate, dict)
+                        ]
+                        raise RuntimeError(
+                            "Mint key response did not contain the requested "
+                            f"keyset {keyset}; returned keysets: "
+                            f"{', '.join(returned_ids) or '(none)'}"
+                        )
+                    keys = matching_keyset.get("keys") or {}
+                    if not isinstance(keys, dict):
+                        raise RuntimeError("Mint keyset keys was not a JSON object")
+
+                    output_keys: dict[int, PublicKey] = {}
+                    for amount in powers_of_2:
+                        serialized_key = keys.get(str(int(amount)))
+                        if not serialized_key:
+                            raise RuntimeError(
+                                "Mint keyset does not support output denomination "
+                                f"{amount}"
+                            )
+                        try:
+                            output_key = PublicKey()
+                            output_key.deserialize(unhexlify(serialized_key))
+                        except (RuntimeError, ValueError, TypeError) as exc:
+                            raise RuntimeError(
+                                "Mint keyset contains an invalid public key for "
+                                f"denomination {amount} ({type(exc).__name__}): "
+                                f"{_exception_detail(exc)}"
+                            ) from exc
+                        output_keys[int(amount)] = output_key
+
+                    # Validate every key needed to recover the returned promises
+                    # before the mint atomically consumes the bearer inputs.
+                    request_url = swap_url
+                    response = await client.post(url=swap_url, json=data_to_send, headers=headers)
+                    if response.status_code >= 400:
+                        body = response.text[:500]
+                        self.logger.error(
+                            "op=swap_proofs status=swap_http_error mint=%s keyset=%s code=%s body=%s",
+                            mint_base,
+                            proof_keyset,
+                            response.status_code,
+                            body,
+                        )
+                    response.raise_for_status()
+                    swap_payload = response.json()
+                    if not isinstance(swap_payload, dict):
+                        raise RuntimeError("Mint swap response was not a JSON object")
+                    promises = swap_payload.get("signatures")
+                    if not isinstance(promises, list):
+                        raise RuntimeError("Mint swap response signatures was not a list")
                 # print(keys)
                 new_proofs = []
                 i = 0
+
+                if len(promises) != len(blinded_values):
+                    raise RuntimeError(
+                        "Mint swap returned an unexpected number of signatures: "
+                        f"expected {len(blinded_values)}, received {len(promises)}"
+                    )
             
                 for each in promises:
-                    pub_key_c = PublicKey()
-                    # print("each:", each['C_'])
-                    pub_key_c.deserialize(unhexlify(each['C_']))
-                    promise_amount = each['amount']
-                    A = keys[str(int(promise_amount))]
-                    # A = keys[str(j)]
-                    pub_key_a = PublicKey()
-                    pub_key_a.deserialize(unhexlify(A))
-                    r = blinded_values[i][1]
-                    Y = blinded_values[i][3]
-                    # print(pub_key_c, promise_amount,A, r)
-                    C = step3_alice(pub_key_c,r,pub_key_a)
+                    try:
+                        if not isinstance(each, dict):
+                            raise TypeError("signature was not a JSON object")
+                        promise_amount = int(each['amount'])
+                        expected_amount = int(powers_of_2[i])
+                        if promise_amount != expected_amount:
+                            raise ValueError(
+                                "signature denomination did not match its output: "
+                                f"expected {expected_amount}, received {promise_amount}"
+                            )
+                        promise_keyset = str(each.get("id") or "")
+                        if promise_keyset != str(keyset):
+                            raise ValueError(
+                                "signature keyset did not match its output: "
+                                f"expected {keyset}, received "
+                                f"{promise_keyset or '(missing)'}"
+                            )
+                        pub_key_c = PublicKey()
+                        # print("each:", each['C_'])
+                        pub_key_c.deserialize(unhexlify(each['C_']))
+                        pub_key_a = output_keys[promise_amount]
+                        r = blinded_values[i][1]
+                        Y = blinded_values[i][3]
+                        # print(pub_key_c, promise_amount,A, r)
+                        C = step3_alice(pub_key_c,r,pub_key_a)
+                    except (
+                        RuntimeError,
+                        ValueError,
+                        TypeError,
+                        KeyError,
+                        IndexError,
+                        AttributeError,
+                    ) as exc:
+                        raise RuntimeError(
+                            "Mint swap signature could not be unblinded "
+                            f"at output {i} ({type(exc).__name__}): "
+                            f"{_exception_detail(exc)}"
+                        ) from exc
                     proof = {   "amount": promise_amount,
                             "id": keyset,
                             "secret": blinded_values[i][2],
@@ -10541,10 +10636,31 @@ class Acorn:
                 except Exception:
                     response_text = ""
                 raise RuntimeError(
-                    f"Problem with swap HTTP {e.response.status_code} on {swap_url}: {response_text}"
+                    f"Problem with swap HTTP {e.response.status_code} on {request_url}: {response_text}"
                 ) from e
-        except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
-                raise RuntimeError(f"Problem with swap {e}")
+        except (
+            RuntimeError,
+            ValueError,
+            TypeError,
+            KeyError,
+            IndexError,
+            AttributeError,
+            json.JSONDecodeError,
+            httpx.HTTPError,
+        ) as e:
+                error_detail = _exception_detail(e)
+                self.logger.exception(
+                    "op=swap_proofs status=failed mint=%s input_keyset=%s "
+                    "output_keyset=%s error_type=%s error=%s",
+                    mint_base,
+                    proof_keyset,
+                    keyset,
+                    type(e).__name__,
+                    error_detail,
+                )
+                raise RuntimeError(
+                    f"Problem with swap ({type(e).__name__}): {error_detail}"
+                ) from e
 
         # need to convert new_proofs into objects
         new_proof_obj_list = []

@@ -9,7 +9,12 @@ from monstr.encrypt import Keys
 from monstr.event.event import Event
 
 from acorn import acorn as acorn_module
-from acorn.acorn import Acorn, CLEAR_HISTORY_KIND, CLEAR_PROOF_KIND
+from acorn.acorn import (
+    Acorn,
+    CLEAR_HISTORY_KIND,
+    CLEAR_PROOF_KIND,
+    _exception_detail,
+)
 from acorn.models import Proof, TokenV3, TokenV3Token
 
 
@@ -73,6 +78,76 @@ def proof(amount: int, keyset: str, suffix: str) -> Proof:
         secret=f"clear-secret-{suffix}",
         C=f"02{suffix.zfill(64)}",
     )
+
+
+def test_exception_detail_preserves_blank_dependency_error_type():
+    assert _exception_detail(RuntimeError()) == "RuntimeError()"
+    assert _exception_detail(ValueError("invalid mint response")) == (
+        "invalid mint response"
+    )
+
+
+@pytest.mark.asyncio
+async def test_swap_validates_mint_keys_before_consuming_inputs(monkeypatch):
+    acorn = wallet()
+    acorn.known_mints = {"incoming-keyset": "https://clear.example"}
+    acorn._preflight_proof_persistence = AsyncMock(return_value={})
+
+    class Response:
+        status_code = 200
+        text = ""
+
+        def __init__(self, payload):
+            self.payload = payload
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return self.payload
+
+    class Client:
+        post_count = 0
+
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, headers=None):
+            if url.endswith("/v1/keysets"):
+                return Response({
+                    "keysets": [{
+                        "id": "active-keyset",
+                        "unit": "cmu-example",
+                        "active": True,
+                    }]
+                })
+            return Response({
+                "keysets": [{
+                    "id": "active-keyset",
+                    "keys": {"1": "not-a-public-key"},
+                }]
+            })
+
+        async def post(self, *args, **kwargs):
+            type(self).post_count += 1
+            raise AssertionError("swap must not be submitted with invalid mint keys")
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", Client)
+
+    with pytest.raises(RuntimeError, match="invalid public key"):
+        await acorn.swap_proofs(
+            [proof(1, "incoming-keyset", "9")],
+            mint_base="https://clear.example",
+            unit="cmu-example",
+        )
+
+    assert Client.post_count == 0
 
 
 @pytest.fixture(autouse=True)
