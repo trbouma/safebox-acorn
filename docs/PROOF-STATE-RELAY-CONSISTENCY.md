@@ -436,6 +436,33 @@ settle, run `acorn check-proofs`, and use `acorn reconcile-proofs` only if the
 mint conclusively reports an obsolete input as spent. The error includes the
 replacement event IDs so an operator can investigate the relay directly.
 
+### Clear receipt acceptance recovers delayed swap state
+
+A Clear mint can atomically consume receipt inputs before the relay exposes the
+replacement proof event written by the accepting Acorn. A later acceptance
+attempt may therefore load no replacement state and receive `proof is already
+spent` when it presents the original notes again. That response is not, by
+itself, evidence that the incoming value was lost.
+
+Acorn treats this specific response as a recovery signal. It keeps the pending
+receipt, polls for encrypted Clear proof-state events whose `source_receipts`
+contains the receipt event ID, validates their mint and CMU, and then resumes
+transaction-history and receipt finalization without submitting another swap.
+The default recovery window is 120 seconds with one-second polling:
+
+```sh
+ACORN_CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS=120
+ACORN_CLEAR_RECEIPT_RECOVERY_POLL_SECONDS=1
+```
+
+Both values must be positive numbers. If no associated replacement state
+becomes visible during the window, Acorn leaves the receipt pending and reports
+that it should be retained and retried later. It does not delete the receipt or
+manufacture a balance from the mint error. The recovery path is covered by a
+deterministic regression test that delays relay visibility, returns a spent
+input response, exposes the earlier proof event, and verifies exactly-once
+completion without a second successful swap.
+
 ### Transaction history is a verified audit view
 
 Transaction history is stored separately from bearer proof state as encrypted

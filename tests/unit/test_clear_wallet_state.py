@@ -15,7 +15,7 @@ from acorn.acorn import (
     CLEAR_PROOF_KIND,
     _exception_detail,
 )
-from acorn.models import Proof, TokenV3, TokenV3Token
+from acorn.models import ClearProofState, Proof, TokenV3, TokenV3Token
 
 
 class PlaintextNip44:
@@ -466,3 +466,75 @@ async def test_accept_pending_clear_receipt_refreshes_into_separate_state():
     assert "token" not in written[0][0]
     assert acorn.balance == 999
     assert acorn.proofs == cash_proofs
+
+
+@pytest.mark.asyncio
+async def test_accept_pending_clear_receipt_recovers_after_delayed_relay_visibility():
+    acorn = wallet()
+    acorn.known_mints = {}
+    acorn.acquire_lock = AsyncMock()
+    acorn.release_lock = AsyncMock()
+    event_id = "a" * 64
+    incoming = proof(25, "incoming-keyset", "41")
+    refreshed = proof(25, "active-keyset", "42")
+    token = TokenV3(
+        token=[TokenV3Token(mint="https://clear.example", proofs=[incoming])],
+        memo="delayed relay recovery",
+        unit="cmu-example",
+    ).serialize()
+    receipts = [{
+        "event_id": event_id,
+        "sender_pubkey": "sender-pubkey",
+        "token": token,
+        "mint": "https://clear.example",
+        "amount": 25,
+        "unit": "cmu-example",
+        "comment": "delayed relay recovery",
+        "timestamp": 1_786_430_400,
+        "status": "pending",
+    }]
+    recovered_record = {
+        "event_id": "b" * 64,
+        "state": ClearProofState(
+            mint="https://clear.example",
+            unit="cmu-example",
+            proofs=[refreshed],
+            source_receipts=[event_id],
+        ),
+    }
+    written: list[list[dict]] = []
+
+    acorn.get_wallet_info = AsyncMock(return_value=json.dumps(receipts))
+
+    async def save_receipts(_label, value, verify):
+        assert verify is True
+        written.append(json.loads(value))
+
+    acorn.set_wallet_info = AsyncMock(side_effect=save_receipts)
+    # Initial lookup and first recovery poll reproduce delayed relay readback;
+    # the second poll exposes the proof event created by the earlier attempt.
+    acorn._load_clear_proof_state = AsyncMock(
+        side_effect=[[], [], [recovered_record]]
+    )
+    acorn.swap_proofs = AsyncMock(
+        side_effect=RuntimeError(
+            'Problem with swap HTTP 400: {"detail":"proof is already spent"}'
+        )
+    )
+    acorn.add_clear_proof_event = AsyncMock()
+    acorn.get_clear_transaction_history = AsyncMock(return_value=[])
+    acorn.add_clear_transaction_history = AsyncMock(
+        return_value={"event_id": "c" * 64, "verified": True}
+    )
+
+    result = await acorn.accept_pending_clear_receipt(event_id)
+
+    assert result["accepted"] is True
+    assert result["amount"] == 25
+    assert result["proof_event_ids"] == ["b" * 64]
+    assert acorn._load_clear_proof_state.await_count == 3
+    acorn.swap_proofs.assert_awaited_once()
+    acorn.add_clear_proof_event.assert_not_awaited()
+    acorn.add_clear_transaction_history.assert_awaited_once()
+    assert written[0][0]["status"] == "accepted"
+    assert "token" not in written[0][0]

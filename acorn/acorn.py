@@ -173,6 +173,14 @@ RELAY_VERIFY_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_RELAY_VERIFY_TIMEOUT_SECONDS", "60"),
     name="ACORN_RELAY_VERIFY_TIMEOUT_SECONDS",
 )
+CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS", "120"),
+    name="ACORN_CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS",
+)
+CLEAR_RECEIPT_RECOVERY_POLL_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_CLEAR_RECEIPT_RECOVERY_POLL_SECONDS", "1"),
+    name="ACORN_CLEAR_RECEIPT_RECOVERY_POLL_SECONDS",
+)
 PROOF_LIMIT: int = 32
 ECASH_TRANSFER_KIND: int = 7378
 ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
@@ -5519,38 +5527,73 @@ class Acorn:
                 if normalized_id in record["state"].source_receipts
             ]
             if proof_records:
-                if any(
-                    record["state"].mint != mint or record["state"].unit != unit
-                    for record in proof_records
-                ):
-                    raise RuntimeError(
-                        "Existing Clear proof state does not match its receipt"
+                refreshed_proofs, proof_event_ids = (
+                    self._clear_receipt_proofs_from_records(
+                        proof_records,
+                        mint=mint,
+                        unit=unit,
                     )
-                unique_refreshed = {
-                    (str(proof.id), str(proof.secret)): proof
-                    for record in proof_records
-                    for proof in record["state"].proofs
-                }
-                refreshed_proofs = list(unique_refreshed.values())
-                proof_event_ids = [record["event_id"] for record in proof_records]
+                )
             else:
                 for proof in incoming_proofs:
                     self.known_mints[str(proof.id)] = mint
-                refreshed_proofs = await self.swap_proofs(
-                    incoming_proofs,
-                    mint_base=mint,
-                    unit=unit,
-                )
-                if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
-                    raise RuntimeError("Mint swap returned the wrong Clear amount")
-                proof_result = await self.add_clear_proof_event(
-                    mint=mint,
-                    unit=unit,
-                    proofs=refreshed_proofs,
-                    source_receipts=[normalized_id],
-                    verify=True,
-                )
-                proof_event_ids = [str(proof_result["event_id"])]
+                try:
+                    refreshed_proofs = await self.swap_proofs(
+                        incoming_proofs,
+                        mint_base=mint,
+                        unit=unit,
+                    )
+                except RuntimeError as exc:
+                    if not self._clear_swap_reports_spent_inputs(exc):
+                        raise
+                    self.logger.warning(
+                        "op=accept_pending_clear_receipt "
+                        "status=waiting_for_relay_recovery event_id=%s "
+                        "mint=%s unit=%s timeout_seconds=%s",
+                        normalized_id,
+                        mint,
+                        unit,
+                        CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS,
+                    )
+                    proof_records = await self._wait_for_clear_receipt_proof_state(
+                        normalized_id,
+                        mint=mint,
+                        unit=unit,
+                    )
+                    if not proof_records:
+                        raise RuntimeError(
+                            "Mint reports that the pending Clear inputs are already "
+                            "spent, but relay-backed replacement proofs for receipt "
+                            f"{normalized_id} did not become visible within "
+                            f"{CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS:g} seconds. "
+                            "Keep the receipt and retry acceptance later."
+                        ) from exc
+                    refreshed_proofs, proof_event_ids = (
+                        self._clear_receipt_proofs_from_records(
+                            proof_records,
+                            mint=mint,
+                            unit=unit,
+                        )
+                    )
+                    self.logger.info(
+                        "op=accept_pending_clear_receipt "
+                        "status=recovered_relay_proofs event_id=%s "
+                        "proof_events=%s amount=%s",
+                        normalized_id,
+                        len(proof_event_ids),
+                        sum(int(proof.amount) for proof in refreshed_proofs),
+                    )
+                else:
+                    if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
+                        raise RuntimeError("Mint swap returned the wrong Clear amount")
+                    proof_result = await self.add_clear_proof_event(
+                        mint=mint,
+                        unit=unit,
+                        proofs=refreshed_proofs,
+                        source_receipts=[normalized_id],
+                        verify=True,
+                    )
+                    proof_event_ids = [str(proof_result["event_id"])]
             if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
                 raise RuntimeError("Stored Clear proof amount does not match its receipt")
             for proof in refreshed_proofs:
@@ -5614,6 +5657,65 @@ class Acorn:
         finally:
             if lock_acquired:
                 await self.release_lock()
+
+    @staticmethod
+    def _clear_swap_reports_spent_inputs(exc: BaseException) -> bool:
+        detail = str(exc).lower()
+        return "already spent" in detail or "proof is spent" in detail
+
+    @staticmethod
+    def _clear_receipt_proofs_from_records(
+        proof_records: List[dict],
+        *,
+        mint: str,
+        unit: str,
+    ) -> tuple[List[Proof], List[str]]:
+        if any(
+            record["state"].mint != mint or record["state"].unit != unit
+            for record in proof_records
+        ):
+            raise RuntimeError("Existing Clear proof state does not match its receipt")
+        unique_refreshed = {
+            (str(proof.id), str(proof.secret)): proof
+            for record in proof_records
+            for proof in record["state"].proofs
+        }
+        return (
+            list(unique_refreshed.values()),
+            [str(record["event_id"]) for record in proof_records],
+        )
+
+    async def _wait_for_clear_receipt_proof_state(
+        self,
+        event_id: str,
+        *,
+        mint: str,
+        unit: str,
+        timeout: float = CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS,
+        poll_interval: float = CLEAR_RECEIPT_RECOVERY_POLL_SECONDS,
+    ) -> List[dict]:
+        """Wait for relay-backed swap outputs after a spent-input response."""
+
+        deadline = monotonic() + timeout
+        while True:
+            proof_records = [
+                record
+                for record in await self._load_clear_proof_state()
+                if event_id in record["state"].source_receipts
+            ]
+            if proof_records:
+                # Validate the association before treating relay visibility as
+                # successful recovery.
+                self._clear_receipt_proofs_from_records(
+                    proof_records,
+                    mint=mint,
+                    unit=unit,
+                )
+                return proof_records
+            remaining = deadline - monotonic()
+            if remaining <= 0:
+                return []
+            await asyncio.sleep(min(poll_interval, remaining))
 
     async def sweep_clear_transfers(
         self,
