@@ -189,6 +189,29 @@ This does not imply that identity and payment systems should be administratively
 merged. It means their technical boundaries should be explicit and
 interoperable when a use case requires both.
 
+### Balances as a practical projection
+
+Working implementations now make a more general product vocabulary visible.
+Fungible controlled records can be aggregated within an explicit equivalence
+domain and presented as a **balance**. Non-fungible records remain individually
+meaningful:
+
+```text
+fungible controlled records     -> balances
+non-fungible controlled records -> records
+```
+
+This does not turn a balance into an application-owned account entry. The
+balance remains derived from underlying records and bounded by their issuer,
+unit, keyset, policy, and validation rules. Nor does it make every transfer a
+payment. Payment is the value or settlement leg of an economic transaction;
+allocation, gifting, benefits, refunds, issuance, and treasury disbursement may
+use transfers without being payments.
+
+Accordingly, **keys, balances and records** is often the clearest product-level
+vocabulary, while **funds** remains the appropriate domain term for monetary
+value and regulated claims.
+
 ### Records
 
 Records are digital objects whose content, provenance, control, and lifecycle

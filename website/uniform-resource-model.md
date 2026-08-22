@@ -41,6 +41,23 @@ Transferability and fungibility are independent properties.
 The classification describes policy, not merely data structure. A resource may
 change class or transfer rules over its lifecycle.
 
+## Balances are projections of fungible records
+
+Cash and Clear make the model concrete. Their proofs and mint notes are
+individually identifiable cryptographic records, but compatible quantities can
+be aggregated within one exact equivalence domain and displayed as a balance.
+
+```text
+fungible records in one equivalence domain -> Balance
+non-fungible records                       -> Records
+```
+
+The balance is derived from the underlying records; it is not a separate
+application-owned account entry. Non-fungible records remain individually
+visible because their exact content, provenance, control, and history matter.
+This is why Safebox can present **Manage Balances** and **Manage Records** while
+Acorn retains one uniform controlled-resource model underneath.
+
 The fungible, transferable class can be described as **transferable units**:
 quantities that can move between holders and are interchangeable only within a
 defined issuer and policy domain. The category includes cash proofs, Clear Mint
@@ -68,6 +85,12 @@ acceptance  -> completes recipient validation and durable state
 Keeping those operations distinct prevents a shared document from being
 mistaken for transferred title and prevents an arrived bearer token from being
 shown as finalized value.
+
+Payment is narrower than transfer. A payment is a balance transfer used as the
+value or settlement leg of an economic transaction. Allocations, gifts,
+benefits, refunds, and treasury disbursements are transfers too, while the
+other side of a purchase may be a service or control over a non-fungible
+record.
 
 ## Fungibility is scoped
 
@@ -200,5 +223,5 @@ Clear acceptance lifecycle, and define the difference between copying a record
 and transferring exclusive control.
 
 [Read the full design note](https://github.com/trbouma/safebox-acorn/blob/main/docs/UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md){ .md-button .md-button--primary }
-[User-controlled keys, funds and records](user-controlled-funds-and-records.md){ .md-button }
+[User-controlled keys, balances and records](user-controlled-funds-and-records.md){ .md-button }
 [How Acorn works](how-acorn-works.md){ .md-button }

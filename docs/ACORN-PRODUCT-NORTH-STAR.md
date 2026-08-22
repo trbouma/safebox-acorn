@@ -3,7 +3,7 @@
 ## Summary
 
 Acorn is a protocol-first component for safeguarding user-controlled keys,
-funds and records.
+balances and records.
 
 It is not merely a wallet library, a command-line tool, or the code extracted
 from Safebox. Acorn is intended to be a user-controlled protocol component that
@@ -23,7 +23,7 @@ Put another way:
 
 ```text
 Acorn gives applications a protocol-first way to safeguard user-controlled
-keys, funds, records, and recovery material.
+keys, balances, records, and recovery material.
 ```
 
 The core value proposition can be summarized as:
@@ -99,7 +99,9 @@ of a mint to determine Cashu spend state, an issuer to make or revoke a claim,
 or a legal framework to determine rights. Acorn controls how its keypair acts
 on an object; the object's issuing and validation rules still apply.
 
-Those controlled objects are principally funds and records. The keypair does
+Those controlled objects are principally balances and records. A balance is a
+derived view of compatible fungible records; a non-fungible record remains
+individually meaningful. The keypair does
 not, by itself, prove a person's legal, social, or organizational identity,
 establish real-world title, or make every claim signed by the key true.
 
@@ -142,12 +144,12 @@ Acorn's language has become calmer over time. Earlier descriptions leaned more
 heavily on terms like radical independence, data havens, and infrastructure
 independence. Those ideas helped shape the architecture, but they can also
 sound ideological or unnecessarily alarming to people who simply need
-dependable tools for safeguarding keys, funds and records.
+dependable tools for safeguarding keys, balances and records.
 
 The current language is intentionally plainer:
 
 ```text
-user-controlled keys, funds and records
+user-controlled keys, balances and records
 ```
 
 This does not dilute the principles. It makes them easier to evaluate. Acorn is
@@ -218,14 +220,14 @@ replicate relay-backed state, change operators, recover through another
 compatible surface, or move toward stronger custody such as local hardware or
 an HSM-like device.
 
-## Safekeeping keys, funds and records
+## Safekeeping keys, balances and records
 
 Acorn is inspired by the broader idea of a haven: a place or system built to
 keep important things available and protected when ordinary devices, accounts,
 buildings, providers, or people are unavailable.
 
 Acorn's concrete focus is narrower and more practical: safeguarding
-user-controlled keys, funds and records. It gives applications a way to create
+user-controlled keys, balances and records. It gives applications a way to create
 safekeeping environments for key authority, private records, wallet state, and
 recovery context that can survive application, provider, relay, mint, and
 device failure.

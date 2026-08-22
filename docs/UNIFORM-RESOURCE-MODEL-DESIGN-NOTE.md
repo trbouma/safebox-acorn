@@ -76,6 +76,38 @@ The implementations increasingly use the same underlying mechanics:
 URM names that common architecture without claiming that every resource has
 the same rules.
 
+## Balances are views of fungible records
+
+The working Cash and Clear implementations make an important consequence of
+the model concrete: **a balance is a user-facing projection over fungible
+records**. It is not a second, unrelated class of protocol state.
+
+Each proof or mint note remains an individually identifiable cryptographic
+record. When several valid records represent equivalent quantities within the
+same explicit equivalence domain, an application may aggregate those
+quantities and present the result as a balance:
+
+```text
+fungible records in one equivalence domain -> balance
+individually meaningful non-fungible records -> records
+```
+
+The projection must preserve its boundary. Cash from different incompatible
+domains, and Clear units from different mints or CMUs, do not become fungible
+merely because an interface can add their numbers. A displayed balance is
+therefore derived state whose integrity depends on the underlying records,
+issuer or mint validation, and the applicable equivalence rules.
+
+This gives applications a simple top-level vocabulary without weakening the
+uniform model:
+
+- **Balances** present compatible fungible records as quantities.
+- **Records** present non-fungible resources individually because their exact
+  content, provenance, control, or history matters.
+
+The distinction is a presentation and operating model, not a claim that one
+side is stored as records and the other is not.
+
 ## Relationship to URI, URL, and URN
 
 URM does not replace the established identifier concepts.
@@ -493,6 +525,7 @@ which operations are valid.
 | split | divide represented quantity or rights under policy |
 | merge | combine compatible quantities or rights under policy |
 | spend | exercise a bearer or payment capability |
+| pay | use a value transfer to settle or discharge an economic obligation |
 | redeem | return a resource to its issuer for an external consequence |
 | retire | permanently remove an issued resource or quantity from circulation |
 | revoke | issuer or authority invalidates future recognition |
@@ -503,6 +536,29 @@ which operations are valid.
 
 An operation name does not guarantee a particular legal effect. A profile must
 define its authority, preconditions, transition evidence, and finality.
+
+### Payment is an economic role of a transfer
+
+**Transfer** is the general protocol operation. **Payment** is the economic
+interpretation of a transfer when it supplies the value or settlement leg of a
+larger transaction.
+
+Not every balance transfer is a payment. A transfer may instead be an
+allocation, gift, benefit, treasury disbursement, refund, issuance, or
+redemption. Conversely, a purchase or exchange is not exhausted by its payment
+leg: it may also involve delivery of a service, transfer of control over a
+non-fungible record, and evidence of the parties' respective obligations.
+
+```text
+economic transaction
+  -> resource, service, or control leg
+  -> value or settlement leg (payment)
+```
+
+This vocabulary lets Cash, Clear, and OpenETR participate in one transaction
+without collapsing their distinct semantics. Fungible records can satisfy the
+value leg, while a non-fungible record and its control history can describe
+what was issued, delivered, attested, or transferred in return.
 
 ## Lifecycle and state
 

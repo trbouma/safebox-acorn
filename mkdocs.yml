@@ -1,5 +1,5 @@
 site_name: Acorn
-site_description: A protocol-first component for safeguarding user-controlled keys, funds and records.
+site_description: A protocol-first component for safeguarding user-controlled keys, balances and records.
 site_url: https://trbouma.github.io/safebox-acorn/
 repo_url: https://github.com/trbouma/safebox-acorn
 repo_name: trbouma/safebox-acorn
@@ -41,7 +41,7 @@ nav:
       - Deep Verification: deep-verification.md
       - Clear Transfers: clear-transfers.md
       - Safebox and the Digital Lock Box: digital-lock-box.md
-      - User-Controlled Keys, Funds and Records: user-controlled-funds-and-records.md
+      - User-Controlled Keys, Balances and Records: user-controlled-funds-and-records.md
       - A Better Vocabulary for Digital Policy: better-policy-vocabulary.md
       - User-Controlled Architecture: user-controlled-architecture.md
       - Nostr-Native Approach: nostr-native-approach.md

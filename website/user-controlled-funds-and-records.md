@@ -1,14 +1,26 @@
 ---
-title: User-Controlled Keys, Funds and Records
-description: How Acorn uses one component model for transferable funds and private records with different control rules.
+title: User-Controlled Keys, Balances and Records
+description: How Acorn projects fungible records as balances while preserving non-fungible records individually.
 ---
 
-# User-controlled keys, funds and records
+# User-controlled keys, balances and records
 
-Acorn treats funds and private records as different forms of controlled
-protocol state. Both are anchored by the cryptographic keys of an Acorn
-wallet, protected from application lock-in, and recoverable through compatible
-environments. They differ in what control means and who remains authoritative.
+Acorn treats balances and individually meaningful records as two views of
+controlled protocol state. Both are anchored by the cryptographic keys of an
+Acorn wallet, protected from application lock-in, and recoverable through
+compatible environments.
+
+The distinction is driven by fungibility:
+
+```text
+fungible records in one equivalence domain -> Balance
+non-fungible records                       -> Record
+```
+
+Cash proofs and Clear mint notes remain unique cryptographic records. The
+compatible quantities they represent are presented as balances. A private
+document, credential, attestation, or controlled original remains individual
+because its exact content and history matter.
 
 This gives Acorn a broader role than either a payment wallet or a document
 store. It is a common component for objects that a user needs to hold, operate,
@@ -56,7 +68,7 @@ Acorn currently supports two principal classes:
 
 | Record class | What user control means | External authority that remains |
 | --- | --- | --- |
-| Transferable funds | Hold, spend, transfer, receive, refresh, and recover ecash proofs. | The issuing mint validates whether proofs are spendable. |
+| Fungible balance records | Hold, spend, transfer, receive, refresh, aggregate, and recover compatible proofs or mint notes. | The issuing mint validates whether the records are spendable and which equivalence domain applies. |
 | Private records | Encrypt, store, retrieve, present, replicate, migrate, and request deletion. | An issuer or legal framework determines whether a claim is authentic or meaningful. |
 
 The emerging [Uniform Resource Model](uniform-resource-model.md) extends this
@@ -64,11 +76,16 @@ initial split with a second independent axis: fungibility. That produces four
 resource classes covering transferable and non-transferable, fungible and
 non-fungible records.
 
-## Funds are transferable controlled records
+## Balances present fungible controlled records
 
 Ecash is Acorn's concrete example of a transferable record. A mint issues
 Cashu proofs. Control of valid proofs allows a wallet to spend or transfer the
 represented value.
+
+The balance is derived wallet state, not an independent account entry stored
+by an application. It is meaningful only together with its equivalence domain.
+Safebox therefore keeps the Cash Balance and every mint-and-CMU-specific Clear
+balance separate.
 
 A private Acorn transfer follows a deliberate lifecycle:
 
@@ -114,9 +131,20 @@ transfers ecash. An issuer may create or sign a record for a holder, and that
 issuer remains responsible for the authenticity of its claims. Acorn protects
 holder control and continuity; it does not manufacture truth or legal effect.
 
+## Transfer is broader than payment
+
+Transfer is the general movement of controlled value. Payment is the economic
+role of a transfer when it supplies the value or settlement leg of a larger
+transaction. The same balance-transfer mechanics can also support an
+allocation, gift, benefit, refund, or treasury disbursement.
+
+This leaves room for a non-fungible record or service to represent the other
+side of an exchange without reducing the whole economic transaction to its
+payment leg.
+
 ## One kernel, different rules
 
-Funds and records share a common foundation:
+Balances and records share a common foundation:
 
 ```text
 cryptographic keys and authority

@@ -1,6 +1,6 @@
 ---
 title: Acorn
-description: A protocol-first component for safeguarding user-controlled keys, funds and records.
+description: A protocol-first component for safeguarding user-controlled keys, balances and records.
 ---
 
 <section class="acorn-hero" markdown>
@@ -9,7 +9,7 @@ description: A protocol-first component for safeguarding user-controlled keys, f
 
 <img class="acorn-hero-mark" src="assets/images/acorn-logo.png" alt="Acorn geometric logo">
 
-<p class="acorn-tagline">A protocol-first component for safeguarding user-controlled keys, funds and records.</p>
+<p class="acorn-tagline">A protocol-first component for safeguarding user-controlled keys, balances and records.</p>
 
 <p class="acorn-intro">Portable cryptographic authority, private records, value, recovery, and continuity across replaceable infrastructure.</p>
 
@@ -62,7 +62,7 @@ environments without claiming to define the identity of the controller.
 
 <article class="acorn-card" markdown>
 
-### Funds
+### Balances
 
 Acorn supports user-controlled ecash and Lightning workflows while keeping the
 wallet's recovery path independent from any single application interface.
@@ -72,6 +72,9 @@ issue.
 Acorn also receives organization-issued transferable units through a separate
 Clear kind `7379` path. It keeps each Clear balance partitioned by exact mint
 and CMU and never adds those units to the sat-denominated Cash Balance.
+
+These balances are derived views of fungible proof records within explicit
+equivalence domains. They are not application-owned account entries.
 
 </article>
 

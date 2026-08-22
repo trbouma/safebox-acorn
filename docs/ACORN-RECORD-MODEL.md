@@ -1,9 +1,9 @@
 # Acorn Record Model
 
-Acorn implements a user-controlled record model for funds and private records,
-anchored by user-controlled keys. The core idea is that user-controlled
-wallets can hold, receive, issue, present, and replicate encrypted records over
-Nostr relay infrastructure.
+Acorn implements a user-controlled record model for balances and individually
+meaningful records, anchored by user-controlled keys. The core idea is that
+wallets can hold, receive, issue, present, transfer, and replicate controlled
+records over Nostr relay infrastructure.
 
 A public/private keypair provides continuity across compatible environments
 and authority over the funds and records controlled through it. The keypair is
@@ -38,6 +38,25 @@ The [Uniform Resource Model](UNIFORM-RESOURCE-MODEL-DESIGN-NOTE.md) extends
 this initial transferability split with fungibility as a second independent
 axis. It also distinguishes the conceptual resource from protocol records,
 representations, identifiers, control state, issuer policy, and verification.
+
+The working Cash and Clear paths now make that uniform model visible in the
+product:
+
+```text
+fungible controlled records     -> displayed as Balances
+non-fungible controlled records -> displayed individually as Records
+```
+
+A balance is not an independent account entry owned by the application. It is
+derived from compatible proof or mint-note records within one exact
+equivalence domain. Cash and each mint-and-CMU-specific Clear balance therefore
+remain separate even though the application presents all of them under
+**Manage Balances**.
+
+Non-fungible records remain individually discoverable because their exact
+content, issuer, provenance, attachment, control history, and lifecycle may be
+the point of the record. The distinction between Balances and Records is thus a
+useful interface projection over one controlled-resource model.
 
 Ecash is the most concrete transferable-record example. Private issued records
 are the complementary Safebox record primitive.
@@ -169,7 +188,7 @@ clear control chain:
   single proprietary platform.
 
 Acorn should not absorb the full OpenETR control layer. Instead, Acorn should
-stay focused on the funds-and-records kernel while remaining compatible with
+stay focused on the balances-and-records kernel while remaining compatible with
 the broader control-layer model:
 
 - Acorn ecash demonstrates transferable control over value records.
@@ -179,6 +198,18 @@ the broader control-layer model:
 
 The shared architectural lesson is that records become more useful when control
 is explicit, portable, recoverable, and verifiable.
+
+## Transfer and payment
+
+Acorn uses **transfer** as the general movement of controlled value or
+authority. **Payment** is narrower: it describes a transfer used as the value
+or settlement leg of an economic transaction.
+
+This distinction matters because the same transferable balance can support a
+payment, allocation, gift, benefit, refund, or treasury disbursement. The
+protocol operation may be similar while the economic meaning differs. Payment
+language remains appropriate for Lightning invoices and settlement workflows;
+balance-transfer language is the safer umbrella for the component model.
 
 ## Non-transferable private issued records
 

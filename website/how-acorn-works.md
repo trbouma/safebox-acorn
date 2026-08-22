@@ -61,16 +61,16 @@ continuity. Trust is its judgment that an intentional actor continues to govern
 the key, including any delegated automation, and accepts accountability for its
 use.
 
-## Funds and records are controlled objects
+## Balances and records are controlled objects
 
-Keys supply cryptographic continuity and authority. Funds and records are the
-principal objects controlled through them.
+Keys supply cryptographic continuity and authority. Balances and records are
+the principal product views over the controlled resources beneath them.
 
 <div class="acorn-grid acorn-grid--two" markdown>
 
 <article class="acorn-card" markdown>
 
-### Funds
+### Balances
 
 Acorn can hold Cashu proofs, receive and transfer ecash, interact with Lightning
 payments, maintain transaction history, and preserve wallet state on relays.
@@ -82,6 +82,9 @@ path; it does not replace the mint's validation rules.
 Organization-issued Clear transfers use a separate wallet path. Acorn groups
 them by exact mint and CMU, keeps them out of the Cash Balance, and preserves
 pending receipts until the user accepts or deletes them.
+
+The displayed balances are derived from fungible proof records within explicit
+equivalence domains. They are not application-owned account entries.
 
 </article>
 
