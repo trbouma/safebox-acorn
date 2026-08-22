@@ -2,11 +2,11 @@
 
 ## Status
 
-Initial acceptance implemented: encrypted event writing, strict loading,
-grouped balances, mint refresh, append-only history, CLI acceptance and
-inspection, Safebox Web acceptance, replication, and cash-wallet isolation
-coverage. The pre-swap recovery journal, proof verification, and onward
-spending remain proposed.
+Acceptance and initial onward spending implemented: encrypted event writing,
+strict loading, grouped balances, mint refresh, append-only history, explicit
+acceptance, exact-balance token export, NIP-59 delivery, Safebox Web payment
+selection, replication, and cash-wallet isolation coverage. A durable outgoing
+delivery recovery journal, proof inspection, and broader live testing remain.
 
 Kind assignments `7380` and `7381` are provisional Acorn application kinds and
 must be checked against the current Nostr kind registry before a stable release.
@@ -324,7 +324,7 @@ Malformed or unverifiable Clear events must not reduce the cash balance and
 must not be silently included in a Clear balance. They should produce a
 separate Clear proof-state advisory.
 
-## Proposed Acorn API
+## Acorn API
 
 The first implementation should expose explicit Clear methods rather than add
 flags to cash methods:
@@ -335,8 +335,8 @@ get_clear_balances(verify=False)
 get_clear_transaction_history()
 accept_clear_receipt(event_id)
 reject_clear_receipt(event_id)
-export_clear_token(mint, unit, amount)
-send_clear(mint, unit, amount, address, memo=None)
+export_clear_token(mint, unit, amount, memo=None, counterparty=None)
+send_clear_transfer(mint, unit, amount, recipient, relay=None, comment=None)
 check_clear_proofs(mint=None, unit=None)
 ```
 
@@ -369,6 +369,11 @@ The Clear page may display mint-provided friendly aliases, but it must keep the
 canonical mint URL and CMU available. Pending receipts and spendable balances
 must be labelled separately. The cash finalization button must never process a
 kind `7379` receipt.
+
+The Pay page may offer each spendable Clear balance as a distinct source. It
+must pass the canonical mint URL and CMU to Acorn, require compatible recipient
+advertisement, and reject attempts to combine Clear balances or use the Cash
+continuity path.
 
 ## Security invariants
 

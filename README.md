@@ -102,6 +102,7 @@ implemented and reviewed.
 - [Clear Spendable Proof State Kinds 7380 and 7381](./docs/CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md)
 - [Clear Transfer Wallet Milestone](./docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md)
 - [Acorn Lightning-Address Gateway Design](./docs/ACORN-LIGHTNING-ADDRESS-GATEWAY-DESIGN.md)
+- [Cashu Multipath Payments Design](./docs/CASHU-MULTIPATH-PAYMENTS-DESIGN.md)
 - [Acorn CLI and Safebox Web App Interoperability](./docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [Mainstay Product Vision](./docs/MAINSTAY-PRODUCT-VISION.md)
 - [Mainstay and Lockbox Product Vision](./docs/LOCKBOX-PRODUCT-VISION.md)

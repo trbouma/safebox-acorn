@@ -2777,6 +2777,257 @@ class Acorn:
             result.append(row)
         return sorted(result, key=lambda row: (row["mint"], row["unit"]))
 
+    async def export_clear_token(
+        self,
+        *,
+        mint: str,
+        unit: str,
+        amount: int,
+        memo: str = "Clear transfer",
+        counterparty: str = "",
+    ) -> dict:
+        """Export an exact amount from one Clear balance as a bearer token.
+
+        The operation never reads or writes the ordinary Cash proof state. It
+        consumes proofs from exactly one normalized mint and canonical CMU,
+        persists the replacement Clear state, and appends an outgoing Clear
+        history event before returning bearer material to the caller.
+        """
+
+        normalized_mint = normalize_mint_url(mint)
+        normalized_unit = self._normalize_clear_unit(unit)
+        transfer_amount = int(amount)
+        if transfer_amount <= 0:
+            raise ValueError("Clear transfer amount must be greater than zero")
+        transfer_memo = str(memo or "Clear transfer").strip()
+        if len(transfer_memo) > 200:
+            raise ValueError("Clear transfer memo must be 200 characters or fewer")
+
+        lock_acquired = False
+        try:
+            await self.acquire_lock()
+            lock_acquired = True
+            active_records = [
+                record
+                for record in await self._load_clear_proof_state()
+                if record["state"].mint == normalized_mint
+                and record["state"].unit == normalized_unit
+            ]
+            if not active_records:
+                raise ValueError("The selected Clear balance was not found")
+
+            unique: dict[tuple[str, str], Proof] = {}
+            source_receipts: set[str] = set()
+            for record in active_records:
+                state: ClearProofState = record["state"]
+                source_receipts.update(state.source_receipts)
+                for proof in state.proofs:
+                    unique.setdefault((str(proof.id), str(proof.secret)), proof)
+            balance_proofs = list(unique.values())
+            available_amount = sum(int(proof.amount) for proof in balance_proofs)
+            if transfer_amount > available_amount:
+                raise ValueError(
+                    "Clear transfer amount exceeds the selected Clear balance"
+                )
+
+            proofs_by_keyset: dict[str, List[Proof]] = {}
+            amounts_by_keyset: dict[str, int] = {}
+            for proof in balance_proofs:
+                keyset_id = str(proof.id)
+                proofs_by_keyset.setdefault(keyset_id, []).append(proof)
+                amounts_by_keyset[keyset_id] = (
+                    amounts_by_keyset.get(keyset_id, 0) + int(proof.amount)
+                )
+            chosen_keyset = next(
+                (
+                    keyset_id
+                    for keyset_id in sorted(
+                        amounts_by_keyset,
+                        key=lambda candidate: amounts_by_keyset[candidate],
+                    )
+                    if amounts_by_keyset[keyset_id] >= transfer_amount
+                ),
+                None,
+            )
+            if chosen_keyset is None:
+                raise ValueError(
+                    "Clear transfer amount is not available within one keyset"
+                )
+
+            self.known_mints[chosen_keyset] = normalized_mint
+            swap_inputs = list(proofs_by_keyset[chosen_keyset])
+            replacements = await self.swap_for_payment_multi(
+                chosen_keyset,
+                swap_inputs,
+                transfer_amount,
+                unit=normalized_unit,
+                persist_cash=False,
+            )
+            payment_proof_count = len(self.powers_of_2_sum(transfer_amount))
+            spend_proofs = replacements[:payment_proof_count]
+            keep_proofs = replacements[payment_proof_count:]
+            if sum(int(proof.amount) for proof in spend_proofs) != transfer_amount:
+                raise RuntimeError("Mint swap returned the wrong Clear transfer amount")
+
+            unaffected_proofs = [
+                proof
+                for proof in balance_proofs
+                if str(proof.id) != chosen_keyset
+            ]
+            retained_proofs = [*unaffected_proofs, *keep_proofs]
+            destroyed_event_ids = sorted(
+                str(record["event_id"]) for record in active_records
+            )
+            created_event_ids: List[str] = []
+            if retained_proofs:
+                proof_result = await self.add_clear_proof_event(
+                    mint=normalized_mint,
+                    unit=normalized_unit,
+                    proofs=retained_proofs,
+                    deleted_event_ids=destroyed_event_ids,
+                    source_receipts=sorted(source_receipts),
+                    verify=True,
+                )
+                created_event_ids = [str(proof_result["event_id"])]
+            else:
+                await self.delete_clear_proof_events(
+                    destroyed_event_ids,
+                    verify=True,
+                )
+
+            token = TokenV3(
+                token=[
+                    TokenV3Token(
+                        mint=normalized_mint,
+                        proofs=spend_proofs,
+                    )
+                ],
+                memo=transfer_memo,
+                unit=normalized_unit,
+            ).serialize()
+            history_result = await self.add_clear_transaction_history(
+                direction="out",
+                operation="send",
+                amount=transfer_amount,
+                mint=normalized_mint,
+                unit=normalized_unit,
+                memo=transfer_memo,
+                created=created_event_ids,
+                destroyed=destroyed_event_ids,
+                counterparty=str(counterparty or ""),
+                verify=True,
+            )
+            replacement_amount = sum(int(proof.amount) for proof in replacements)
+            return {
+                "status": "OK",
+                "token": token,
+                "amount": transfer_amount,
+                "mint": normalized_mint,
+                "unit": normalized_unit,
+                "fee": sum(int(proof.amount) for proof in swap_inputs)
+                - replacement_amount,
+                "balance": sum(int(proof.amount) for proof in retained_proofs),
+                "created_event_ids": created_event_ids,
+                "destroyed_event_ids": destroyed_event_ids,
+                "history_event_id": str(history_result.get("event_id") or ""),
+            }
+        finally:
+            if lock_acquired:
+                await self.release_lock()
+
+    async def send_clear_transfer(
+        self,
+        *,
+        amount: int,
+        recipient: str,
+        mint: str,
+        unit: str,
+        relay: str | None = None,
+        comment: str = "Clear transfer",
+        expiration: int | None = None,
+    ) -> Dict[str, Any]:
+        """Send one exact Clear balance transfer using a NIP-59 gift wrap."""
+
+        if expiration is not None:
+            expiration = int(expiration)
+            if expiration <= int(time()):
+                raise ValueError("expiration must be a future Unix timestamp")
+        recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(recipient)
+        relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
+        transfer_relays = self._normalize_relays(relay_candidates)
+        if not transfer_relays:
+            raise ValueError("No relay available for Clear transfer")
+
+        exported = await self.export_clear_token(
+            mint=mint,
+            unit=unit,
+            amount=amount,
+            memo=comment,
+            counterparty=recipient_pubkey,
+        )
+        payload = {
+            "version": 1,
+            "type": "clear-token",
+            "token": exported["token"],
+            "mint": exported["mint"],
+            "unit": exported["unit"],
+            "amount": int(exported["amount"]),
+            "keyset_ids": sorted(
+                str(keyset_id)
+                for keyset_id in TokenV3.deserialize(exported["token"]).get_keysets()
+            ),
+            "comment": str(comment or ""),
+        }
+        gift_wrapper = KindOtherGiftWrap(
+            BasicKeySigner(self.k),
+            kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND,
+            preserve_rumour_kind=True,
+        )
+        inner_event = Event(
+            kind=CLEAR_TRANSFER_KIND,
+            content=json.dumps(payload, separators=(",", ":")),
+            pub_key=self.pubkey_hex,
+            tags=[
+                ["p", recipient_pubkey],
+                ["protocol", "clear-token-transfer"],
+                ["v", "1"],
+            ],
+        )
+        outer_event, transient_key = await gift_wrapper.wrap(
+            inner_event,
+            to_pub_k=recipient_pubkey,
+            expiration=expiration,
+        )
+        try:
+            async with ClientPool(transfer_relays) as client:
+                client.publish(outer_event)
+                await asyncio.sleep(0.2)
+        except Exception as exc:
+            raise RuntimeError(
+                "Clear value was exported from the wallet, but relay delivery "
+                "did not complete. Do not repeat the transfer blindly; inspect "
+                "Clear transaction history first."
+            ) from exc
+
+        return {
+            "status": "OK",
+            "kind": outer_event.kind,
+            "transfer_kind": CLEAR_TRANSFER_KIND,
+            "gift_wrap_kind": ECASH_TRANSFER_GIFT_WRAP_KIND,
+            "event_id": str(outer_event.id),
+            "recipient_pubkey": recipient_pubkey,
+            "relays": transfer_relays,
+            "recipient_relays": recipient_relays,
+            "mode": "gift-wrapped",
+            "transient_pubkey": transient_key.public_key_hex(),
+            "expiration": expiration,
+            "amount": int(exported["amount"]),
+            "unit": exported["unit"],
+            "mint": exported["mint"],
+            "fee": int(exported.get("fee") or 0),
+            "history_event_id": exported.get("history_event_id"),
+        }
+
     async def delete_clear_proof_events(
         self,
         event_ids: List[str],
@@ -7010,7 +7261,24 @@ class Acorn:
             async with httpx.AsyncClient(timeout=timeout) as client:
                 response = await client.get(mint_key_url, headers=headers)
                 response.raise_for_status()
-                keys = response.json()["keysets"][0]["keys"]
+                response_keysets = response.json()["keysets"]
+                response_keyset = next(
+                    (
+                        candidate
+                        for candidate in response_keysets
+                        if str(candidate.get("id") or "") == str(keyset)
+                    ),
+                    None,
+                )
+                if response_keyset is None and len(response_keysets) == 1:
+                    # Some mints omit the keyset id from an exact
+                    # /v1/keys/<id> response.
+                    response_keyset = response_keysets[0]
+                if response_keyset is None:
+                    raise RuntimeError(
+                        f"mint did not return keys for output keyset {keyset}"
+                    )
+                keys = response_keyset["keys"]
 
             proof_objs = []
             i = 0
@@ -10935,7 +11203,15 @@ class Acorn:
 
         return proofs
 
-    async def swap_for_payment_multi(self, keyset_to_use:str, proofs_to_use: List[Proof], payment_amount: int)->List[Proof]:
+    async def swap_for_payment_multi(
+        self,
+        keyset_to_use: str,
+        proofs_to_use: List[Proof],
+        payment_amount: int,
+        *,
+        unit: str = "sat",
+        persist_cash: bool = True,
+    ) -> List[Proof]:
         # create proofs to melt, and proofs_remaining
 
         await self._preflight_proof_persistence()
@@ -10951,13 +11227,55 @@ class Acorn:
             response.raise_for_status()
             keyset_response = response.json()
             keysets = keyset_response['keysets']
-            keyset_info = keysets[0]
+            normalized_unit = str(unit or "sat").strip().lower()
+            keyset_info = next(
+                (
+                    item
+                    for item in keysets
+                    if item.get("active") is True
+                    and str(item.get("unit") or normalized_unit).strip().lower()
+                    == normalized_unit
+                ),
+                None,
+            )
+            # Older NUT-02 responses sometimes omit both ``active`` and
+            # ``unit``. In that legacy shape the input keyset remains the
+            # only safe output-keyset candidate.
+            if keyset_info is None:
+                keyset_info = next(
+                    (
+                        item
+                        for item in keysets
+                        if item.get("id") == keyset_to_use
+                        and "active" not in item
+                        and str(item.get("unit") or normalized_unit)
+                        .strip()
+                        .lower()
+                        == normalized_unit
+                    ),
+                    None,
+                )
+            if keyset_info is None:
+                raise RuntimeError(
+                    f"mint does not advertise an active {unit} keyset"
+                )
             input_keyset_info = next(
                 (item for item in keysets if item.get("id") == keyset_to_use),
-                keyset_info,
+                None,
             )
+            if input_keyset_info is None:
+                raise RuntimeError(
+                    f"mint does not advertise input keyset {keyset_to_use}"
+                )
+            input_unit = str(input_keyset_info.get("unit") or "").strip().lower()
+            if input_unit and input_unit != normalized_unit:
+                raise RuntimeError(
+                    f"input keyset {keyset_to_use} is denominated in "
+                    f"{input_keyset_info.get('unit')}, not {unit}"
+                )
             keyset = keyset_info['id']
             input_fee_ppk = int(input_keyset_info.get("input_fee_ppk") or 0)
+            self.known_mints[str(keyset)] = self.known_mints[keyset_to_use]
 
         swap_url = f"{self.known_mints[keyset_to_use]}/v1/swap"
         checkstate_url = f"{self.known_mints[keyset_to_use]}/v1/checkstate"
@@ -11099,7 +11417,25 @@ class Acorn:
                 mint_key_url = f"{self.known_mints[keyset_to_use]}/v1/keys/{keyset}"
                 response = await client.get(mint_key_url, headers=headers)
                 response.raise_for_status()
-                keys = response.json()["keysets"][0]["keys"]
+                response_keysets = response.json()["keysets"]
+                response_keyset = next(
+                    (
+                        candidate
+                        for candidate in response_keysets
+                        if str(candidate.get("id") or "") == str(keyset)
+                    ),
+                    None,
+                )
+                if response_keyset is None and len(response_keysets) == 1:
+                    # Some mints omit the keyset id from an exact
+                    # /v1/keys/<id> response. The endpoint itself already
+                    # scopes this single result to the requested keyset.
+                    response_keyset = response_keysets[0]
+                if response_keyset is None:
+                    raise RuntimeError(
+                        f"mint did not return keys for output keyset {keyset}"
+                    )
+                keys = response_keyset["keys"]
             # print(keys)
             
             i = 0
@@ -11143,7 +11479,8 @@ class Acorn:
         # A successful swap has consumed its inputs at the mint. Persist every
         # replacement before callers compact the wallet so an interrupted
         # follow-up remains recoverable from relay state.
-        await self.add_proofs_obj(proofs, verify=True)
+        if persist_cash:
+            await self.add_proofs_obj(proofs, verify=True)
         # now need break out proofs for payment and proofs remaining
 
         return proofs

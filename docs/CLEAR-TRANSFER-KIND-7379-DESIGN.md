@@ -164,10 +164,13 @@ validation happens after the gift wrap is decrypted.
 
 ## Current boundary
 
-Pending Clear transfers are visible, grouped by mint and CMU, and deletable,
-but they are not yet refreshed into a spendable Clear balance. The next wallet
-layer must add crash-recoverable accept/reject/finalize commands and spending
-rules for one exact mint and CMU.
+Pending Clear transfers are visible, grouped by mint and CMU, deletable, and
+explicitly acceptable into spendable kind `7380` state. Acorn can export or
+send units from one exact mint and CMU as another private kind `7379` transfer.
+It never combines Clear balances or routes them through Cash state.
+
+The remaining hardening boundary is crash-recoverable outgoing delivery after
+proof export, together with broader mint interoperability and security review.
 
 The proposed finalized wallet model is defined in
 [Acorn Clear Spendable Proof State Kinds 7380 and 7381](CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md).

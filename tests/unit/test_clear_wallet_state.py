@@ -195,6 +195,119 @@ async def test_clear_history_is_append_only_sorted_and_filterable():
 
 
 @pytest.mark.asyncio
+async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash():
+    acorn = wallet()
+    acorn.known_mints = {}
+    acorn.acquire_lock = AsyncMock()
+    acorn.release_lock = AsyncMock()
+    cash_proofs = list(acorn.proofs)
+    await acorn.add_clear_proof_event(
+        mint="https://clear.one",
+        unit="cmu-one",
+        proofs=[
+            proof(8, "keyset-a", "11"),
+            proof(4, "keyset-a", "12"),
+            proof(16, "keyset-b", "13"),
+        ],
+        source_receipts=["d" * 64],
+    )
+    replacements = [
+        proof(4, "keyset-new", "21"),
+        proof(1, "keyset-new", "22"),
+        proof(4, "keyset-new", "23"),
+        proof(2, "keyset-new", "24"),
+    ]
+    acorn.swap_for_payment_multi = AsyncMock(return_value=replacements)
+
+    exported = await acorn.export_clear_token(
+        mint="https://clear.one/",
+        unit="cmu-one",
+        amount=5,
+        memo="meeting room",
+        counterparty="recipient-pubkey",
+    )
+
+    token = TokenV3.deserialize(exported["token"])
+    assert token.unit == "cmu-one"
+    assert token.get_mints() == ["https://clear.one"]
+    assert token.get_amount() == 5
+    assert exported["fee"] == 1
+    assert exported["balance"] == 22
+    acorn.swap_for_payment_multi.assert_awaited_once()
+    assert acorn.swap_for_payment_multi.await_args.kwargs == {
+        "unit": "cmu-one",
+        "persist_cash": False,
+    }
+    assert [(row["mint"], row["unit"], row["amount"]) for row in await acorn.get_clear_balances()] == [
+        ("https://clear.one", "cmu-one", 22)
+    ]
+    history = await acorn.get_clear_transaction_history(operation="send")
+    assert len(history) == 1
+    assert history[0]["amount"] == 5
+    assert history[0]["counterparty"] == "recipient-pubkey"
+    assert acorn.proofs == cash_proofs
+    assert acorn.balance == 999
+    acorn.acquire_lock.assert_awaited_once()
+    acorn.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_send_clear_transfer_uses_kind_7379_inside_gift_wrap():
+    acorn = wallet()
+    acorn.known_mints = {}
+    recipient = Keys(priv_k="22" * 32)
+    recipient_pubkey = recipient.public_key_hex()
+    acorn._resolve_pubkey_and_relays = lambda _recipient: (
+        recipient_pubkey,
+        ["ws://recipient:7777"],
+    )
+    token = TokenV3(
+        token=[
+            TokenV3Token(
+                mint="https://clear.one",
+                proofs=[proof(2, "keyset-a", "31")],
+            )
+        ],
+        memo="coffee",
+        unit="cmu-one",
+    ).serialize()
+    acorn.export_clear_token = AsyncMock(
+        return_value={
+            "status": "OK",
+            "token": token,
+            "amount": 2,
+            "mint": "https://clear.one",
+            "unit": "cmu-one",
+            "fee": 0,
+            "history_event_id": "e" * 64,
+        }
+    )
+
+    result = await acorn.send_clear_transfer(
+        amount=2,
+        recipient="recipient@example.com",
+        mint="https://clear.one",
+        unit="cmu-one",
+        comment="coffee",
+    )
+
+    assert result["status"] == "OK"
+    assert result["kind"] == 1059
+    assert result["transfer_kind"] == 7379
+    assert result["unit"] == "cmu-one"
+    assert result["mint"] == "https://clear.one"
+    assert result["relays"] == ["ws://recipient:7777"]
+    acorn.export_clear_token.assert_awaited_once_with(
+        mint="https://clear.one",
+        unit="cmu-one",
+        amount=2,
+        memo="coffee",
+        counterparty=recipient_pubkey,
+    )
+    assert any(event.kind == 1059 for event in MemoryPool.events)
+
+
+@pytest.mark.asyncio
 async def test_malformed_clear_proof_event_fails_without_changing_cash_state():
     acorn = wallet()
     malformed = Event(

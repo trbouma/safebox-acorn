@@ -8,14 +8,10 @@ Safebox Acorn now provides the wallet-side protocol boundary for receiving
 organization-issued transferable units, represented as Clear Mint Units
 (CMUs), without mixing them with ordinary cash/ecash proofs.
 
-The demonstrated flow begins at a public Clear mint, passes through a private
-NIP-59 transfer, and ends as a pending Clear transfer controlled by the
-recipient's Acorn key. The same Acorn continues to manage its sat-denominated
-Cash Balance independently.
-
-This is a working receive and storage milestone. Acceptance into spendable
-Pending receipt acceptance into separate Clear proof state is implemented.
-Onward Clear spending is not yet implemented.
+The demonstrated lifecycle begins at a public Clear mint, passes through a
+private NIP-59 transfer, can be accepted into spendable Clear proof state, and
+can now be sent onward from one exact Clear balance. The same Acorn continues
+to manage its sat-denominated Cash Balance independently.
 
 ## Why Acorn is the boundary
 
@@ -59,6 +55,22 @@ acorn balance
 
 Safebox Web calls the same receiver through **Check for Clear Transfers**.
 
+## Implemented send path
+
+`Acorn.export_clear_token()` and `Acorn.send_clear_transfer()`:
+
+1. select one exact `(normalized mint URL, canonical CMU)` balance;
+2. select proofs from one compatible keyset without touching Cash proofs;
+3. swap at that mint when exact denomination or change is required;
+4. roll remaining proofs into new kind `7380` state;
+5. append a kind `7381` outgoing history event;
+6. construct a Cashu V3 bearer token for the requested amount; and
+7. deliver it privately as a NIP-59 gift wrap with inner kind `7379`.
+
+The receiver must advertise compatible Clear support in its NIP-05 document.
+There is no silent fallback to Cash or Lightning, and balances from different
+mints or CMUs are never combined.
+
 ## Hard separation from cash
 
 The current event model is:
@@ -91,8 +103,8 @@ cross-currency total.
 
 The kind `7380` loader, balance grouping, rollover deletion reconstruction,
 kind `7381` journal, replication, and wallet-burn coverage are implemented.
-These are foundations for finalized balances; they do not mean pending
-receipts are accepted automatically.
+Pending receipts are still accepted explicitly; relay discovery alone does
+not mutate a spendable balance.
 
 ## Pending transfer deletion
 
@@ -132,22 +144,17 @@ subsequent scans.
 
 ## Remaining wallet work
 
-The next safety-critical operation is pending-transfer acceptance:
+The next safety-critical work is a durable outgoing recovery journal for the
+interval between bearer-token export and confirmed relay delivery. If delivery
+has an unknown outcome, clients must not retry blindly: the local Clear proof
+state has already advanced and the exported bearer token must be treated as
+spent from the sender's balance.
 
-1. validate the pending token again;
-2. check the exact mint, CMU, and keysets;
-3. refresh proofs through the Clear mint;
-4. persist outputs in kind `7380`;
-5. verify exact relay readback;
-6. append kind `7381` history;
-7. remove bearer material from the pending journal; and
-8. recover safely from interruption between mint mutation and relay storage.
-
-Only after that workflow is durable should ordinary wallet-to-wallet Clear
-spending be treated as implemented.
+Proof inspection, recovery tooling, live multi-mint interoperability tests,
+and an independent security review remain required before release use.
 
 ## Safety status
 
 Acorn remains developer-stage and unaudited. Clear transfers should currently
-carry test value only. The wallet correctly preserves boundaries between cash
-and Clear, but the full finalized Clear lifecycle is incomplete.
+carry test value only. Exact-balance spending is implemented, but outgoing
+delivery recovery and broader interoperability hardening remain incomplete.
