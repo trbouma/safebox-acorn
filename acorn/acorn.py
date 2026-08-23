@@ -192,6 +192,12 @@ CLEAR_TRANSFER_CURSOR_LABEL: str = "clear_transfer_latest"
 CLEAR_RECEIPTS_LABEL: str = "clear_receipts"
 CLEAR_PROOF_KIND: int = 7380
 CLEAR_HISTORY_KIND: int = 7381
+BALANCE_SNAPSHOT_LABEL: str = "balance_snapshot"
+BALANCE_SNAPSHOT_VERSION: int = 1
+BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS", "5"),
+    name="ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS",
+)
 
 
 class MalformedIncomingTransfer(ValueError):
@@ -242,6 +248,7 @@ MELT_RECOVERY_ATTEMPTS: int = 4
 INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
     {
         "balance",
+        BALANCE_SNAPSHOT_LABEL,
         CONTINUITY_RECEIPTS_LABEL,
         CLEAR_RECEIPTS_LABEL,
         "default",
@@ -1209,6 +1216,181 @@ class Acorn:
             balance_tally += each.amount
             self.balance = balance_tally
         return self.balance
+
+    @staticmethod
+    def _snapshot_event_ids(values: object) -> List[str]:
+        """Return valid event IDs without making a display cache authoritative."""
+
+        if not isinstance(values, list):
+            return []
+        result: List[str] = []
+        for value in values:
+            event_id = str(value or "").strip().lower()
+            if (
+                len(event_id) == 64
+                and all(character in string.hexdigits for character in event_id)
+                and event_id not in result
+            ):
+                result.append(event_id)
+        return result
+
+    def _validate_balance_snapshot(self, payload: object) -> Dict[str, Any]:
+        """Validate the encrypted, non-authoritative balance display snapshot."""
+
+        if not isinstance(payload, dict):
+            raise ValueError("Balance snapshot must be a JSON object")
+        if payload.get("type") != "acorn-balance-snapshot":
+            raise ValueError("Unknown balance snapshot type")
+        if int(payload.get("version") or 0) != BALANCE_SNAPSHOT_VERSION:
+            raise ValueError("Unsupported balance snapshot version")
+
+        observed_at = int(payload.get("observed_at") or 0)
+        if observed_at <= 0:
+            raise ValueError("Balance snapshot observed_at must be positive")
+
+        cash_raw = payload.get("cash")
+        if not isinstance(cash_raw, dict):
+            raise ValueError("Balance snapshot cash entry is required")
+        cash_amount = int(cash_raw.get("amount") or 0)
+        cash_count = int(cash_raw.get("proof_count") or 0)
+        if cash_amount < 0 or cash_count < 0:
+            raise ValueError("Balance snapshot Cash values cannot be negative")
+
+        clear_raw = payload.get("clear") or []
+        if not isinstance(clear_raw, list):
+            raise ValueError("Balance snapshot Clear entries must be a list")
+        clear: List[Dict[str, Any]] = []
+        seen_clear: set[tuple[str, str]] = set()
+        for raw in clear_raw:
+            if not isinstance(raw, dict):
+                raise ValueError("Balance snapshot Clear entry must be an object")
+            mint = normalize_mint_url(str(raw.get("mint") or ""))
+            unit = self._normalize_clear_unit(str(raw.get("unit") or ""))
+            amount = int(raw.get("amount") or 0)
+            proof_count = int(raw.get("proof_count") or 0)
+            if amount < 0 or proof_count < 0:
+                raise ValueError("Balance snapshot Clear values cannot be negative")
+            identity = (mint, unit)
+            if identity in seen_clear:
+                raise ValueError("Balance snapshot contains a duplicate Clear balance")
+            seen_clear.add(identity)
+            clear.append(
+                {
+                    "mint": mint,
+                    "unit": unit,
+                    "amount": amount,
+                    "proof_count": proof_count,
+                    "event_ids": self._snapshot_event_ids(raw.get("event_ids")),
+                }
+            )
+
+        return {
+            "type": "acorn-balance-snapshot",
+            "version": BALANCE_SNAPSHOT_VERSION,
+            "observed_at": observed_at,
+            "cash": {
+                "amount": cash_amount,
+                "proof_count": cash_count,
+                "event_ids": self._snapshot_event_ids(cash_raw.get("event_ids")),
+            },
+            "clear": sorted(clear, key=lambda row: (row["mint"], row["unit"])),
+        }
+
+    async def get_balance_snapshot(self) -> Dict[str, Any] | None:
+        """Read the latest relay-backed display snapshot without loading proofs."""
+
+        raw = await self.get_wallet_info(
+            BALANCE_SNAPSHOT_LABEL,
+            record_kind=37376,
+        )
+        if raw is None:
+            return None
+        try:
+            return self._validate_balance_snapshot(json.loads(raw))
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise RuntimeError("The relay-backed balance snapshot is invalid") from exc
+
+    async def publish_balance_snapshot(
+        self,
+        *,
+        clear_balances: List[dict] | None = None,
+        refresh_clear: bool = False,
+        verify: bool = False,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        """Publish an encrypted display cache derived from current proof state.
+
+        This snapshot is informational. Callers must load and validate the
+        authoritative proof events before spending, swapping, or repairing.
+        """
+
+        if clear_balances is None:
+            if refresh_clear:
+                clear_balances = await self.get_clear_balances()
+            else:
+                existing = await self.get_balance_snapshot()
+                clear_balances = (
+                    list(existing.get("clear") or [])
+                    if isinstance(existing, dict)
+                    else await self.get_clear_balances()
+                )
+        payload = self._validate_balance_snapshot(
+            {
+                "type": "acorn-balance-snapshot",
+                "version": BALANCE_SNAPSHOT_VERSION,
+                "observed_at": int(time()),
+                "cash": {
+                    "amount": sum(int(proof.amount) for proof in self.proofs),
+                    "proof_count": len(self.proofs),
+                    "event_ids": [str(each) for each in getattr(self, "proof_event_ids", [])],
+                },
+                "clear": [
+                    {
+                        "mint": row.get("mint"),
+                        "unit": row.get("unit"),
+                        "amount": row.get("amount", 0),
+                        "proof_count": row.get("proof_count", 0),
+                        "event_ids": row.get("event_ids", []),
+                    }
+                    for row in clear_balances
+                ],
+            }
+        )
+        published = await self.set_wallet_info(
+            BALANCE_SNAPSHOT_LABEL,
+            json.dumps(payload, separators=(",", ":")),
+            record_kind=37376,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            **payload,
+            "relay_event_id": (
+                published.get("event_id") if isinstance(published, dict) else None
+            ),
+            "verified": bool(verify),
+        }
+
+    async def _publish_balance_snapshot_best_effort(
+        self,
+        *,
+        refresh_clear: bool = False,
+    ) -> None:
+        """Refresh the display cache without changing transaction outcome."""
+
+        try:
+            await asyncio.wait_for(
+                self.publish_balance_snapshot(
+                    refresh_clear=refresh_clear,
+                    verify=False,
+                ),
+                timeout=BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=balance_snapshot status=refresh_failed error_type=%s",
+                type(exc).__name__,
+            )
 
     async def get_current_balance(self) -> int:
         await self.load_data()
@@ -2497,12 +2679,14 @@ class Acorn:
             event_id,
             verify,
         )
-        return {
+        result = {
             "status": "OK",
             "event_id": event_id,
             "relay": self.home_relay,
             "verified": bool(verify),
         }
+        await self._publish_balance_snapshot_best_effort()
+        return result
             
 
 
@@ -3094,12 +3278,14 @@ class Acorn:
                 "counterparty": str(counterparty or ""),
             }
         )
-        return await self._publish_clear_event(
+        result = await self._publish_clear_event(
             kind=CLEAR_HISTORY_KIND,
             payload_json=entry.model_dump_json(exclude_none=True),
             verify=verify,
             verify_timeout=verify_timeout,
         )
+        await self._publish_balance_snapshot_best_effort(refresh_clear=True)
+        return result
 
     async def get_clear_transaction_history(
         self,

@@ -556,6 +556,38 @@ These tests require no live relay or mint. A later opt-in interoperability test
 may use a disposable Acorn wallet and relay, but the kernel's relay suitability
 suite should remain in `safebox-acorn`.
 
+## Relay-backed balance snapshots
+
+Acorn provides an encrypted `balance_snapshot` system record for fast,
+read-only presentation. The versioned snapshot records the last observed Cash
+amount and proof count together with the last observed Clear balances. It is
+stored as a kind `37376` record on the Acorn's home relay and is therefore
+available across application processes, devices, and restarts without creating
+a local wallet database.
+
+The snapshot is a display cache, not proof state. It must never authorize a
+payment, token issuance, swap, repair, or incoming-transfer acceptance. Those
+operations continue to load the authoritative kind `7375` Cash proof events or
+kind `7380` Clear proof events and apply the relevant mint checks.
+
+After a successfully recorded Cash or Clear transaction, Acorn refreshes the
+snapshot on a best-effort basis. A snapshot publication failure does not reverse
+or invalidate the financial operation. Applications should describe the value
+as previously confirmed or previously observed and provide an explicit path to
+load and verify the underlying proof state.
+
+The post-transaction refresh is bounded by
+`ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS` (five seconds by default).
+Cash transactions preserve the prior Clear portion of an existing snapshot;
+Clear transactions explicitly rebuild it. This avoids scanning all Clear proof
+events after every ordinary Cash operation.
+
+For an existing Acorn without a snapshot, an application may perform one full
+authoritative load, derive the snapshot, and publish it. Later landing-page
+requests can retrieve the single targeted encrypted record. This preserves the
+stateless application boundary while avoiding repeated proof reconstruction for
+a page that only needs a balance summary.
+
 ## Acorn API lessons
 
 The prototype identified public API improvements that belong in Acorn:
@@ -563,8 +595,8 @@ The prototype identified public API improvements that belong in Acorn:
 1. Export mnemonic validation and mnemonic-to-`nsec` derivation through a
    stable public recovery API. The web application currently needs an internal
    helper.
-2. Provide an explicitly read-only wallet-load or snapshot operation whose
-   non-mutation contract is tested.
+2. Continue evolving the implemented read-only balance snapshot into a broader
+   immutable wallet read model without allowing it to become spend authority.
 3. Provide a narrow record-label operation that does not retain complete
    payload objects longer than required.
 4. Return typed, sanitized exceptions that distinguish missing wallet data,
