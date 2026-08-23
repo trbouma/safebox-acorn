@@ -577,6 +577,37 @@ user's private key.
 The key holder can recompute the same label hash later and query relays for the
 record without maintaining a separate local index.
 
+### Relay-backed record catalog
+
+Direct deterministic lookup remains authoritative when a label is already
+known. Listing records is different: because labels are encrypted, discovering
+every label requires retrieving and decrypting every current record event.
+
+Acorn therefore maintains an optional encrypted `record_catalog` display index
+as a parameterized replaceable event of kind `37376`. Version 1 contains:
+
+- the user-visible record label;
+- its last-modified timestamp;
+- the corresponding authoritative event id, when available; and
+- the authoritative user-record kind, currently `37375`.
+
+The catalog is encrypted to the Acorn key in the same manner as other internal
+records. Relay observers see its event metadata and ciphertext size but cannot
+read the labels. It is not authoritative record state: loss or corruption does
+not lose a record, and possession of a catalog entry does not prove that its
+record remains available.
+
+If no catalog exists, Acorn can rebuild it by retrieving, reconciling, and
+decrypting the authoritative record events, then publishing one new catalog
+snapshot. Successful record creation, update, import, and deletion operations
+update an existing catalog on a best-effort basis. Applications must expose an
+explicit rebuild operation because relay replacement, concurrent writers, or a
+missed best-effort update can make a display index stale.
+
+This design keeps pagination and folder navigation fast without introducing a
+local application database of record names. The first rebuild for an existing
+wallet may still take time proportional to the number of records.
+
 ### Integrity
 
 Nostr events are signed by the user's private key. AES-256-GCM provides

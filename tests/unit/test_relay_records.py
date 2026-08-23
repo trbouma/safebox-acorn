@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from unittest.mock import AsyncMock
 
@@ -54,6 +55,85 @@ def test_canonical_record_selection_uses_newest_then_lowest_id():
     )
 
     assert selected == [same_time_low_id]
+
+
+@pytest.mark.asyncio
+async def test_record_catalog_round_trip_is_encrypted_relay_state():
+    wallet = wallet_with_key()
+    wallet.get_wallet_info = AsyncMock(
+        return_value=json.dumps(
+            {
+                "type": "acorn-record-catalog",
+                "version": 1,
+                "record_kind": 37375,
+                "observed_at": 100,
+                "records": [
+                    {
+                        "label": "Health/Passport",
+                        "modified_at": 90,
+                        "event_id": "a" * 64,
+                    }
+                ],
+            }
+        )
+    )
+
+    catalog = await wallet.get_record_catalog()
+
+    assert catalog["records"][0]["label"] == "Health/Passport"
+    wallet.get_wallet_info.assert_awaited_once_with(
+        "record_catalog",
+        record_kind=37376,
+    )
+
+
+@pytest.mark.asyncio
+async def test_rebuild_record_catalog_deduplicates_and_publishes_newest_labels():
+    wallet = wallet_with_key()
+    wallet.get_user_records = AsyncMock(
+        return_value=[
+            {"tag": ["Older"], "timestamp": 10, "id": "a" * 64},
+            {"tag": ["Updated"], "timestamp": 20, "id": "b" * 64},
+            {"tag": ["Updated"], "timestamp": 30, "id": "c" * 64},
+        ]
+    )
+    wallet.set_wallet_info = AsyncMock(return_value={"event_id": "d" * 64})
+
+    catalog = await wallet.rebuild_record_catalog()
+
+    assert [entry["label"] for entry in catalog["records"]] == [
+        "Updated",
+        "Older",
+    ]
+    assert catalog["records"][0]["modified_at"] == 30
+    published = json.loads(wallet.set_wallet_info.await_args.args[1])
+    assert published["type"] == "acorn-record-catalog"
+    assert published["record_kind"] == 37375
+    assert wallet.set_wallet_info.await_args.kwargs["record_kind"] == 37376
+
+
+@pytest.mark.asyncio
+async def test_existing_record_catalog_is_updated_without_historical_rebuild():
+    wallet = wallet_with_key()
+    wallet.get_record_catalog = AsyncMock(
+        return_value={
+            "records": [
+                {"label": "Existing", "modified_at": 10, "event_id": "a" * 64}
+            ]
+        }
+    )
+    wallet.publish_record_catalog = AsyncMock()
+    wallet.get_user_records = AsyncMock()
+
+    await wallet._update_record_catalog_best_effort(
+        label="New",
+        modified_at=20,
+        event_id="b" * 64,
+    )
+
+    records = wallet.publish_record_catalog.await_args.args[0]
+    assert {entry["label"] for entry in records} == {"Existing", "New"}
+    wallet.get_user_records.assert_not_awaited()
 
 
 @pytest.mark.asyncio

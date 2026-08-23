@@ -194,6 +194,12 @@ CLEAR_PROOF_KIND: int = 7380
 CLEAR_HISTORY_KIND: int = 7381
 BALANCE_SNAPSHOT_LABEL: str = "balance_snapshot"
 BALANCE_SNAPSHOT_VERSION: int = 1
+RECORD_CATALOG_LABEL: str = "record_catalog"
+RECORD_CATALOG_VERSION: int = 1
+RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS", "5"),
+    name="ACORN_RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS",
+)
 BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS", "5"),
     name="ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS",
@@ -249,6 +255,7 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
     {
         "balance",
         BALANCE_SNAPSHOT_LABEL,
+        RECORD_CATALOG_LABEL,
         CONTINUITY_RECEIPTS_LABEL,
         CLEAR_RECEIPTS_LABEL,
         "default",
@@ -1309,6 +1316,203 @@ class Acorn:
             return self._validate_balance_snapshot(json.loads(raw))
         except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
             raise RuntimeError("The relay-backed balance snapshot is invalid") from exc
+
+    def _validate_record_catalog(self, payload: object) -> Dict[str, Any]:
+        """Validate the encrypted, non-authoritative user-record catalog."""
+
+        if not isinstance(payload, dict):
+            raise ValueError("Record catalog must be a JSON object")
+        if payload.get("type") != "acorn-record-catalog":
+            raise ValueError("Unknown record catalog type")
+        if int(payload.get("version") or 0) != RECORD_CATALOG_VERSION:
+            raise ValueError("Unsupported record catalog version")
+        if int(payload.get("record_kind") or 0) != 37375:
+            raise ValueError("Record catalog kind must be 37375")
+        observed_at = int(payload.get("observed_at") or 0)
+        if observed_at <= 0:
+            raise ValueError("Record catalog observed_at must be positive")
+
+        raw_records = payload.get("records") or []
+        if not isinstance(raw_records, list):
+            raise ValueError("Record catalog records must be a list")
+        limit = _positive_limit(
+            getattr(self, "record_limit", RECORD_LIMIT),
+            name="record limit",
+        )
+        if len(raw_records) > limit:
+            raise ValueError("Record catalog exceeds the configured record limit")
+
+        newest_by_label: Dict[str, Dict[str, Any]] = {}
+        for raw in raw_records:
+            if not isinstance(raw, dict):
+                raise ValueError("Record catalog entries must be JSON objects")
+            label = str(raw.get("label") or "").strip()
+            if (
+                not label
+                or label in INTERNAL_RECORD_LABELS
+                or label.startswith("__acorn_")
+            ):
+                raise ValueError("Record catalog contains an invalid label")
+            modified_at = int(raw.get("modified_at") or 0)
+            if modified_at < 0:
+                raise ValueError("Record catalog modified_at cannot be negative")
+            event_id = str(raw.get("event_id") or "").strip().lower()
+            if event_id and (
+                len(event_id) != 64
+                or not all(character in string.hexdigits for character in event_id)
+            ):
+                raise ValueError("Record catalog event_id must be 64-character hex")
+            candidate = {
+                "label": label,
+                "modified_at": modified_at,
+                "event_id": event_id or None,
+            }
+            current = newest_by_label.get(label)
+            if current is None or (
+                candidate["modified_at"], candidate["event_id"] or ""
+            ) > (
+                current["modified_at"], current["event_id"] or ""
+            ):
+                newest_by_label[label] = candidate
+
+        return {
+            "type": "acorn-record-catalog",
+            "version": RECORD_CATALOG_VERSION,
+            "record_kind": 37375,
+            "observed_at": observed_at,
+            "records": sorted(
+                newest_by_label.values(),
+                key=lambda entry: (
+                    -int(entry["modified_at"]),
+                    str(entry["label"]).casefold(),
+                    str(entry["label"]),
+                ),
+            ),
+        }
+
+    async def get_record_catalog(self) -> Dict[str, Any] | None:
+        """Read the latest relay-backed record catalog without loading wallet state."""
+
+        raw = await self.get_wallet_info(
+            RECORD_CATALOG_LABEL,
+            record_kind=37376,
+        )
+        if raw is None:
+            return None
+        try:
+            return self._validate_record_catalog(json.loads(raw))
+        except (ValueError, TypeError, KeyError, json.JSONDecodeError) as exc:
+            raise RuntimeError("The relay-backed record catalog is invalid") from exc
+
+    async def publish_record_catalog(
+        self,
+        records: List[dict],
+        *,
+        verify: bool = False,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        """Publish a replaceable encrypted catalog derived from user records."""
+
+        payload = self._validate_record_catalog(
+            {
+                "type": "acorn-record-catalog",
+                "version": RECORD_CATALOG_VERSION,
+                "record_kind": 37375,
+                "observed_at": int(time()),
+                "records": records,
+            }
+        )
+        published = await self.set_wallet_info(
+            RECORD_CATALOG_LABEL,
+            json.dumps(payload, separators=(",", ":")),
+            record_kind=37376,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            **payload,
+            "relay_event_id": (
+                published.get("event_id") if isinstance(published, dict) else None
+            ),
+            "verified": bool(verify),
+        }
+
+    async def rebuild_record_catalog(
+        self,
+        *,
+        publish: bool = True,
+    ) -> Dict[str, Any]:
+        """Rebuild the display catalog from authoritative encrypted records."""
+
+        records = await self.get_user_records(record_kind=37375, reverse=True)
+        entries = [
+            {
+                "label": str(record.get("tag", [""])[0]).strip(),
+                "modified_at": int(
+                    record.get("timestamp") or record.get("created_at") or 0
+                ),
+                "event_id": str(record.get("id") or "").strip().lower() or None,
+            }
+            for record in records
+            if isinstance(record, dict)
+            and isinstance(record.get("tag"), list)
+            and record.get("tag")
+            and str(record.get("tag")[0]).strip()
+        ]
+        payload = self._validate_record_catalog(
+            {
+                "type": "acorn-record-catalog",
+                "version": RECORD_CATALOG_VERSION,
+                "record_kind": 37375,
+                "observed_at": int(time()),
+                "records": entries,
+            }
+        )
+        if not publish:
+            return payload
+        return await self.publish_record_catalog(payload["records"], verify=False)
+
+    async def _update_record_catalog_best_effort(
+        self,
+        *,
+        label: str,
+        modified_at: int | None = None,
+        event_id: str | None = None,
+        remove: bool = False,
+    ) -> None:
+        """Update an existing catalog without making it authoritative."""
+
+        async def update() -> None:
+            catalog = await self.get_record_catalog()
+            # Existing wallets build their first catalog on the first list.
+            # Avoid turning every record mutation into a full historical scan.
+            if catalog is None:
+                return
+            records = [
+                dict(entry)
+                for entry in catalog.get("records", [])
+                if str(entry.get("label") or "") != label
+            ]
+            if not remove:
+                records.append(
+                    {
+                        "label": label,
+                        "modified_at": int(modified_at or time()),
+                        "event_id": event_id,
+                    }
+                )
+            await self.publish_record_catalog(records, verify=False)
+
+        try:
+            await asyncio.wait_for(
+                update(),
+                timeout=RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=record_catalog status=refresh_failed error_type=%s",
+                type(exc).__name__,
+            )
 
     async def publish_balance_snapshot(
         self,
@@ -3988,6 +4192,12 @@ class Acorn:
                     index_updated = True
                 except Exception as exc:
                     index_error = str(exc)
+
+        if int(record_kind) == 37375 and label not in INTERNAL_RECORD_LABELS:
+            await self._update_record_catalog_best_effort(
+                label=label,
+                remove=True,
+            )
 
         return {
             "status": "DELETE_REQUESTED",
@@ -6994,6 +7204,11 @@ class Acorn:
             await self.update_tags([["user_record", record_name, "generic"]])
             await self.set_wallet_info(record_name, record_json_str, record_kind=record_kind)
             await self.set_wallet_config()
+            if int(record_kind) == 37375:
+                await self._update_record_catalog_best_effort(
+                    label=record_name,
+                    modified_at=int(time()),
+                )
             return {"status": "OK", "blobref": blob_ref, "blobsha256": sha256}
 
         except (ValueError, TypeError, RuntimeError, KeyError) as exc:
@@ -7435,6 +7650,12 @@ class Acorn:
         # rebuildable compatibility cache and is updated only after readback.
         await self.update_tags([["user_record", record_name, record_type]])
         await self.set_wallet_config()
+        if int(record_kind) == 37375:
+            await self._update_record_catalog_best_effort(
+                label=record_name,
+                modified_at=int(time()),
+                event_id=str(publish_result.get("event_id") or "") or None,
+            )
 
         replaced_blob_cleanup = None
         if (
