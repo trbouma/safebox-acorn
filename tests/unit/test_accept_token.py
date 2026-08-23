@@ -77,7 +77,162 @@ async def test_accept_token_registers_rotated_keyset_and_updates_balance(monkeyp
     assert wallet.balance == 3
     wallet.add_proofs_obj.assert_awaited_once_with([refreshed], verify=True)
     wallet.add_tx_history.assert_awaited_once()
+    history = wallet.add_tx_history.await_args.kwargs
+    assert history["amount"] == 3
+    assert history["tendered_amount"] == 3
+    assert history["fees"] == 0
     wallet._maybe_maintain_received_proofs.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_accept_token_records_net_amount_after_mint_input_fee(monkeypatch):
+    wallet = wallet_with_key()
+    mint = "https://fee-mint.example"
+    incoming = Proof(
+        amount=77,
+        id="fee-keyset",
+        secret="incoming",
+        C="02" + "11" * 32,
+    )
+    refreshed = [
+        Proof(amount=64, id="new-keyset", secret="new-64", C="02" + "22" * 32),
+        Proof(amount=8, id="new-keyset", secret="new-8", C="02" + "33" * 32),
+        Proof(amount=4, id="new-keyset", secret="new-4", C="02" + "44" * 32),
+    ]
+    token_obj = SimpleNamespace(mint=mint, unit="sat", proofs=[incoming])
+    monkeypatch.setattr(
+        acorn_module.TokenV4,
+        "deserialize",
+        classmethod(lambda cls, token: token_obj),
+    )
+    wallet.swap_proofs = AsyncMock(return_value=refreshed)
+
+    message, amount = await wallet.accept_token("cashuB-test")
+
+    assert message == "Successfully accepted 76 sats!"
+    assert amount == 76
+    history = wallet.add_tx_history.await_args.kwargs
+    assert history["amount"] == 76
+    assert history["tendered_amount"] == 77
+    assert history["tendered_currency"] == "SAT"
+    assert history["fees"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("input_fee_ppk", "expected_amount"),
+    [(0, 77), (1000, 76)],
+)
+async def test_swap_proofs_accounts_for_input_fee(
+    monkeypatch,
+    input_fee_ppk,
+    expected_amount,
+):
+    wallet = wallet_with_key()
+    wallet._preflight_proof_persistence = AsyncMock()
+    mint = "https://fee-mint.example"
+    input_keyset = "fee-keyset"
+    output_keyset = "active-keyset"
+    wallet.known_mints[input_keyset] = mint
+    incoming = Proof(
+        amount=77,
+        id=input_keyset,
+        secret="incoming",
+        C="02" + "11" * 32,
+    )
+    captured = {}
+    serialized_point = (
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )
+    dummy_point = SimpleNamespace(serialize=lambda: bytes.fromhex(serialized_point))
+    monkeypatch.setattr(
+        acorn_module,
+        "step1_alice",
+        lambda secret: (dummy_point, object(), dummy_point),
+    )
+    monkeypatch.setattr(acorn_module, "step3_alice", lambda *args: dummy_point)
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+            self.text = ""
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    class FakeHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            if url.endswith("/v1/keysets"):
+                return Response(
+                    {
+                        "keysets": [
+                            {
+                                "id": input_keyset,
+                                "active": False,
+                                "unit": "sat",
+                                "input_fee_ppk": input_fee_ppk,
+                            },
+                            {
+                                "id": output_keyset,
+                                "active": True,
+                                "unit": "sat",
+                                "input_fee_ppk": 0,
+                            },
+                        ]
+                    }
+                )
+            return Response(
+                {
+                    "keysets": [
+                        {
+                            "id": output_keyset,
+                            "keys": {
+                                str(amount): serialized_point
+                                for amount in (1, 2, 4, 8, 16, 32, 64)
+                            },
+                        }
+                    ]
+                }
+            )
+
+        async def post(self, url, **kwargs):
+            captured["swap"] = kwargs["json"]
+            return Response(
+                {
+                    "signatures": [
+                        {
+                            "id": output_keyset,
+                            "amount": output["amount"],
+                            "C_": serialized_point,
+                        }
+                        for output in kwargs["json"]["outputs"]
+                    ]
+                }
+            )
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
+
+    refreshed = await wallet.swap_proofs(
+        [incoming],
+        mint_base=mint,
+        unit="sat",
+    )
+
+    assert sum(output["amount"] for output in captured["swap"]["outputs"]) == expected_amount
+    assert sum(proof.amount for proof in refreshed) == expected_amount
 
 
 @pytest.mark.asyncio

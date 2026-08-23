@@ -250,6 +250,25 @@ Proposed receive behavior:
 This makes `7378` an inbox transport. It does not become the durable wallet
 proof store. Durable spendable proof state remains kind `7375`.
 
+### Mint input fees during acceptance
+
+The transfer payload states the bearer token's gross or tendered amount. When
+the issuing keyset advertises a NUT-02 `input_fee_ppk`, the recipient's refresh
+must subtract the applicable input fee before constructing swap outputs. The
+confirmed credit can therefore be smaller than the amount shown while the
+relay event is pending.
+
+For example, a 77-sat token with a one-sat input fee becomes 76 sats of fresh
+recipient proofs. Acorn records 77 sats as tendered, 76 sats as the confirmed
+credit, and one sat as the mint fee. A mint rejection caused by requesting the
+full 77 sats of outputs does not authorize Acorn to mark the receipt confirmed;
+the bearer token remains in its provisional receipt for a corrected retry.
+
+When several same-mint receipts are refreshed in one swap, Acorn calculates
+the aggregate input fee once and allocates it deterministically across the
+individual confirmed credits. The sum of credited amounts must exactly equal
+the value of the fresh proofs persisted as kind `7375`.
+
 ## Transaction history
 
 A successfully accepted kind `7378` transfer should generate a corresponding
@@ -267,10 +286,11 @@ to understand where the balance increase came from:
 ```json
 {
   "tx_type": "C",
-  "amount": 21,
+  "amount": 20,
   "comment": "funds transfer received",
   "tendered_amount": 21,
   "tendered_currency": "SAT",
+  "fees": 1,
   "source_kind": 7378,
   "source_event_id": "<transfer_event_id>",
   "sender_pubkey": "<sender_pubkey>"

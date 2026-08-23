@@ -5108,10 +5108,10 @@ class Acorn:
                 raise RuntimeError("Mint batch swap returned no refreshed proofs")
             incoming_amount = sum(int(proof.amount) for proof in incoming_proofs)
             refreshed_amount = sum(int(proof.amount) for proof in refreshed_proofs)
-            if refreshed_amount != incoming_amount:
+            mint_fee = incoming_amount - refreshed_amount
+            if mint_fee < 0:
                 raise RuntimeError(
-                    "Mint batch swap returned a different proof amount "
-                    f"({refreshed_amount} != {incoming_amount})"
+                    "Mint batch swap returned more value than the incoming tokens"
                 )
             for proof in refreshed_proofs:
                 self.known_mints[proof.id] = mint
@@ -5133,11 +5133,32 @@ class Acorn:
             if lock_acquired:
                 await self.release_lock()
 
+        gross_receipt_amounts = dict(receipt_amounts)
+        receipt_fees = {event_id: 0 for event_id in receipt_amounts}
+        remaining_fee = mint_fee
+        # A batch swap has one aggregate input fee. Attribute it
+        # deterministically to the largest receipts first so per-receipt
+        # credits and history add up exactly to the refreshed proofs.
+        for event_id, gross_amount in sorted(
+            gross_receipt_amounts.items(),
+            key=lambda item: (-item[1], item[0]),
+        ):
+            fee_share = min(int(gross_amount), remaining_fee)
+            receipt_fees[event_id] = fee_share
+            receipt_amounts[event_id] = int(gross_amount) - fee_share
+            remaining_fee -= fee_share
+            if remaining_fee == 0:
+                break
+        if remaining_fee:
+            raise RuntimeError("Mint batch fee could not be allocated to receipts")
+
         total_amount = sum(receipt_amounts.values())
         self.logger.info(
-            "op=accept_continuity_token_batch status=success receipts=%s amount=%s mint=%s",
+            "op=accept_continuity_token_batch status=success receipts=%s "
+            "amount=%s mint_fee=%s mint=%s",
             len(receipts),
             total_amount,
+            mint_fee,
             mint,
         )
         return {
@@ -5146,6 +5167,8 @@ class Acorn:
             "receipt_count": len(receipts),
             "amount": total_amount,
             "receipt_amounts": receipt_amounts,
+            "receipt_fees": receipt_fees,
+            "mint_fee": mint_fee,
             "proof_count": len(refreshed_proofs),
         }
 
@@ -5315,9 +5338,11 @@ class Acorn:
                 continue
 
             receipt_amounts = batch_result.get("receipt_amounts", {})
+            receipt_fees = batch_result.get("receipt_fees", {})
             for receipt in batch_receipts:
                 event_id = str(receipt.get("event_id") or "")
                 amount = int(receipt_amounts.get(event_id, receipt.get("amount") or 0))
+                mint_fee = int(receipt_fees.get(event_id, 0))
                 payment_mode = str(receipt.get("payment_mode") or "continuity").lower()
                 if payment_mode == "continuity":
                     history_comment = (
@@ -5337,6 +5362,7 @@ class Acorn:
                         comment=history_comment,
                         tendered_amount=receipt.get("amount"),
                         tendered_currency=str(receipt.get("unit") or "sat").upper(),
+                        fees=mint_fee,
                         description_hash=f"cashu-receipt:{event_id}",
                     )
                 except Exception as history_exc:
@@ -10730,18 +10756,66 @@ class Acorn:
             response = await client.get(keyset_url, headers=headers)
             response.raise_for_status()
             keysets = response.json().get("keysets") or []
-            if unit is not None:
-                normalized_unit = self._normalize_clear_unit(unit)
-                keysets = [
-                    candidate
-                    for candidate in keysets
-                    if str(candidate.get("unit") or "").strip() == normalized_unit
-                    and candidate.get("active", True)
-                ]
-            if not keysets:
-                qualifier = f" for unit {unit}" if unit is not None else ""
+            if not isinstance(keysets, list):
+                raise RuntimeError("Mint keyset response was not a list")
+
+            input_keysets = []
+            input_fee_ppk_total = 0
+            for proof in incoming_swap_proofs:
+                input_keyset = next(
+                    (
+                        candidate
+                        for candidate in keysets
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("id") or "") == str(proof.id or "")
+                    ),
+                    None,
+                )
+                if input_keyset is None:
+                    raise RuntimeError(
+                        f"Mint does not advertise input keyset {proof.id}"
+                    )
+                input_keysets.append(input_keyset)
+                input_fee_ppk_total += int(input_keyset.get("input_fee_ppk") or 0)
+
+            advertised_input_units = {
+                str(candidate.get("unit") or "").strip().lower()
+                for candidate in input_keysets
+                if str(candidate.get("unit") or "").strip()
+            }
+            if len(advertised_input_units) > 1:
+                raise RuntimeError("Incoming proofs use keysets with different units")
+            requested_unit = str(
+                unit
+                or (
+                    next(iter(advertised_input_units))
+                    if advertised_input_units
+                    else "sat"
+                )
+            ).strip().lower()
+            normalized_unit = (
+                "sat"
+                if requested_unit == "sat"
+                else self._normalize_clear_unit(requested_unit)
+            )
+            if advertised_input_units and normalized_unit not in advertised_input_units:
+                raise RuntimeError(
+                    f"Incoming proofs are denominated in "
+                    f"{next(iter(advertised_input_units))}, not {normalized_unit}"
+                )
+
+            output_keysets = [
+                candidate
+                for candidate in keysets
+                if isinstance(candidate, dict)
+                and candidate.get("active", True)
+                and str(candidate.get("unit") or normalized_unit).strip().lower()
+                == normalized_unit
+            ]
+            if not output_keysets:
+                qualifier = f" for unit {normalized_unit}"
                 raise RuntimeError(f"Mint has no active keyset{qualifier}")
-            keyset = keysets[0]["id"]
+            keyset = output_keysets[0]["id"]
 
         swap_url = f"{mint_base}/v1/swap"
         swap_proofs = []
@@ -10755,8 +10829,22 @@ class Acorn:
             count +=1
         
         r = PrivateKey()
-        powers_of_2 = self.powers_of_2_sum(swap_amount)
-        self.logger.debug("op=swap_proofs status=decompose total=%s proofs=%s", swap_amount, count)
+        swap_fee = math.ceil(input_fee_ppk_total / 1000)
+        output_amount = swap_amount - swap_fee
+        if output_amount <= 0:
+            raise RuntimeError(
+                f"Incoming proofs total {swap_amount} sats cannot cover "
+                f"the mint's {swap_fee} sat input fee"
+            )
+        powers_of_2 = self.powers_of_2_sum(output_amount)
+        self.logger.debug(
+            "op=swap_proofs status=decompose input_amount=%s input_fee=%s "
+            "output_amount=%s proofs=%s",
+            swap_amount,
+            swap_fee,
+            output_amount,
+            count,
+        )
         for each in powers_of_2:
                 secret = secrets.token_hex(32)
                 B_, r, Y = step1_alice(secret)
@@ -12031,11 +12119,13 @@ class Acorn:
             token_amount =0
 
             token_mints: set[str] = set()
+            token_unit = "sat"
 
             if cashu_token[:6] == "cashuA":
 
                 
                 token_obj = TokenV3.deserialize(cashu_token)
+                token_unit = str(getattr(token_obj, "unit", None) or "sat").lower()
                 
                 
                         # need to inspect if a new mint
@@ -12060,6 +12150,7 @@ class Acorn:
 
             elif cashu_token[:6] == "cashuB":
                     token_obj = TokenV4.deserialize(cashu_token)
+                    token_unit = str(getattr(token_obj, "unit", None) or "sat").lower()
                     # print(token_obj)
                     proofs=[]
                     proof_obj_list: List[Proof] = []
@@ -12083,16 +12174,29 @@ class Acorn:
             await self.acquire_lock()
             lock_acquired = True
             await self._reconcile_spent_proofs_locked()
-            swap_proofs = await self.swap_proofs(proof_obj_list)
+            swap_proofs = await self.swap_proofs(
+                proof_obj_list,
+                mint_base=token_mint,
+                unit=token_unit,
+            )
             if not swap_proofs:
                 raise RuntimeError("Mint swap returned no refreshed proofs")
+            accepted_amount = sum(int(proof.amount) for proof in swap_proofs)
+            mint_fee = token_amount - accepted_amount
+            if mint_fee < 0:
+                raise RuntimeError(
+                    "Mint swap returned more value than the incoming token"
+                )
             for proof in swap_proofs:
                 # A mint may rotate its active keyset. The received token can
                 # therefore use one keyset while /swap returns another.
                 self.known_mints[proof.id] = token_mint
             self.logger.debug(
-                "op=accept_token status=swapped token_amount=%s input_proofs=%s output_proofs=%s",
+                "op=accept_token status=swapped token_amount=%s accepted_amount=%s "
+                "mint_fee=%s input_proofs=%s output_proofs=%s",
                 token_amount,
+                accepted_amount,
+                mint_fee,
                 len(proof_obj_list),
                 len(swap_proofs),
             )
@@ -12104,7 +12208,13 @@ class Acorn:
 
         
             
-            self.logger.info("op=accept_token status=success token_amount=%s", token_amount)
+            self.logger.info(
+                "op=accept_token status=success token_amount=%s "
+                "accepted_amount=%s mint_fee=%s",
+                token_amount,
+                accepted_amount,
+                mint_fee,
+            )
         except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as e:
             self.logger.error("op=accept_token status=failed error=%s", e)
             raise RuntimeError(f"Unable to accept token safely: {e}") from e
@@ -12116,15 +12226,18 @@ class Acorn:
         try:
             await self.add_tx_history(
                 tx_type='C',
-                amount=token_amount,
+                amount=accepted_amount,
                 comment=comment,
-                tendered_amount=tendered_amount,
+                tendered_amount=(
+                    token_amount if tendered_amount is None else tendered_amount
+                ),
                 tendered_currency=tendered_currency,
+                fees=mint_fee,
             )
         except Exception as exc:
             self.logger.error(
                 "op=accept_token status=tx_history_failed amount=%s error=%s",
-                token_amount,
+                accepted_amount,
                 exc,
             )
             raise RuntimeError(
@@ -12132,7 +12245,7 @@ class Acorn:
                 "be persisted. Review wallet balance and transaction history "
                 "before retrying."
             ) from exc
-        return f'Successfully accepted {token_amount} sats!', token_amount
+        return f'Successfully accepted {accepted_amount} sats!', accepted_amount
 
 
        

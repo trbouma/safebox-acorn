@@ -121,11 +121,20 @@ async def test_swap_validates_mint_keys_before_consuming_inputs(monkeypatch):
         async def get(self, url, headers=None):
             if url.endswith("/v1/keysets"):
                 return Response({
-                    "keysets": [{
-                        "id": "active-keyset",
-                        "unit": "cmu-example",
-                        "active": True,
-                    }]
+                    "keysets": [
+                        {
+                            "id": "incoming-keyset",
+                            "unit": "cmu-example",
+                            "active": False,
+                            "input_fee_ppk": 0,
+                        },
+                        {
+                            "id": "active-keyset",
+                            "unit": "cmu-example",
+                            "active": True,
+                            "input_fee_ppk": 0,
+                        },
+                    ]
                 })
             return Response({
                 "keysets": [{

@@ -395,6 +395,34 @@ async def test_accept_continuity_token_batch_uses_one_swap_and_proof_write() -> 
 
 
 @pytest.mark.asyncio
+async def test_accept_continuity_token_batch_allocates_aggregate_mint_fee() -> None:
+    acorn = wallet()
+    receipts = [
+        {
+            "event_id": "event-1",
+            "amount": 5,
+            "token": serialized_token([proof(1, "1"), proof(4, "4")]),
+        },
+        {
+            "event_id": "event-2",
+            "amount": 2,
+            "token": serialized_token([proof(2, "2")]),
+        },
+    ]
+    refreshed = [proof(2, "new-2"), proof(4, "new-4")]
+    acorn.swap_proofs = AsyncMock(return_value=refreshed)
+    acorn.add_proofs_obj = AsyncMock(return_value={"verified": True})
+
+    result = await acorn.accept_continuity_token_batch(receipts)
+
+    assert result["amount"] == 6
+    assert result["mint_fee"] == 1
+    assert result["receipt_amounts"] == {"event-1": 4, "event-2": 2}
+    assert result["receipt_fees"] == {"event-1": 1, "event-2": 0}
+    assert acorn.balance == 6
+
+
+@pytest.mark.asyncio
 async def test_reconcile_continuity_receipts_batches_same_mint() -> None:
     acorn = wallet()
     receipts = [
