@@ -2,6 +2,7 @@
 
 __all__ = [
     "Acorn",
+    "AmbiguousSwapError",
     "BitcoinCapabilityError",
     "OptionalDependencyError",
     "broadcast_silent_payment_sweep",
@@ -14,6 +15,7 @@ __all__ = [
     "record_protection_recovery_phrase",
     "RECORD_TRANSFER_PREFIX",
     "RECORD_PRESENTATION_PREFIX",
+    "RetryablePreSwapError",
     "RecordTransferDescriptor",
     "RecordTransferEnvelope",
     "RecordTransferError",
@@ -34,10 +36,10 @@ class OptionalDependencyError(RuntimeError):
 
 
 def __getattr__(name):
-    if name == "Acorn":
-        from acorn.acorn import Acorn
+    if name in {"Acorn", "AmbiguousSwapError", "RetryablePreSwapError"}:
+        from acorn import acorn
 
-        return Acorn
+        return getattr(acorn, name)
     if name in {
         "BitcoinCapabilityError",
         "broadcast_silent_payment_sweep",

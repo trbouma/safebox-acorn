@@ -297,6 +297,14 @@ class PaymentFinalizationError(RuntimeError):
 class PaymentFailedError(RuntimeError):
     """The mint definitively reports that the payment was not paid."""
 
+
+class RetryablePreSwapError(RuntimeError):
+    """A transient failure occurred before a mint swap was submitted."""
+
+
+class AmbiguousSwapError(RuntimeError):
+    """A mint swap may have completed, so repeating it is unsafe."""
+
 def powers_of_2_sum(amount):
     powers = []
     while amount > 0:
@@ -8137,6 +8145,11 @@ class Acorn:
                 response = await client.get(f"{mint_base_url}/v1/keysets")
                 response.raise_for_status()
                 payload = response.json()
+        except httpx.TransportError as exc:
+            detail = str(exc).strip() or type(exc).__name__
+            raise RetryablePreSwapError(
+                f"Unable to read keyset fees from {mint_base_url}: {detail}"
+            ) from exc
         except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
             detail = str(exc).strip() or type(exc).__name__
             raise RuntimeError(
@@ -11962,7 +11975,13 @@ class Acorn:
     ) -> List[Proof]:
         # create proofs to melt, and proofs_remaining
 
-        await self._preflight_proof_persistence()
+        try:
+            await self._preflight_proof_persistence()
+        except (RuntimeError, httpx.TransportError) as exc:
+            detail = str(exc).strip() or type(exc).__name__
+            raise RetryablePreSwapError(
+                f"Proof persistence preflight failed before mint swap: {detail}"
+            ) from exc
 
         swap_amount =0
         count = 0
@@ -11970,10 +11989,17 @@ class Acorn:
         headers = { "Content-Type": "application/json"}
         timeout = httpx.Timeout(30.0, connect=5.0)
         keyset_url = f"{self.known_mints[keyset_to_use]}/v1/keysets"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(keyset_url, headers=headers)
-            response.raise_for_status()
-            keyset_response = response.json()
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(keyset_url, headers=headers)
+                response.raise_for_status()
+                keyset_response = response.json()
+        except httpx.TransportError as exc:
+            detail = str(exc).strip() or type(exc).__name__
+            raise RetryablePreSwapError(
+                f"Mint keyset lookup failed before swap: {detail}"
+            ) from exc
+        else:
             keysets = keyset_response['keysets']
             normalized_unit = str(unit or "sat").strip().lower()
             keyset_info = next(
@@ -12041,11 +12067,17 @@ class Acorn:
 
         data_to_send = {"Ys": checkstate_ys}  
         self.logger.debug("op=swap_for_payment_multi status=checkstate_payload")
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.post(url=checkstate_url, json=data_to_send, headers=headers)
-            response.raise_for_status()
-            checkstate_response = response.json()
-            self.logger.debug("op=swap_for_payment_multi status=checkstate_response")
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(url=checkstate_url, json=data_to_send, headers=headers)
+                response.raise_for_status()
+                checkstate_response = response.json()
+                self.logger.debug("op=swap_for_payment_multi status=checkstate_response")
+        except httpx.TransportError as exc:
+            detail = str(exc).strip() or type(exc).__name__
+            raise RetryablePreSwapError(
+                f"Mint proof-state check failed before swap: {detail}"
+            ) from exc
 
         states = checkstate_response.get("states", []) if isinstance(checkstate_response, dict) else []
         if len(states) != len(proofs_to_use):
@@ -12130,10 +12162,22 @@ class Acorn:
         # print(blinded_messages)
         # print(data_to_send)
 
+        swap_accepted = False
         try:
             self.logger.debug("are we here?")
             async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.post(url=swap_url, json=data_to_send, headers=headers)
+                try:
+                    response = await client.post(url=swap_url, json=data_to_send, headers=headers)
+                except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
+                    detail = str(exc).strip() or type(exc).__name__
+                    raise RetryablePreSwapError(
+                        f"Mint connection failed before swap submission: {detail}"
+                    ) from exc
+                except httpx.TransportError as exc:
+                    detail = str(exc).strip() or type(exc).__name__
+                    raise AmbiguousSwapError(
+                        f"Mint swap transport outcome is unknown: {detail}"
+                    ) from exc
                 if response.status_code >= 400:
                     response_text = response.text
                     stale_proof_error = False
@@ -12160,6 +12204,7 @@ class Acorn:
                     raise RuntimeError(
                         f"swap failed with HTTP {response.status_code}: {response_text}"
                     )
+                swap_accepted = True
                 promises = response.json()['signatures']
 
                 mint_key_url = f"{self.known_mints[keyset_to_use]}/v1/keys/{keyset}"
@@ -12218,8 +12263,14 @@ class Acorn:
                 proofs.append(proof)
                 # print(proofs)
                 i+=1
+        except (RetryablePreSwapError, AmbiguousSwapError):
+            raise
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
             detail = str(e).strip() or type(e).__name__
+            if swap_accepted:
+                raise AmbiguousSwapError(
+                    f"Mint swap completed but replacement proofs could not be finalized: {detail}"
+                ) from e
             self.logger.warning(
                 "op=swap_for_payment_multi status=failed error_type=%s error=%r",
                 type(e).__name__,
@@ -12233,7 +12284,14 @@ class Acorn:
         # replacement before callers compact the wallet so an interrupted
         # follow-up remains recoverable from relay state.
         if persist_cash:
-            await self.add_proofs_obj(proofs, verify=True)
+            try:
+                await self.add_proofs_obj(proofs, verify=True)
+            except (RuntimeError, ValueError, TypeError, httpx.HTTPError) as exc:
+                detail = str(exc).strip() or type(exc).__name__
+                raise AmbiguousSwapError(
+                    "Mint swap completed but replacement proof persistence "
+                    f"could not be verified: {detail}"
+                ) from exc
         # now need break out proofs for payment and proofs remaining
 
         return proofs
@@ -12817,6 +12875,14 @@ class Acorn:
             v4_token = TokenV4.from_tokenv3(v3_token)
             token_serialized = v4_token.serialize()
             # print("proofs remaining:", proofs_remaining)
+        except (RetryablePreSwapError, AmbiguousSwapError) as e:
+            self.logger.error(
+                "op=issue_token status=failed amount=%s error_type=%s error=%r",
+                amount,
+                type(e).__name__,
+                e,
+            )
+            raise
         except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as e:
             detail = str(e).strip() or type(e).__name__
             self.logger.error(

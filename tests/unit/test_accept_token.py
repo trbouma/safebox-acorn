@@ -4,11 +4,12 @@ import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 from monstr.encrypt import Keys
 
 from acorn import acorn as acorn_module
-from acorn.acorn import Acorn
+from acorn.acorn import Acorn, AmbiguousSwapError, RetryablePreSwapError
 from acorn.models import Proof
 
 
@@ -44,6 +45,131 @@ def test_relay_verify_timeout_default_and_validation():
         acorn_module._positive_timeout("0", name="timeout")
     with pytest.raises(ValueError, match="must be a positive number"):
         acorn_module._positive_timeout("invalid", name="timeout")
+
+
+@pytest.mark.asyncio
+async def test_keyset_fee_transport_failure_is_retryable_before_swap(monkeypatch):
+    wallet = wallet_with_key()
+    keyset = "00f300c64b950282"
+    wallet.known_mints = {keyset: "https://mint.example"}
+
+    class FailingHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            raise httpx.ConnectTimeout("mint unavailable")
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FailingHttpClient)
+
+    with pytest.raises(RetryablePreSwapError, match="before swap|keyset fees"):
+        await Acorn._keyset_input_fee_ppk(wallet, keyset)
+
+    wallet._preflight_proof_persistence = AsyncMock()
+    proof = Proof(
+        amount=2,
+        id=keyset,
+        secret="pre-swap-proof",
+        C="02" + "31" * 32,
+        Y="02" + "32" * 32,
+    )
+    with pytest.raises(RetryablePreSwapError, match="keyset lookup failed"):
+        await wallet.swap_for_payment_multi(keyset, [proof], 1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    [
+        RetryablePreSwapError("safe to retry"),
+        AmbiguousSwapError("outcome unknown"),
+    ],
+)
+async def test_issue_token_preserves_typed_swap_failures(failure):
+    wallet = wallet_with_key()
+    keyset = "00f300c64b950282"
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet.proofs = [
+        Proof(
+            amount=2,
+            id=keyset,
+            secret="wallet-proof",
+            C="02" + "11" * 32,
+            Y="02" + "12" * 32,
+        )
+    ]
+    wallet.balance = 2
+    wallet.swap_for_payment_multi = AsyncMock(side_effect=failure)
+
+    with pytest.raises(type(failure), match=str(failure)):
+        await wallet.issue_token(1)
+
+
+@pytest.mark.asyncio
+async def test_swap_read_timeout_after_submission_is_ambiguous(monkeypatch):
+    wallet = wallet_with_key()
+    keyset = "00f300c64b950282"
+    wallet.known_mints = {keyset: "https://mint.example"}
+    wallet._preflight_proof_persistence = AsyncMock()
+    proof = Proof(
+        amount=2,
+        id=keyset,
+        secret="ambiguous-proof",
+        C="02" + "41" * 32,
+        Y="02" + "42" * 32,
+    )
+
+    class Response:
+        def __init__(self, payload):
+            self.payload = payload
+            self.status_code = 200
+            self.text = ""
+
+        def json(self):
+            return self.payload
+
+        def raise_for_status(self):
+            return None
+
+    class AmbiguousHttpClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            return Response(
+                {
+                    "keysets": [
+                        {
+                            "id": keyset,
+                            "active": True,
+                            "unit": "sat",
+                            "input_fee_ppk": 0,
+                        }
+                    ]
+                }
+            )
+
+        async def post(self, url, **kwargs):
+            if url.endswith("/v1/checkstate"):
+                return Response({"states": [{"state": "UNSPENT"}]})
+            raise httpx.ReadTimeout("mint response lost")
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", AmbiguousHttpClient)
+
+    with pytest.raises(AmbiguousSwapError, match="outcome is unknown"):
+        await wallet.swap_for_payment_multi(keyset, [proof], 1)
 
 
 @pytest.mark.asyncio

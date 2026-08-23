@@ -300,6 +300,16 @@ for reconciliation, inspection, pending-payment state, and the final pre-swap
 check. Incomplete mint check-state responses fail closed before a swap is
 submitted.
 
+Acorn also makes the swap submission boundary explicit to applications.
+Transient transport or persistence failures proven to occur before `/v1/swap`
+raise `RetryablePreSwapError`; no bearer inputs were submitted, so a supervising
+durable workflow may retry with bounded backoff. A read/write timeout during
+submission, a failure after the mint accepted the swap, or an inability to
+persist replacement proofs raises `AmbiguousSwapError`. Repeating that operation
+could spend or deliver twice and therefore requires reconciliation rather than
+automatic retry. Exceptions during later gift-wrapped relay publication remain
+ambiguous because token issuance has already committed.
+
 It should:
 
 1. load visible proof events;
