@@ -8124,6 +8124,41 @@ class Acorn:
             return 0
         return math.ceil((int(input_fee_ppk) * int(input_count)) / 1000)
 
+    async def _keyset_input_fee_ppk(self, keyset_id: str) -> int:
+        """Return the mint-advertised input fee for a wallet keyset."""
+
+        mint = self.known_mints.get(keyset_id)
+        if not mint:
+            raise RuntimeError(f"Missing mint mapping for keyset {keyset_id}")
+        mint_base_url = normalize_mint_url(mint)
+        timeout = httpx.Timeout(30.0, connect=5.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(f"{mint_base_url}/v1/keysets")
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            detail = str(exc).strip() or type(exc).__name__
+            raise RuntimeError(
+                f"Unable to read keyset fees from {mint_base_url}: {detail}"
+            ) from exc
+
+        keysets = payload.get("keysets", []) if isinstance(payload, dict) else []
+        keyset_info = next(
+            (item for item in keysets if str(item.get("id") or "") == str(keyset_id)),
+            None,
+        )
+        if keyset_info is None:
+            raise RuntimeError(
+                f"Mint {mint_base_url} does not advertise keyset {keyset_id}"
+            )
+        try:
+            return max(0, int(keyset_info.get("input_fee_ppk") or 0))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(
+                f"Mint {mint_base_url} advertised an invalid input fee for keyset {keyset_id}"
+            ) from exc
+
     def _source_mint_keysets(self, source_mint: str) -> list[dict]:
         source_mint = normalize_mint_url(source_mint)
         all_proofs, keyset_amounts = self._proofs_by_keyset()
@@ -12184,8 +12219,13 @@ class Acorn:
                 # print(proofs)
                 i+=1
         except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as e:
-            self.logger.warning("op=swap_for_payment_multi status=failed error=%s", e)
-            raise RuntimeError(f"ERROR {e}")
+            detail = str(e).strip() or type(e).__name__
+            self.logger.warning(
+                "op=swap_for_payment_multi status=failed error_type=%s error=%r",
+                type(e).__name__,
+                e,
+            )
+            raise RuntimeError(f"ERROR {detail}") from e
         
         for each in proofs:
             pass
@@ -12639,6 +12679,7 @@ class Acorn:
 
         lock_acquired = False
         token_serialized = None
+        mint_input_fee = 0
         try:
             await self.acquire_lock()
             lock_acquired = True
@@ -12659,29 +12700,63 @@ class Acorn:
                 # msg_out = "insufficient balance. you need more funds!"
                 # return msg_out
             
+            proofs_to_use = []
+            proofs_from_keyset = []
             for key in sorted(keyset_amounts, key=lambda k: keyset_amounts[k]):
-                
-                self.logger.debug(f"{key} {keyset_amounts[key]}")
-                if keyset_amounts[key] >= amount:
-                    chosen_keyset = key
+                self.logger.debug(
+                    "op=issue_token status=consider_keyset keyset=%s amount=%s",
+                    key,
+                    keyset_amounts[key],
+                )
+                if keyset_amounts[key] < amount:
+                    continue
+
+                input_fee_ppk = await self._keyset_input_fee_ppk(key)
+                candidate_proofs = sorted(
+                    keyset_proofs[key],
+                    key=lambda proof: int(proof.amount),
+                    reverse=True,
+                )
+                candidate_selected = []
+                candidate_amount = 0
+                for proof in candidate_proofs:
+                    candidate_selected.append(proof)
+                    candidate_amount += int(proof.amount)
+                    candidate_fee = self._input_fee_sats(
+                        input_fee_ppk,
+                        len(candidate_selected),
+                    )
+                    if candidate_amount - candidate_fee >= amount:
+                        chosen_keyset = key
+                        proofs_to_use = candidate_selected
+                        mint_input_fee = candidate_fee
+                        selected_secrets = {proof.secret for proof in proofs_to_use}
+                        proofs_from_keyset = [
+                            proof
+                            for proof in keyset_proofs[key]
+                            if proof.secret not in selected_secrets
+                        ]
+                        break
+                if chosen_keyset:
                     break
             if not chosen_keyset:
                
-                self.logger.error("op=issue_token status=no_single_keyset amount=%s", amount)
-                raise ValueError("Insufficient balance in a single keyset; swap required.")
+                self.logger.error("op=issue_token status=no_fee_eligible_keyset amount=%s", amount)
+                raise ValueError(
+                    "Insufficient balance in a single keyset after mint input fees; "
+                    "swap or add funds before retrying."
+                )
 
             mint_for_keyset = self.known_mints.get(chosen_keyset)
             if not mint_for_keyset:
                 raise RuntimeError(f"Missing mint mapping for keyset {chosen_keyset}")
             
-            proofs_to_use = []
-            proof_amount = 0
-            proofs_from_keyset = keyset_proofs[chosen_keyset]
-            while proof_amount < amount:
-                pay_proof = proofs_from_keyset.pop()
-                proofs_to_use.append(pay_proof)
-                proof_amount += pay_proof.amount
-                self.logger.debug("op=issue_token selecting_proof keyset=%s amount=%s", chosen_keyset, pay_proof.amount)
+            for pay_proof in proofs_to_use:
+                self.logger.debug(
+                    "op=issue_token selecting_proof keyset=%s amount=%s",
+                    chosen_keyset,
+                    pay_proof.amount,
+                )
                 
             self.logger.debug(
                 "op=issue_token status=prepared keyset=%s proofs_to_use=%s",
@@ -12743,8 +12818,14 @@ class Acorn:
             token_serialized = v4_token.serialize()
             # print("proofs remaining:", proofs_remaining)
         except (ValueError, TypeError, RuntimeError, httpx.HTTPError) as e:
-            self.logger.error("op=issue_token status=failed amount=%s error=%s", amount, e)
-            raise RuntimeError(f"Error issuing token: {e}") from e
+            detail = str(e).strip() or type(e).__name__
+            self.logger.error(
+                "op=issue_token status=failed amount=%s error_type=%s error=%r",
+                amount,
+                type(e).__name__,
+                e,
+            )
+            raise RuntimeError(f"Error issuing token: {detail}") from e
         finally:
             if lock_acquired:
                 await self.release_lock()
@@ -12758,7 +12839,14 @@ class Acorn:
         # the issued token emptied the wallet.
         self.balance = sum(each.amount for each in self.proofs)
         try:
-            await self.add_tx_history(tx_type='D',amount=amount,comment=comment)
+            await self.add_tx_history(
+                tx_type='D',
+                amount=amount,
+                comment=comment,
+                tendered_amount=amount,
+                tendered_currency="SAT",
+                fees=mint_input_fee,
+            )
         except Exception as exc:
             # Issuance is already committed once proofs are persisted.
             self.logger.warning("op=issue_token status=tx_history_failed amount=%s error=%s", amount, exc)

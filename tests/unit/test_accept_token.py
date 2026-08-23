@@ -29,6 +29,8 @@ def wallet_with_key() -> Acorn:
     wallet._reconcile_spent_proofs_locked = AsyncMock(
         return_value={"removed": 0, "amount": 0, "balance": 0}
     )
+    wallet._require_resolved_pending_melts = AsyncMock()
+    wallet._keyset_input_fee_ppk = AsyncMock(return_value=0)
     wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
     wallet.add_tx_history = AsyncMock()
     wallet._maybe_maintain_received_proofs = AsyncMock()
@@ -359,3 +361,52 @@ async def test_issue_token_does_not_double_decrement_empty_wallet_balance():
     assert wallet.proofs == []
     assert wallet.balance == 0
     wallet.add_tx_history.assert_awaited_once()
+    assert wallet.add_tx_history.await_args.kwargs["fees"] == 0
+
+
+@pytest.mark.asyncio
+async def test_issue_token_selects_enough_inputs_to_cover_mint_fee():
+    wallet = wallet_with_key()
+    keyset = "00f300c64b950282"
+    wallet.proof_events = SimpleNamespace(proof_events=[])
+    wallet.proof_event_ids = []
+    wallet.events = 1
+    wallet.known_mints = {keyset: "https://fee-mint.example"}
+    wallet.proofs = [
+        Proof(
+            amount=amount,
+            id=keyset,
+            secret=f"wallet-proof-{amount}",
+            C="02" + f"{amount:02x}" * 32,
+            Y="02" + f"{amount + 1:02x}" * 32,
+        )
+        for amount in (64, 32, 8, 2, 1)
+    ]
+    wallet.balance = 107
+    wallet._keyset_input_fee_ppk = AsyncMock(return_value=1000)
+
+    replacement_proofs = [
+        Proof(amount=64, id=keyset, secret="issued-64", C="02" + "21" * 32),
+        Proof(amount=32, id=keyset, secret="issued-32", C="02" + "22" * 32),
+        Proof(amount=2, id=keyset, secret="issued-2", C="02" + "23" * 32),
+        Proof(amount=1, id=keyset, secret="issued-1", C="02" + "24" * 32),
+        Proof(amount=2, id=keyset, secret="change-2", C="02" + "25" * 32),
+    ]
+    wallet.swap_for_payment_multi = AsyncMock(return_value=replacement_proofs)
+
+    async def write_and_reload_proof_set():
+        wallet.balance = sum(proof.amount for proof in wallet.proofs)
+
+    wallet.write_proofs = AsyncMock(side_effect=write_and_reload_proof_set)
+
+    token = await wallet.issue_token(99, comment="fee-aware transfer")
+
+    assert token.startswith("cashuB")
+    selected = wallet.swap_for_payment_multi.await_args.args[1]
+    assert [proof.amount for proof in selected] == [64, 32, 8]
+    assert sum(proof.amount for proof in selected) == 104
+    assert sum(proof.amount for proof in wallet.proofs) == 5
+    history = wallet.add_tx_history.await_args.kwargs
+    assert history["amount"] == 99
+    assert history["tendered_amount"] == 99
+    assert history["fees"] == 3
