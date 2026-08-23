@@ -50,6 +50,12 @@ The limit applies to relay events, including record revisions. A response that
 reaches the configured limit may therefore be incomplete; record listing is
 not currently paginated.
 
+Exact record reads use the author, kind, and hashed `d` tag and are bounded
+separately by `ACORN_RECORD_EXACT_LOOKUP_LIMIT` (default `16`). Record reads,
+writes, existence checks, and catalog access do not require `load_data()` and
+therefore do not load Cash or Clear proofs. The encrypted record event is
+authoritative; the relay-backed record catalog is a rebuildable display index.
+
 Acorn also owns the initial record-protection key primitives. Applications can
 request a fresh key from the operating-system cryptographic random source or
 derive one deterministically from separate, externally generated 256-bit

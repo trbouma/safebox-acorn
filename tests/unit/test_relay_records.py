@@ -9,7 +9,7 @@ import pytest
 from monstr.encrypt import Keys
 from monstr.event.event import Event
 
-from acorn.acorn import Acorn
+from acorn.acorn import Acorn, RECORD_EXACT_LOOKUP_LIMIT
 
 
 def wallet_with_key() -> Acorn:
@@ -174,8 +174,35 @@ async def test_get_record_safebox_scopes_lookup_by_kind_and_relays(monkeypatch):
     )
 
     assert captured["filters"][0]["kinds"] == [34002]
+    assert captured["filters"][0]["limit"] == RECORD_EXACT_LOOKUP_LIMIT
     assert captured["relays"] == ["ws://replica:7777"]
     assert record.payload == "signed payload"
+
+
+@pytest.mark.asyncio
+async def test_record_exists_uses_exact_relay_lookup_without_decryption():
+    wallet = wallet_with_key()
+    target = record_event(event_id="a" * 64, created_at=20)
+    wallet._async_get_wallet_info = AsyncMock(return_value=target)
+
+    exists = await wallet.record_exists("Field Notes")
+
+    assert exists is True
+    filters = wallet._async_get_wallet_info.await_args.args[0]
+    assert filters == [{
+        "limit": RECORD_EXACT_LOOKUP_LIMIT,
+        "authors": [wallet.pubkey_hex],
+        "kinds": [37375],
+        "#d": [wallet._record_label_hash("Field Notes")],
+    }]
+
+
+@pytest.mark.asyncio
+async def test_record_exists_returns_false_when_exact_record_is_absent():
+    wallet = wallet_with_key()
+    wallet._async_get_wallet_info = AsyncMock(return_value=None)
+
+    assert await wallet.record_exists("Missing") is False
 
 
 @pytest.mark.asyncio

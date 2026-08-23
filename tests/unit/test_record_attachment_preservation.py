@@ -75,6 +75,8 @@ async def test_put_record_preserves_existing_encrypted_attachment_metadata():
     assert stored["encryptparms"]["alg"] == "AES-256-GCM"
     assert result["blobref"] == "https://blossom.example/encrypted"
     assert result["blobsha256"] == "cipher-sha"
+    wallet.update_tags.assert_not_awaited()
+    wallet.set_wallet_config.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -169,6 +169,10 @@ RECORD_LIMIT: int = _positive_limit(
     os.getenv("ACORN_RECORD_LIMIT", "1024"),
     name="ACORN_RECORD_LIMIT",
 )
+RECORD_EXACT_LOOKUP_LIMIT: int = _positive_limit(
+    os.getenv("ACORN_RECORD_EXACT_LOOKUP_LIMIT", "16"),
+    name="ACORN_RECORD_EXACT_LOOKUP_LIMIT",
+)
 RELAY_VERIFY_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_RELAY_VERIFY_TIMEOUT_SECONDS", "60"),
     name="ACORN_RELAY_VERIFY_TIMEOUT_SECONDS",
@@ -3831,14 +3835,7 @@ class Acorn:
         self.logger.debug("op=get_wallet_info status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
-        FILTER = [{
-            'limit': RECORD_LIMIT,
-            'authors': [self.pubkey_hex],
-            'kinds': [record_kind],
-            '#d': [label_hash]   
-            
-            
-        }]
+        FILTER = self._record_lookup_filter(label_hash, record_kind)
 
         # print("are we here?", label_hash)
         event = await self._async_get_wallet_info(
@@ -3867,6 +3864,42 @@ class Acorn:
         
 
         return decrypt_content
+
+    def _record_lookup_filter(
+        self,
+        label_hash: str,
+        record_kind: int,
+    ) -> List[dict]:
+        """Build a tightly bounded filter for one parameterized record."""
+
+        return [{
+            "limit": RECORD_EXACT_LOOKUP_LIMIT,
+            "authors": [self.pubkey_hex],
+            "kinds": [int(record_kind)],
+            "#d": [str(label_hash)],
+        }]
+
+    async def record_exists(
+        self,
+        label: str,
+        record_kind: int = 37375,
+        record_origin: str | None = None,
+        relays: List[str] | str | None = None,
+    ) -> bool:
+        """Check authoritative relay state for one label without loading proofs."""
+
+        record_label = str(label or "").strip()
+        if not record_label:
+            raise ValueError("record label is required")
+        if record_origin:
+            record_label = f"{record_origin}:{record_label}"
+        label_hash = self._record_label_hash(record_label)
+        event = await self._async_get_wallet_info(
+            self._record_lookup_filter(label_hash, record_kind),
+            label_hash,
+            relays=relays,
+        )
+        return event is not None
 
     async def store_deferred_recovery(
         self,
@@ -4081,14 +4114,7 @@ class Acorn:
 
         label_hash = self._record_label_hash(label)
         delete_relays = self._record_relay_pool(relays)
-        FILTER = [{
-            'limit': RECORD_LIMIT,
-            'authors': [self.pubkey_hex],
-            'kinds': [record_kind],
-            '#d': [label_hash]   
-            
-            
-        }]
+        FILTER = self._record_lookup_filter(label_hash, record_kind)
 
         # print("are we here?", label_hash)
         event = await self._async_get_wallet_info(
@@ -4237,6 +4263,7 @@ class Acorn:
         # target_tag = filter[0]['d']
         target_tag = label_hash
         events = []
+        query_started = monotonic()
         
         relay_pool = self._record_relay_pool(relays)
         async with ClientPool(relay_pool) as c:
@@ -4244,7 +4271,11 @@ class Acorn:
             
             events = await c.query(filter)
             
-            self.logger.debug(f"no of events: {len(events)}")
+            self.logger.debug(
+                "op=get_wallet_info status=query_complete events=%s duration_ms=%s",
+                len(events),
+                int((monotonic() - query_started) * 1000),
+            )
             
             # print(f"_async event xoxoxo: type: {type(events[0])} data: {events[0].data()}")
 
@@ -4524,14 +4555,7 @@ class Acorn:
         self.logger.debug("op=get_record_safebox status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
-        FILTER = [{
-            'limit': RECORD_LIMIT,
-            'authors': [self.pubkey_hex],
-            'kinds': [record_kind],
-            '#d': [label_hash]   
-            
-            
-        }]
+        FILTER = self._record_lookup_filter(label_hash, record_kind)
 
         # print("are we here?", label_hash)
         event = await self._async_get_wallet_info(
@@ -4687,14 +4711,7 @@ class Acorn:
         self.logger.debug("op=get_record_blobdata status=query kind=%s", record_kind)
         
         # DEFAULT_RELAY = self.relays[0]
-        FILTER = [{
-            'limit': RECORD_LIMIT,
-            'authors': [self.pubkey_hex],
-            'kinds': [record_kind],
-            '#d': [label_hash]   
-            
-            
-        }]
+        FILTER = self._record_lookup_filter(label_hash, record_kind)
 
         event = await self._async_get_wallet_info(
             FILTER,
@@ -7209,9 +7226,7 @@ class Acorn:
             )
             record_json_str = updated_safebox_record.model_dump_json()
 
-            await self.update_tags([["user_record", record_name, "generic"]])
             await self.set_wallet_info(record_name, record_json_str, record_kind=record_kind)
-            await self.set_wallet_config()
             if int(record_kind) == 37375:
                 await self._update_record_catalog_best_effort(
                     label=record_name,
@@ -7654,10 +7669,9 @@ class Acorn:
                     ).delete_blob(server=blossom_server, sha256=sha256)
             raise
 
-        # The encrypted event is authoritative. The legacy wallet index is a
-        # rebuildable compatibility cache and is updated only after readback.
-        await self.update_tags([["user_record", record_name, record_type]])
-        await self.set_wallet_config()
+        # The encrypted event is authoritative. Do not couple record writes to
+        # the legacy wallet tag index: doing so would require loading proofs and
+        # funds state before an otherwise independent record operation.
         if int(record_kind) == 37375:
             await self._update_record_catalog_best_effort(
                 label=record_name,
