@@ -204,6 +204,14 @@ RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS", "5"),
     name="ACORN_RECORD_CATALOG_REFRESH_TIMEOUT_SECONDS",
 )
+RECORD_PUBLISH_VERIFY_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_RECORD_PUBLISH_VERIFY_TIMEOUT_SECONDS", "15"),
+    name="ACORN_RECORD_PUBLISH_VERIFY_TIMEOUT_SECONDS",
+)
+RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS", "5"),
+    name="ACORN_RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS",
+)
 BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS", "5"),
     name="ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS",
@@ -1496,9 +1504,13 @@ class Acorn:
 
         async def update() -> None:
             catalog = await self.get_record_catalog()
-            # Existing wallets build their first catalog on the first list.
-            # Avoid turning every record mutation into a full historical scan.
             if catalog is None:
+                # A new wallet has no catalog until its first record exists.
+                # Rebuild once here so the successful first write immediately
+                # becomes navigable. Existing pre-catalog wallets receive the
+                # same bounded best-effort migration without coupling the
+                # authoritative record write to catalog availability.
+                await self.rebuild_record_catalog()
                 return
             records = [
                 dict(entry)
@@ -3682,6 +3694,7 @@ class Acorn:
         record_kind: int = 37375,
         verify: bool = False,
         verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+        preflight_existing: bool = True,
     ) -> dict:
         return await self._async_set_wallet_info(
             label,
@@ -3690,6 +3703,7 @@ class Acorn:
             record_kind=record_kind,
             verify=verify,
             verify_timeout=verify_timeout,
+            preflight_existing=preflight_existing,
         )
 
     async def _async_set_wallet_info(
@@ -3700,6 +3714,7 @@ class Acorn:
         record_kind: int = 37375,
         verify: bool = False,
         verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+        preflight_existing: bool = True,
     ) -> dict:
         label_name_hash = self._record_label_hash(label)
 
@@ -3714,15 +3729,25 @@ class Acorn:
         )
 
         created_at = int(datetime.now().timestamp())
-        if verify:
-            existing_filter = [{
-                "limit": RECORD_LIMIT,
-                "authors": [self.pubkey_hex],
-                "kinds": [record_kind],
-                "#d": [label_name_hash],
-            }]
+        if verify and preflight_existing:
+            existing_filter = self._record_lookup_filter(
+                label_name_hash,
+                record_kind,
+            )
             async with ClientPool(write_relays) as c:
-                existing = await c.query(existing_filter)
+                try:
+                    existing = await asyncio.wait_for(
+                        c.query(existing_filter),
+                        timeout=min(
+                            RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS,
+                            max(0.5, float(verify_timeout)),
+                        ),
+                    )
+                except TimeoutError as exc:
+                    raise RuntimeError(
+                        "Record preflight query timed out on: "
+                        + ", ".join(write_relays)
+                    ) from exc
             canonical_existing = self._canonical_record_events(existing)
             if canonical_existing:
                 created_at = max(
@@ -3754,19 +3779,26 @@ class Acorn:
         }
         if verify:
             deadline = monotonic() + max(0.5, float(verify_timeout))
-            verify_filter = [{
-                "limit": RECORD_LIMIT,
-                "authors": [self.pubkey_hex],
-                "kinds": [record_kind],
-                "#d": [label_name_hash],
-            }]
+            verify_filter = self._record_lookup_filter(
+                label_name_hash,
+                record_kind,
+            )
             while monotonic() < deadline:
                 for relay in write_relays:
                     if verification[relay]["canonical"]:
                         continue
                     try:
                         async with ClientPool([relay]) as c:
-                            observed = await c.query(verify_filter)
+                            remaining = deadline - monotonic()
+                            if remaining <= 0:
+                                break
+                            observed = await asyncio.wait_for(
+                                c.query(verify_filter),
+                                timeout=min(
+                                    RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS,
+                                    max(0.1, remaining),
+                                ),
+                            )
                         canonical = self._canonical_record_events(observed)
                         verification[relay]["readable"] = any(
                             str(each.id) == str(n_msg.id)
@@ -3776,13 +3808,20 @@ class Acorn:
                             canonical
                             and str(canonical[0].id) == str(n_msg.id)
                         )
+                    except TimeoutError:
+                        verification[relay]["error"] = (
+                            "canonical readback query timed out"
+                        )
                     except Exception as exc:
                         verification[relay]["error"] = str(exc)
                 if all(
                     each["canonical"] for each in verification.values()
                 ):
                     break
-                await asyncio.sleep(0.4)
+                remaining = deadline - monotonic()
+                if remaining <= 0:
+                    break
+                await asyncio.sleep(min(0.4, remaining))
 
             failed = [
                 relay for relay, state in verification.items()
@@ -7545,7 +7584,7 @@ class Acorn:
         blob_data: bytes = None,
         blob_type: str = None,
         relays: List[str] | str | None = None,
-        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+        verify_timeout: float = RECORD_PUBLISH_VERIFY_TIMEOUT_SECONDS,
         return_result: bool = False,
         preserve_existing_blob: bool = False,
     ):
@@ -7659,6 +7698,7 @@ class Acorn:
                 record_kind=record_kind,
                 verify=True,
                 verify_timeout=verify_timeout,
+                preflight_existing=preserve_existing_blob,
             )
         except Exception:
             if sha256:

@@ -44,6 +44,20 @@ browser link or form
         -> browser presents the result
 ```
 
+The application must also request the narrowest Acorn state domain required by
+that path. Rendering recovery material already held in the encrypted session
+requires no wallet load. A wallet landing page may read a relay-backed balance
+snapshot. Record navigation may use the catalog or an exact-record lookup.
+Only funds verification and mutation should pay the cost of full proof loading,
+mint checks, locking, and canonical persistence.
+
+This rule became explicit after reliability hardening made complete wallet
+loading necessarily more expensive and Safebox Web page routes began exposing
+that cost as gateway timeouts. The architectural response is not to weaken
+funds checks or create a local wallet journal; it is to isolate reads from
+verification and mutation. See
+[Acorn Load Boundaries and Relay-Backed Read Models](LOAD-BOUNDARIES-AND-READ-MODELS.md).
+
 The browser is a hypermedia client, not a distributed copy of the application.
 Safebox Web should not require browser-side JavaScript to retrieve records,
 calculate balances, coordinate payments, or decide workflow outcomes. Small

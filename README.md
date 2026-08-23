@@ -55,6 +55,12 @@ separately by `ACORN_RECORD_EXACT_LOOKUP_LIMIT` (default `16`). Record reads,
 writes, existence checks, and catalog access do not require `load_data()` and
 therefore do not load Cash or Clear proofs. The encrypted record event is
 authoritative; the relay-backed record catalog is a rebuildable display index.
+User-record publication uses a bounded verification budget controlled by
+`ACORN_RECORD_PUBLISH_VERIFY_TIMEOUT_SECONDS` (default `15`) and bounds each
+relay attempt with `ACORN_RECORD_QUERY_ATTEMPT_TIMEOUT_SECONDS` (default `5`).
+The first successful record write makes a best-effort catalog build, so new
+wallets become navigable without making catalog availability part of the
+authoritative write outcome.
 
 Acorn also owns the initial record-protection key primitives. Applications can
 request a fresh key from the operating-system cryptographic random source or

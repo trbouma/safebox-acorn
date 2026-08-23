@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+from time import monotonic
 from unittest.mock import AsyncMock
 
 import pytest
@@ -134,6 +136,102 @@ async def test_existing_record_catalog_is_updated_without_historical_rebuild():
     records = wallet.publish_record_catalog.await_args.args[0]
     assert {entry["label"] for entry in records} == {"Existing", "New"}
     wallet.get_user_records.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_missing_record_catalog_is_rebuilt_after_first_successful_write():
+    wallet = wallet_with_key()
+    wallet.get_record_catalog = AsyncMock(return_value=None)
+    wallet.rebuild_record_catalog = AsyncMock()
+
+    await wallet._update_record_catalog_best_effort(
+        label="First Record",
+        modified_at=20,
+        event_id="b" * 64,
+    )
+
+    wallet.rebuild_record_catalog.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+async def test_verified_new_record_write_can_skip_existing_record_preflight(
+    monkeypatch,
+):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    stored = []
+    query_calls = 0
+
+    class MemoryPool:
+        def __init__(self, relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def publish(self, event):
+            stored.append(event)
+
+        async def query(self, filters):
+            nonlocal query_calls
+            query_calls += 1
+            return list(stored)
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+
+    result = await wallet.set_wallet_info(
+        "First Record",
+        "encrypted content",
+        verify=True,
+        preflight_existing=False,
+    )
+
+    assert result["verified"] is True
+    assert query_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_record_verification_query_respects_overall_deadline(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+
+    class HangingPool:
+        def __init__(self, relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def publish(self, event):
+            pass
+
+        async def query(self, filters):
+            await asyncio.Event().wait()
+
+    monkeypatch.setattr(acorn_module, "ClientPool", HangingPool)
+    started = monotonic()
+
+    with pytest.raises(RuntimeError, match="could not be verified as canonical"):
+        await wallet.set_wallet_info(
+            "First Record",
+            "encrypted content",
+            verify=True,
+            verify_timeout=0.05,
+            preflight_existing=False,
+        )
+
+    # The verifier intentionally enforces a 0.5-second minimum window, plus
+    # the short post-publish propagation pause.
+    assert monotonic() - started < 0.9
 
 
 @pytest.mark.asyncio

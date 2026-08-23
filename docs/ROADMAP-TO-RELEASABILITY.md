@@ -319,6 +319,28 @@ Before a pilot:
 - use explicit connection and request timeouts;
 - propagate cancellation without leaving locks or clients active.
 
+### State-domain loading
+
+Reliability hardening has made a complete wallet load appropriately expensive:
+it may retrieve proofs, reconstruct balances, and prepare state for relay and
+mint verification. Live Safebox Web use exposed page routes that paid this cost
+while needing only recovery material, a snapshot, or records, leading to worker
+occupation and gateway timeouts.
+
+Before a pilot:
+
+- inventory and classify every `load_data()` caller;
+- provide narrow metadata, snapshot, catalog, exact-record, history, funds,
+  verification, and mutation boundaries;
+- keep `load_data()` as a documented complete-load compatibility path;
+- assert in tests that narrow reads do not load proofs or contact a mint;
+- log duration by non-secret operation scope; and
+- retain relay-backed state rather than introducing a local authoritative
+  wallet journal.
+
+The design and triggering incidents are recorded in
+[Acorn Load Boundaries and Relay-Backed Read Models](LOAD-BOUNDARIES-AND-READ-MODELS.md).
+
 ### Error contracts
 
 Public methods currently use a mixture of exceptions, strings, tuples,

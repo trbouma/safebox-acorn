@@ -140,6 +140,15 @@ Acorn owns:
 - reserved encrypted records used by the component itself;
 - relay query/publish helpers needed by the component.
 
+Relay-backed state does not require every caller to reconstruct every state
+domain. Acorn is evolving from one all-purpose `load_data()` boundary toward
+purpose-specific metadata, snapshot, record, funds, verification, and mutation
+boundaries. The full load remains appropriate for funds operations; it should
+not be an incidental prerequisite for recovery display, record navigation, or
+other bounded reads. The rationale, triggering incidents, migration plan, and
+source-of-truth constraints are documented in
+[Acorn Load Boundaries and Relay-Backed Read Models](LOAD-BOUNDARIES-AND-READ-MODELS.md).
+
 ### Encrypted records
 
 Acorn owns:
