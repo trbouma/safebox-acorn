@@ -276,12 +276,19 @@ async def test_invoice_payment_prepares_durable_nut08_change(monkeypatch):
         ),
     )
 
-    result = await wallet.pay_multi_invoice("lnbc-test", comment="invoice test")
+    result = await wallet.pay_multi_invoice(
+        "lnbc-test",
+        comment="invoice test",
+        tendered_amount=0.03,
+        tendered_currency="CAD",
+    )
 
     pending_entry = wallet._upsert_pending_melt.await_args.args[0]
     assert pending_entry["change_outputs"] == [
         {"id": "keyset", "secret": "secret", "r": "factor", "Y": "03y"}
     ]
+    assert pending_entry["tendered_amount"] == 0.03
+    assert pending_entry["tendered_currency"] == "CAD"
     assert result[0].startswith("Paid 21 sats")
 
 

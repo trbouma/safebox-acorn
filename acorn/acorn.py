@@ -5041,6 +5041,8 @@ class Acorn:
         direct: bool = False,
         expiration: int | None = None,
         payment_mode: str = "confirmed",
+        tendered_amount: float | None = None,
+        tendered_currency: str = "SAT",
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted relay event.
 
@@ -5067,9 +5069,19 @@ class Acorn:
         if payment_mode not in {"confirmed", "continuity"}:
             raise ValueError("payment_mode must be 'confirmed' or 'continuity'")
         if payment_mode == "continuity":
-            token = await self.issue_continuity_token(int(amount), comment=comment)
+            token = await self.issue_continuity_token(
+                int(amount),
+                comment=comment,
+                tendered_amount=tendered_amount,
+                tendered_currency=tendered_currency,
+            )
         else:
-            token = await self.issue_token(int(amount), comment=comment)
+            token = await self.issue_token(
+                int(amount),
+                comment=comment,
+                tendered_amount=tendered_amount,
+                tendered_currency=tendered_currency,
+            )
         token_mint = str(TokenV4.deserialize(token).mint)
 
         payload = {
@@ -13312,6 +13324,8 @@ class Acorn:
         self,
         amount: int,
         comment: str = "provisional continuity payment",
+        tendered_amount: float | None = None,
+        tendered_currency: str = "SAT",
     ) -> str:
         """Issue an exact in-kind token without contacting a Cashu mint."""
 
@@ -13395,6 +13409,10 @@ class Acorn:
                 tx_type="D",
                 amount=amount,
                 comment=f"provisional continuity payment: {comment}",
+                tendered_amount=(
+                    amount if tendered_amount is None else tendered_amount
+                ),
+                tendered_currency=tendered_currency,
             )
         except Exception as exc:
             self.logger.warning(
@@ -13404,7 +13422,13 @@ class Acorn:
             )
         return token_serialized
 
-    async def issue_token(self, amount:int, comment:str = "ecash withdrawal"):
+    async def issue_token(
+        self,
+        amount: int,
+        comment: str = "ecash withdrawal",
+        tendered_amount: float | None = None,
+        tendered_currency: str = "SAT",
+    ):
 
         lock_acquired = False
         token_serialized = None
@@ -13580,8 +13604,10 @@ class Acorn:
                 tx_type='D',
                 amount=amount,
                 comment=comment,
-                tendered_amount=amount,
-                tendered_currency="SAT",
+                tendered_amount=(
+                    amount if tendered_amount is None else tendered_amount
+                ),
+                tendered_currency=tendered_currency,
                 fees=mint_input_fee,
             )
         except Exception as exc:
