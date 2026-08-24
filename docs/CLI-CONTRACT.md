@@ -233,6 +233,10 @@ acorn reconcile-payments --json
 ```
 
 `PAID` removes the submitted proofs and writes idempotent transaction history.
+An HTTP 4xx melt rejection is reported with the mint's original status and
+response body because no ambiguous Lightning submission occurred. Fee-aware
+payment preparation includes both the preparatory swap input fee and the input
+fee charged on the final melt proofs.
 `UNPAID` retains the post-swap proofs. `PENDING`, an unknown state, or an
 unreachable mint keeps the recovery journal and blocks another spend.
 

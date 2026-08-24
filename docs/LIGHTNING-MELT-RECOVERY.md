@@ -18,7 +18,7 @@ After a melt request has been submitted:
 no response != payment failure
 ```
 
-Acorn submits a particular melt exactly once. A timeout, disconnect, HTTP
+Acorn submits a particular melt exactly once. A timeout, disconnect, server
 error, or `PENDING` response is followed only by:
 
 ```http
@@ -26,6 +26,32 @@ GET /v1/melt/quote/bolt11/{quote}
 ```
 
 The original melt `POST` is not repeated.
+
+A mint HTTP 4xx response is a definitive request rejection, not an ambiguous
+Lightning outcome. Acorn reports its status and response body and does not
+misclassify an unchanged `UNPAID` quote as a Lightning routing failure.
+
+## Fee-aware melt inputs
+
+A fee-charging mint can apply two distinct NUT-02 input fees during payment:
+
+1. the fee charged when wallet proofs are swapped into payment and change
+   proofs; and
+2. the fee charged when the newly created payment proofs become inputs to the
+   final melt.
+
+The melt quote's Lightning `fee_reserve` does not include the second fee.
+Acorn therefore prepares melt inputs sufficient for:
+
+```text
+invoice amount + Lightning fee reserve + melt proof-input fee
+```
+
+The melt proof-input fee depends on how many binary-denomination proofs
+represent that total. Acorn calculates the smallest proof total whose value
+after `input_fee_ppk` covers the invoice and Lightning reserve. This preserves
+compatibility with zero-fee mints while preventing fee-charging mints from
+rejecting an otherwise valid melt as underfunded.
 
 ## Durable ordering
 
@@ -106,10 +132,11 @@ Deterministic unit tests cover:
 - a timed-out melt that later becomes `PAID`;
 - a melt that remains `PENDING` through the recovery window;
 - a definitive `UNPAID` response;
+- a definitive HTTP 400 rejection whose mint response remains visible;
+- nonzero `input_fee_ppk` melt totals, including denomination boundaries;
 - restart recovery of a `PAID` melt;
 - restart recovery of an `UNPAID` melt.
 
 The tests assert that the melt `POST` occurs at most once. Live Lightning tests
 remain opt-in because they spend sats and depend on external mint and Lightning
 infrastructure.
-

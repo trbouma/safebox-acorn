@@ -348,7 +348,10 @@ The wallet's total balance can span multiple mints and keysets. An ordinary
 Lightning melt is currently constrained to one keyset, so the total balance is
 not necessarily available for one Lightning payment. `acorn balance` reports
 the largest mint-mapped keyset as the pre-fee Lightning capacity. The exact
-payable amount can be lower after the selected mint quotes its fee reserve.
+payable amount can be lower after the selected mint quotes its fee reserve and
+Acorn applies the mint's advertised proof-input fees. Payment preparation
+accounts separately for the swap input fee and the fee on the resulting melt
+inputs; neither fee is treated as Lightning routing liquidity.
 
 Gift wrapping reduces straightforward sender-recipient correlation. It does
 not provide complete traffic-analysis resistance.

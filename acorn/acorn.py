@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Sequence, Union
 import asyncio, json, requests
 from time import sleep, time, monotonic
 import secrets
@@ -8186,6 +8186,55 @@ class Acorn:
             return 0
         return math.ceil((int(input_fee_ppk) * int(input_count)) / 1000)
 
+    def _melt_amount_with_input_fee(
+        self,
+        base_amount: int,
+        input_fee_ppk: int,
+    ) -> tuple[int, int]:
+        """Return the smallest proof total that covers a melt and its input fee.
+
+        Melt inputs are freshly swapped into binary denominations. Because the
+        mint charges ``input_fee_ppk`` for each proof submitted to ``/melt``,
+        the fee depends on the number of proofs needed to represent the total.
+        Search upward for the first amount whose net value covers the invoice
+        plus the Lightning fee reserve.
+        """
+
+        required_net = int(base_amount)
+        if required_net < 0:
+            raise ValueError("melt amount must not be negative")
+        input_fee_ppk = max(0, int(input_fee_ppk))
+        candidate = required_net
+        while True:
+            proof_count = len(self.powers_of_2_sum(candidate))
+            input_fee = self._input_fee_sats(input_fee_ppk, proof_count)
+            if candidate - input_fee >= required_net:
+                return candidate, input_fee
+            candidate += 1
+
+    def _select_proofs_for_net_amount(
+        self,
+        proofs: Sequence[Proof],
+        net_amount: int,
+        input_fee_ppk: int,
+    ) -> tuple[List[Proof], List[Proof], int]:
+        """Select proofs whose value after their swap input fee covers an amount."""
+
+        available = list(proofs)
+        selected: List[Proof] = []
+        selected_amount = 0
+        while True:
+            input_fee = self._input_fee_sats(input_fee_ppk, len(selected))
+            if selected_amount - input_fee >= int(net_amount):
+                return selected, available, input_fee
+            if not available:
+                raise ValueError(
+                    f"proofs cannot cover {net_amount} sats after mint input fees"
+                )
+            proof = available.pop()
+            selected.append(proof)
+            selected_amount += int(proof.amount)
+
     async def _keyset_input_fee_ppk(self, keyset_id: str) -> int:
         """Return the mint-advertised input fee for a wallet keyset."""
 
@@ -8254,6 +8303,8 @@ class Acorn:
         receive_amount: int,
         source_available: int,
         full_amount: bool,
+        input_fee_ppk: int = 0,
+        source_proofs: Sequence[Proof] | None = None,
     ) -> dict:
         candidate = int(receive_amount)
         if candidate <= 0:
@@ -8266,11 +8317,32 @@ class Acorn:
                 destination_quote.invoice,
             )
             source_fee = int(source_melt_quote.fee_reserve)
-            source_debit = candidate + source_fee
+            source_melt_total, melt_input_fee = self._melt_amount_with_input_fee(
+                candidate + source_fee,
+                input_fee_ppk,
+            )
+            source_debit = source_melt_total
+            source_swap_input_fee = 0
+            if source_proofs is not None:
+                try:
+                    _selected, _remaining, source_swap_input_fee = (
+                        self._select_proofs_for_net_amount(
+                            source_proofs,
+                            source_melt_total,
+                            input_fee_ppk,
+                        )
+                    )
+                except ValueError:
+                    source_debit = source_available + 1
+                else:
+                    source_debit += source_swap_input_fee
             if source_debit <= source_available:
                 return {
                     "receive_amount": candidate,
                     "source_fee_reserve": source_fee,
+                    "source_melt_input_fee": melt_input_fee,
+                    "source_swap_input_fee": source_swap_input_fee,
+                    "source_melt_total": source_melt_total,
                     "source_debit": source_debit,
                     "destination_quote": destination_quote,
                     "source_melt_quote": source_melt_quote,
@@ -8281,8 +8353,8 @@ class Acorn:
                     f"{source_debit} sats are required to transfer {candidate} "
                     f"sats with fee reserve {source_fee}"
                 )
-            next_candidate = source_available - source_fee
-            candidate = next_candidate if next_candidate < candidate else candidate - 1
+            deficit = max(1, source_debit - source_available)
+            candidate -= deficit
 
         raise ValueError("source mint balance is too small to cover Lightning fees")
 
@@ -8318,23 +8390,28 @@ class Acorn:
             source_keyset = source_keysets[0]
             source_available = int(source_keyset["amount"])
             receive_amount = source_available if full_amount else int(amount)
+            input_fee_ppk = await self._keyset_input_fee_ppk(
+                source_keyset["keyset"]
+            )
             prepared = await self._prepare_mint_transfer_quotes(
                 source_mint=source_mint,
                 destination_mint=destination_mint,
                 receive_amount=receive_amount,
                 source_available=source_available,
                 full_amount=full_amount,
+                input_fee_ppk=input_fee_ppk,
+                source_proofs=source_keyset["proofs"],
             )
 
-            amount_needed = int(prepared["source_debit"])
+            amount_needed = int(prepared["source_melt_total"])
             keyset_proofs, _keyset_amounts = self._proofs_by_keyset()
-            proofs_from_keyset = list(keyset_proofs[source_keyset["keyset"]])
-            proofs_to_use = []
-            proof_amount = 0
-            while proof_amount < amount_needed:
-                pay_proof = proofs_from_keyset.pop()
-                proofs_to_use.append(pay_proof)
-                proof_amount += int(pay_proof.amount)
+            proofs_to_use, proofs_from_keyset, source_swap_input_fee = (
+                self._select_proofs_for_net_amount(
+                    keyset_proofs[source_keyset["keyset"]],
+                    amount_needed,
+                    input_fee_ppk,
+                )
+            )
 
             proofs_remaining = await self.swap_for_payment_multi(
                 source_keyset["keyset"],
@@ -8384,7 +8461,11 @@ class Acorn:
                 "keyset": source_keyset["keyset"],
                 "spend_ys": [self._canonical_proof_y(each) for each in spend_proofs],
                 "amount": int(prepared["receive_amount"]),
-                "fee_reserve": int(prepared["source_fee_reserve"]),
+                "fee_reserve": int(
+                    prepared["source_debit"] - prepared["receive_amount"]
+                ),
+                "mint_input_fee": int(prepared["source_melt_input_fee"]),
+                "swap_input_fee": int(source_swap_input_fee),
                 "comment": comment,
                 "tendered_amount": None,
                 "tendered_currency": "SAT",
@@ -8398,14 +8479,18 @@ class Acorn:
             }
             await self._upsert_pending_melt(pending_entry)
 
-            outcome = await self._resolve_melt_submission(
-                melt_url=melt_url,
-                mint=source_mint,
-                quote=source_melt_quote.quote,
-                request_payload=melt_payload,
-                headers={"Content-Type": "application/json"},
-                timeout=httpx.Timeout(30.0, connect=5.0),
-            )
+            try:
+                outcome = await self._resolve_melt_submission(
+                    melt_url=melt_url,
+                    mint=source_mint,
+                    quote=source_melt_quote.quote,
+                    request_payload=melt_payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=httpx.Timeout(30.0, connect=5.0),
+                )
+            except PaymentFailedError:
+                await self._remove_pending_melt(source_melt_quote.quote)
+                raise
             if outcome["state"] == "UNPAID":
                 await self._remove_pending_melt(source_melt_quote.quote)
                 raise PaymentFailedError(
@@ -9989,6 +10074,19 @@ class Acorn:
             state = self._melt_state(payload)
             if state in {"PAID", "UNPAID"}:
                 return {"state": state, "payload": payload, "source": "melt-response"}
+        except httpx.HTTPStatusError as exc:
+            status_code = exc.response.status_code
+            if 400 <= status_code < 500:
+                response_text = exc.response.text.strip()
+                try:
+                    response_text = json.dumps(exc.response.json())
+                except Exception:
+                    pass
+                raise PaymentFailedError(
+                    "Melt rejected before Lightning submission: "
+                    f"HTTP {status_code}: {response_text or '<empty body>'}"
+                ) from exc
+            post_error = exc
         except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
             post_error = exc
 
@@ -10344,8 +10442,19 @@ class Acorn:
                     # print("mint response:", post_melt_response)
                     proofs_to_use = []
                     proof_amount = 0
-                    amount_needed = amount + post_melt_response.fee_reserve
-                    self.logger.debug(f"amount needed: {amount_needed}")
+                    input_fee_ppk = await self._keyset_input_fee_ppk(chosen_keyset)
+                    amount_needed, melt_input_fee = self._melt_amount_with_input_fee(
+                        amount + int(post_melt_response.fee_reserve),
+                        input_fee_ppk,
+                    )
+                    self.logger.debug(
+                        "op=pay_multi status=amount_needed amount=%s "
+                        "lightning_fee_reserve=%s mint_input_fee=%s total=%s",
+                        amount,
+                        post_melt_response.fee_reserve,
+                        melt_input_fee,
+                        amount_needed,
+                    )
                     if amount_needed > keyset_amounts[chosen_keyset]:
                         self.logger.warning("op=pay_multi status=single_keyset_insufficient_switching")
                         chosen_keyset = None
@@ -10378,6 +10487,16 @@ class Acorn:
                             response.raise_for_status()
                         # print("post melt response:", response.json())
                         post_melt_response = PostMeltQuoteResponse(**response.json())
+                        input_fee_ppk = await self._keyset_input_fee_ppk(chosen_keyset)
+                        amount_needed, melt_input_fee = self._melt_amount_with_input_fee(
+                            amount + int(post_melt_response.fee_reserve),
+                            input_fee_ppk,
+                        )
+                        if amount_needed > keyset_amounts[chosen_keyset]:
+                            raise ValueError(
+                                "you don't have a sufficient balance in one keyset "
+                                "after Lightning and mint input fees"
+                            )
                         # print("mint response:", post_melt_response)
                         
                         
@@ -10391,14 +10510,13 @@ class Acorn:
                     self.logger.debug("---we have a sufficient mint balance---")
                     
                     # This is the part that needs to be added in multi
-                    proofs_to_use = []
-                    proof_amount = 0
-                    proofs_from_keyset = list(keyset_proofs[chosen_keyset])
-                    while proof_amount < amount_needed:
-                        pay_proof = proofs_from_keyset.pop()
-                        proofs_to_use.append(pay_proof)
-                        proof_amount += pay_proof.amount
-                        # print("pop", pay_proof.amount)
+                    proofs_to_use, proofs_from_keyset, swap_input_fee = (
+                        self._select_proofs_for_net_amount(
+                            keyset_proofs[chosen_keyset],
+                            amount_needed,
+                            input_fee_ppk,
+                        )
+                    )
                         
 
                     
@@ -10474,7 +10592,11 @@ class Acorn:
                             for each in spend_proofs
                         ],
                         "amount": int(amount),
-                        "fee_reserve": int(amount_needed - amount),
+                        "fee_reserve": int(
+                            amount_needed - amount + swap_input_fee
+                        ),
+                        "mint_input_fee": int(melt_input_fee),
+                        "swap_input_fee": int(swap_input_fee),
                         "lnaddress": lnaddress,
                         "comment": comment,
                         "tendered_amount": tendered_amount,
@@ -10485,14 +10607,18 @@ class Acorn:
                     await self._upsert_pending_melt(pending_entry)
 
                     melt_attempted = True
-                    outcome = await self._resolve_melt_submission(
-                        melt_url=melt_url,
-                        mint=self.known_mints[chosen_keyset],
-                        quote=post_melt_response.quote,
-                        request_payload=data_to_send,
-                        headers=headers,
-                        timeout=timeout,
-                    )
+                    try:
+                        outcome = await self._resolve_melt_submission(
+                            melt_url=melt_url,
+                            mint=self.known_mints[chosen_keyset],
+                            quote=post_melt_response.quote,
+                            request_payload=data_to_send,
+                            headers=headers,
+                            timeout=timeout,
+                        )
+                    except PaymentFailedError:
+                        await self._remove_pending_melt(post_melt_response.quote)
+                        raise
                     if outcome["state"] == "UNPAID":
                         await self._remove_pending_melt(post_melt_response.quote)
                         raise PaymentFailedError(
@@ -10505,7 +10631,7 @@ class Acorn:
                         pending_entry,
                         outcome["payload"],
                     )
-                    final_fees = amount_needed - amount
+                    final_fees = amount_needed - amount + swap_input_fee
                     msg_out = (
                         f"Payment of {amount} sats with fee {final_fees} sats "
                         f"to {lnaddress} successful!"
@@ -10519,7 +10645,7 @@ class Acorn:
                 
                 
                 
-                final_fees = amount_needed - amount
+                final_fees = amount_needed - amount + swap_input_fee
                 msg_out = f"Payment of {amount} sats with fee {final_fees} sats to {lnaddress} successful!"
                 self.logger.info("op=pay_multi status=complete amount=%s fees=%s", amount, final_fees)
                 await self.write_proofs()
@@ -10738,8 +10864,19 @@ class Acorn:
             )
             proofs_to_use = []
             proof_amount = 0
-            amount_needed = ln_amount + post_melt_response.fee_reserve
-            self.logger.debug(f"amount needed: {amount_needed}")
+            input_fee_ppk = await self._keyset_input_fee_ppk(chosen_keyset)
+            amount_needed, melt_input_fee = self._melt_amount_with_input_fee(
+                ln_amount + int(post_melt_response.fee_reserve),
+                input_fee_ppk,
+            )
+            self.logger.debug(
+                "op=pay_multi_invoice status=amount_needed amount=%s "
+                "lightning_fee_reserve=%s mint_input_fee=%s total=%s",
+                ln_amount,
+                post_melt_response.fee_reserve,
+                melt_input_fee,
+                amount_needed,
+            )
             #FIXME There is something wrong with the logic here for chosen keysets
             # This is paying via invoice not lnadress so need to fix 1775
             if amount_needed > keyset_amounts[chosen_keyset]:
@@ -10773,6 +10910,16 @@ class Acorn:
                     if response.is_error:
                         raise _mint_error_with_body("melt quote request", response)
                 post_melt_response = PostMeltQuoteResponse(**response.json())
+                input_fee_ppk = await self._keyset_input_fee_ppk(chosen_keyset)
+                amount_needed, melt_input_fee = self._melt_amount_with_input_fee(
+                    ln_amount + int(post_melt_response.fee_reserve),
+                    input_fee_ppk,
+                )
+                if amount_needed > keyset_amounts[chosen_keyset]:
+                    raise ValueError(
+                        "you don't have a sufficient balance in one keyset "
+                        "after Lightning and mint input fees"
+                    )
                 self.logger.debug(
                     "op=pay_multi_invoice status=alternate_quote_received fee_reserve=%s",
                     post_melt_response.fee_reserve,
@@ -10786,14 +10933,13 @@ class Acorn:
         
             self.logger.debug("---we have a sufficient mint---")
             self.logger.debug("op=pay_multi_invoice status=mint_ready fee_reserve=%s", post_melt_response.fee_reserve)
-            proofs_to_use = []
-            proof_amount = 0
-            proofs_from_keyset = list(keyset_proofs[chosen_keyset])
-            while proof_amount < amount_needed:
-                pay_proof = proofs_from_keyset.pop()
-                proofs_to_use.append(pay_proof)
-                proof_amount += pay_proof.amount
-                self.logger.debug(f"pop {pay_proof.amount}")
+            proofs_to_use, proofs_from_keyset, swap_input_fee = (
+                self._select_proofs_for_net_amount(
+                    keyset_proofs[chosen_keyset],
+                    amount_needed,
+                    input_fee_ppk,
+                )
+            )
                 
             self.logger.debug(
                 "op=pay_multi_invoice status=input_selection selected=%s selected_amount=%s remaining=%s",
@@ -10854,7 +11000,11 @@ class Acorn:
                     for each in spend_proofs
                 ],
                 "amount": int(ln_amount),
-                "fee_reserve": int(amount_needed - ln_amount),
+                "fee_reserve": int(
+                    amount_needed - ln_amount + swap_input_fee
+                ),
+                "mint_input_fee": int(melt_input_fee),
+                "swap_input_fee": int(swap_input_fee),
                 "comment": comment,
                 "tendered_amount": tendered_amount,
                 "tendered_currency": tendered_currency,
@@ -10866,14 +11016,18 @@ class Acorn:
             await self._upsert_pending_melt(pending_entry)
 
             melt_attempted = True
-            outcome = await self._resolve_melt_submission(
-                melt_url=melt_url,
-                mint=self.known_mints[chosen_keyset],
-                quote=post_melt_response.quote,
-                request_payload=data_to_send,
-                headers=headers,
-                timeout=timeout,
-            )
+            try:
+                outcome = await self._resolve_melt_submission(
+                    melt_url=melt_url,
+                    mint=self.known_mints[chosen_keyset],
+                    quote=post_melt_response.quote,
+                    request_payload=data_to_send,
+                    headers=headers,
+                    timeout=timeout,
+                )
+            except PaymentFailedError:
+                await self._remove_pending_melt(post_melt_response.quote)
+                raise
             if outcome["state"] == "UNPAID":
                 await self._remove_pending_melt(post_melt_response.quote)
                 raise PaymentFailedError(
@@ -10884,7 +11038,7 @@ class Acorn:
 
             await self._finalize_paid_melt(pending_entry, outcome["payload"])
             payment_preimage = outcome["payload"].get("payment_preimage")
-            final_fees = amount_needed - ln_amount
+            final_fees = amount_needed - ln_amount + swap_input_fee
             msg_out = f"Paid {ln_amount} sats with fees {final_fees} sats successful!"
             self.logger.info(
                     "op=pay_multi_invoice status=complete source=%s",

@@ -236,3 +236,34 @@ async def test_prepare_mint_transfer_full_amount_reduces_for_source_fee():
     assert result["source_fee_reserve"] == 2
     assert result["source_debit"] == 10
     assert result["destination_quote"].quote == "dest-8"
+
+
+@pytest.mark.asyncio
+async def test_prepare_mint_transfer_reserves_melt_input_fee():
+    wallet = wallet_with_key()
+    requested_amounts = []
+
+    def fake_deposit(amount, mint):
+        requested_amounts.append(amount)
+        return SimpleNamespace(quote=f"dest-{amount}", invoice=f"invoice-{amount}")
+
+    async def fake_melt_quote(mint, invoice):
+        return SimpleNamespace(quote=f"source-{invoice}", fee_reserve=2)
+
+    wallet.deposit = fake_deposit
+    wallet._request_melt_quote_for_invoice = fake_melt_quote
+
+    result = await wallet._prepare_mint_transfer_quotes(
+        source_mint="https://mint.source",
+        destination_mint="https://mint.dest",
+        receive_amount=10,
+        source_available=10,
+        full_amount=True,
+        input_fee_ppk=100,
+    )
+
+    assert requested_amounts == [10, 7]
+    assert result["receive_amount"] == 7
+    assert result["source_fee_reserve"] == 2
+    assert result["source_melt_input_fee"] == 1
+    assert result["source_debit"] == 10

@@ -7,6 +7,7 @@ import pytest
 
 from acorn.acorn import (
     Acorn,
+    PaymentFailedError,
     PaymentFinalizationError,
     PaymentOutcomeUnknownError,
 )
@@ -41,6 +42,8 @@ class MeltClient:
         type(self).post_calls += 1
         if isinstance(type(self).post_result, Exception):
             raise type(self).post_result
+        if isinstance(type(self).post_result, httpx.Response):
+            return type(self).post_result
         return MeltResponse(type(self).post_result)
 
 
@@ -49,6 +52,62 @@ def bare_wallet(proofs=None):
     wallet.proofs = list(proofs or [])
     wallet.balance = sum(each.amount for each in wallet.proofs)
     return wallet
+
+
+@pytest.mark.parametrize(
+    ("base_amount", "input_fee_ppk", "expected_total", "expected_fee"),
+    [
+        (21, 0, 21, 0),
+        (21, 100, 22, 1),
+        (31, 100, 32, 1),
+        (6, 1000, 8, 1),
+    ],
+)
+def test_melt_amount_includes_fee_for_generated_input_proofs(
+    base_amount,
+    input_fee_ppk,
+    expected_total,
+    expected_fee,
+):
+    wallet = bare_wallet()
+
+    assert wallet._melt_amount_with_input_fee(
+        base_amount,
+        input_fee_ppk,
+    ) == (expected_total, expected_fee)
+
+
+def test_select_proofs_covers_preparatory_swap_input_fee():
+    wallet = bare_wallet()
+    proofs = [
+        Proof(id="keyset", amount=1, secret="one", C="c1"),
+        Proof(id="keyset", amount=2, secret="two", C="c2"),
+        Proof(id="keyset", amount=4, secret="four", C="c4"),
+        Proof(id="keyset", amount=16, secret="sixteen", C="c16"),
+    ]
+
+    selected, remaining, input_fee = wallet._select_proofs_for_net_amount(
+        proofs,
+        21,
+        100,
+    )
+
+    assert sum(proof.amount for proof in selected) == 22
+    assert [proof.amount for proof in remaining] == [1]
+    assert input_fee == 1
+    assert sum(proof.amount for proof in selected) - input_fee >= 21
+
+
+def test_select_proofs_rejects_exact_balance_consumed_by_fee():
+    wallet = bare_wallet()
+    proofs = [
+        Proof(id="keyset", amount=1, secret="one", C="c1"),
+        Proof(id="keyset", amount=4, secret="four", C="c4"),
+        Proof(id="keyset", amount=16, secret="sixteen", C="c16"),
+    ]
+
+    with pytest.raises(ValueError, match="after mint input fees"):
+        wallet._select_proofs_for_net_amount(proofs, 21, 100)
 
 
 @pytest.mark.asyncio
@@ -129,6 +188,43 @@ async def test_definitive_unpaid_response_does_not_query_or_retry(monkeypatch):
     )
 
     assert result["state"] == "UNPAID"
+    assert MeltClient.post_calls == 1
+    wallet._query_melt_quote.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_melt_http_400_preserves_rejection_body(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = bare_wallet()
+    MeltClient.post_calls = 0
+    MeltClient.post_result = httpx.Response(
+        400,
+        request=httpx.Request(
+            "POST",
+            "https://mint.example/v1/melt/bolt11",
+        ),
+        json={
+            "detail": "not enough inputs provided for melt. Provided: 21, needed: 22",
+            "code": 11000,
+        },
+    )
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", MeltClient)
+    wallet._query_melt_quote = AsyncMock()
+
+    with pytest.raises(
+        PaymentFailedError,
+        match=r"Melt rejected before Lightning submission: HTTP 400:.*needed: 22",
+    ):
+        await wallet._resolve_melt_submission(
+            melt_url="https://mint.example/v1/melt/bolt11",
+            mint="https://mint.example",
+            quote="quote-rejected",
+            request_payload={"quote": "quote-rejected", "inputs": []},
+            headers={"Content-Type": "application/json"},
+            timeout=httpx.Timeout(1),
+        )
+
     assert MeltClient.post_calls == 1
     wallet._query_melt_quote.assert_not_awaited()
 
