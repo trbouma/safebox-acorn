@@ -298,15 +298,30 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
 )
 
 
-class PaymentOutcomeUnknownError(RuntimeError):
+class PaymentProcessingError(RuntimeError):
+    """Payment error carrying only fees known to have been consumed."""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        fees: Any = 0,
+        history_recorded: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.fees = fees
+        self.history_recorded = bool(history_recorded)
+
+
+class PaymentOutcomeUnknownError(PaymentProcessingError):
     """The mint may have paid, so retrying the payment is unsafe."""
 
 
-class PaymentFinalizationError(RuntimeError):
+class PaymentFinalizationError(PaymentProcessingError):
     """The mint paid, but local/relay wallet finalization is incomplete."""
 
 
-class PaymentFailedError(RuntimeError):
+class PaymentFailedError(PaymentProcessingError):
     """The mint definitively reports that the payment was not paid."""
 
 
@@ -319,11 +334,17 @@ class PaymentFees(int):
         *,
         mint_fees: int,
         lightning_fee_reserve: int,
+        lightning_fee: int | None = None,
+        lightning_fee_return: int = 0,
     ):
         value = int(total)
         instance = super().__new__(cls, value)
         instance.mint_fees = int(mint_fees)
         instance.lightning_fee_reserve = int(lightning_fee_reserve)
+        instance.lightning_fee = int(
+            lightning_fee_reserve if lightning_fee is None else lightning_fee
+        )
+        instance.lightning_fee_return = int(lightning_fee_return)
         return instance
 
 
@@ -8234,17 +8255,206 @@ class Acorn:
         *,
         mint_fees: int,
         lightning_fee_reserve: int,
+        lightning_fee: int | None = None,
+        lightning_fee_return: int = 0,
     ) -> str:
-        return "\n".join(
-            [
-                "Fee breakdown:",
-                f"- Mint fees: {int(mint_fees)} sats",
-                (
-                    "- Lightning fee reserve: "
-                    f"{int(lightning_fee_reserve)} sats"
-                ),
-            ]
+        actual_lightning_fee = int(
+            lightning_fee_reserve
+            if lightning_fee is None
+            else lightning_fee
         )
+        lines = [
+            "Fee breakdown:",
+            f"- Mint fees: {int(mint_fees)} sats",
+            f"- Lightning fee: {actual_lightning_fee} sats",
+        ]
+        if int(lightning_fee_reserve) or int(lightning_fee_return):
+            lines.extend(
+                [
+                    (
+                        "- Lightning fee reserve: "
+                        f"{int(lightning_fee_reserve)} sats"
+                    ),
+                    (
+                        "- Lightning fee returned: "
+                        f"{int(lightning_fee_return)} sats"
+                    ),
+                ]
+            )
+        return "\n".join(lines)
+
+    @staticmethod
+    def _melt_blank_output_count(fee_reserve: int) -> int:
+        """Return the number of NUT-08 outputs needed for a fee reserve."""
+
+        reserve = int(fee_reserve)
+        if reserve < 0:
+            raise ValueError("Lightning fee reserve cannot be negative")
+        if reserve == 0:
+            return 0
+        return max(math.ceil(math.log2(reserve)), 1)
+
+    @classmethod
+    def _prepare_melt_change_outputs(
+        cls,
+        *,
+        keyset: str,
+        fee_reserve: int,
+    ) -> tuple[List[dict], List[dict]]:
+        """Create NUT-08 blank outputs and durable unblinding material."""
+
+        outputs: List[dict] = []
+        recovery: List[dict] = []
+        for _ in range(cls._melt_blank_output_count(fee_reserve)):
+            secret = secrets.token_hex(32)
+            blinded_point, blinding_factor, y_point = step1_alice(secret)
+            outputs.append(
+                BlindedMessage(
+                    amount=1,
+                    id=str(keyset),
+                    B_=blinded_point.serialize().hex(),
+                ).model_dump(exclude={"Y"})
+            )
+            recovery.append(
+                {
+                    "id": str(keyset),
+                    "secret": secret,
+                    "r": blinding_factor.private_key.hex(),
+                    "Y": y_point.serialize().hex(),
+                }
+            )
+        return outputs, recovery
+
+    async def _mint_supports_nut08(
+        self,
+        mint: str,
+        *,
+        timeout: httpx.Timeout | None = None,
+    ) -> bool:
+        """Return whether the mint explicitly advertises NUT-08 support."""
+
+        info_url = f"{normalize_mint_url(mint)}/v1/info"
+        try:
+            async with httpx.AsyncClient(
+                timeout=timeout or httpx.Timeout(10.0, connect=5.0)
+            ) as client:
+                response = await client.get(info_url)
+                response.raise_for_status()
+                payload = response.json()
+        except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            self.logger.warning(
+                "op=nut08 status=info_unavailable mint=%s error=%s",
+                normalize_mint_url(mint),
+                _exception_detail(exc),
+            )
+            return False
+        nuts = payload.get("nuts") if isinstance(payload, dict) else None
+        setting = nuts.get("8") if isinstance(nuts, dict) else None
+        return isinstance(setting, dict) and setting.get("supported") is True
+
+    async def _unblind_melt_change(
+        self,
+        entry: dict,
+        payload: dict,
+    ) -> List[Proof]:
+        """Recover NUT-08 change proofs from a terminal melt response."""
+
+        raw_change = payload.get("change") if isinstance(payload, dict) else None
+        if not raw_change:
+            return []
+        if not isinstance(raw_change, list):
+            raise PaymentFinalizationError(
+                "Mint returned malformed Lightning fee change. Do not retry; "
+                "restart Acorn to resume finalization."
+            )
+        recovery = entry.get("change_outputs")
+        if not isinstance(recovery, list) or len(raw_change) > len(recovery):
+            raise PaymentFinalizationError(
+                "Mint returned Lightning fee change without sufficient recovery "
+                "material. Do not retry the payment."
+            )
+
+        mint = normalize_mint_url(str(entry["mint"]))
+        keys_by_keyset: dict[str, dict] = {}
+        proofs: List[Proof] = []
+        timeout = httpx.Timeout(20.0, connect=5.0)
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                for index, signature in enumerate(raw_change):
+                    if not isinstance(signature, dict):
+                        raise TypeError("change signature was not a JSON object")
+                    material = recovery[index]
+                    keyset = str(signature.get("id") or material.get("id") or "")
+                    if not keyset or keyset != str(material.get("id") or ""):
+                        raise ValueError("change signature keyset did not match its output")
+                    amount = int(signature["amount"])
+                    if amount <= 0:
+                        raise ValueError("change signature amount must be positive")
+
+                    if keyset not in keys_by_keyset:
+                        response = await client.get(f"{mint}/v1/keys/{keyset}")
+                        response.raise_for_status()
+                        keysets = response.json().get("keysets") or []
+                        selected = next(
+                            (
+                                candidate
+                                for candidate in keysets
+                                if str(candidate.get("id") or "") == keyset
+                            ),
+                            keysets[0] if len(keysets) == 1 else None,
+                        )
+                        if not isinstance(selected, dict):
+                            raise ValueError("mint did not return the change keyset")
+                        keys_by_keyset[keyset] = selected.get("keys") or {}
+
+                    serialized_key = keys_by_keyset[keyset].get(str(amount))
+                    if not serialized_key:
+                        raise ValueError(
+                            f"mint did not return a key for change amount {amount}"
+                        )
+                    blinded_signature = PublicKey()
+                    blinded_signature.deserialize(unhexlify(signature["C_"]))
+                    mint_key = PublicKey()
+                    mint_key.deserialize(unhexlify(serialized_key))
+                    blinding_factor = PrivateKey(
+                        privkey=bytes.fromhex(str(material["r"])),
+                        raw=True,
+                    )
+                    secret = str(material["secret"])
+                    y_point = hash_to_curve(secret.encode("utf-8"))
+                    if y_point.serialize().hex() != str(material.get("Y") or ""):
+                        raise ValueError("change recovery secret does not match its Y")
+                    signature_point = step3_alice(
+                        blinded_signature,
+                        blinding_factor,
+                        mint_key,
+                    )
+                    proofs.append(
+                        Proof(
+                            amount=amount,
+                            id=keyset,
+                            secret=secret,
+                            C=signature_point.serialize().hex(),
+                            Y=y_point.serialize().hex(),
+                        )
+                    )
+        except PaymentFinalizationError:
+            raise
+        except Exception as exc:
+            raise PaymentFinalizationError(
+                "Mint confirmed the Lightning payment, but fee change could not "
+                "be recovered. Do not retry; restart Acorn to resume "
+                f"finalization. Error: {_exception_detail(exc)}"
+            ) from exc
+
+        reserve = int(entry.get("lightning_fee_reserve") or 0)
+        returned = sum(proof.amount for proof in proofs)
+        if returned > reserve:
+            raise PaymentFinalizationError(
+                "Mint returned more Lightning fee change than was reserved. "
+                "Do not retry the payment."
+            )
+        return proofs
 
     def _select_proofs_for_net_amount(
         self,
@@ -10152,7 +10362,7 @@ class Acorn:
             f"record and will query the mint again. Last result: {detail}"
         )
 
-    async def _finalize_paid_melt(self, entry: dict, payload: dict) -> None:
+    async def _finalize_paid_melt(self, entry: dict, payload: dict) -> dict:
         quote = str(entry["quote"])
         spend_ys = {str(each) for each in entry.get("spend_ys", [])}
         retained: List[Proof] = []
@@ -10163,6 +10373,32 @@ class Acorn:
             cached_y = str(proof.Y or "")
             if canonical_y not in spend_ys and cached_y not in spend_ys:
                 retained.append(proof)
+
+        change_proofs = await self._unblind_melt_change(entry, payload)
+        retained_keys = {(str(each.id), str(each.secret)) for each in retained}
+        for proof in change_proofs:
+            proof_key = (str(proof.id), str(proof.secret))
+            if proof_key not in retained_keys:
+                retained.append(proof)
+                retained_keys.add(proof_key)
+
+        mint_fees = int(entry.get("mint_input_fee") or 0) + int(
+            entry.get("swap_input_fee") or 0
+        )
+        if "lightning_fee_reserve" in entry:
+            lightning_fee_reserve = int(entry.get("lightning_fee_reserve") or 0)
+            reserved_total_fees = mint_fees + lightning_fee_reserve
+        else:
+            # Pending records written before NUT-08 stored the combined fee
+            # reserve under this historical field.
+            reserved_total_fees = int(entry.get("fee_reserve") or 0)
+            lightning_fee_reserve = max(0, reserved_total_fees - mint_fees)
+        lightning_fee_return = sum(each.amount for each in change_proofs)
+        lightning_fee = max(0, lightning_fee_reserve - lightning_fee_return)
+        actual_total_fees = max(
+            0,
+            reserved_total_fees - lightning_fee_return,
+        )
 
         self.proofs = retained
         self.balance = sum(each.amount for each in retained)
@@ -10193,7 +10429,7 @@ class Acorn:
                     comment=str(entry.get("comment") or ""),
                     tendered_amount=entry.get("tendered_amount"),
                     tendered_currency=str(entry.get("tendered_currency") or "SAT"),
-                    fees=int(entry.get("fee_reserve") or 0),
+                    fees=actual_total_fees,
                     invoice=entry.get("invoice"),
                     payment_preimage=payload.get("payment_preimage"),
                     payment_hash=entry.get("payment_hash"),
@@ -10207,6 +10443,79 @@ class Acorn:
                 ) from exc
 
         await self._remove_pending_melt(quote)
+        return {
+            "total_fees": actual_total_fees,
+            "mint_fees": mint_fees,
+            "lightning_fee_reserve": lightning_fee_reserve,
+            "lightning_fee_return": lightning_fee_return,
+            "lightning_fee": lightning_fee,
+            "change_amount": lightning_fee_return,
+        }
+
+    @staticmethod
+    def _failed_melt_fees(entry: dict) -> PaymentFees:
+        """Return only fees known to survive a definitively unpaid melt."""
+
+        mint_fees = max(0, int(entry.get("swap_input_fee") or 0))
+        lightning_fee_reserve = max(
+            0,
+            int(entry.get("lightning_fee_reserve") or 0),
+        )
+        return PaymentFees(
+            mint_fees,
+            mint_fees=mint_fees,
+            lightning_fee_reserve=lightning_fee_reserve,
+            lightning_fee=0,
+            lightning_fee_return=lightning_fee_reserve,
+        )
+
+    async def _finalize_unpaid_melt(self, entry: dict, reason: str) -> PaymentFees:
+        """Record a terminal failure and release its pending-melt journal row."""
+
+        quote = str(entry["quote"])
+        fees = self._failed_melt_fees(entry)
+        history_marker = f"cashu-melt-failed:{quote}"
+        try:
+            history = await self.get_tx_history()
+        except Exception as exc:
+            raise PaymentFinalizationError(
+                f"Mint confirmed that Lightning payment quote {quote} was not "
+                "paid, but transaction history could not be read back. Do not "
+                "retry until reconciliation completes.",
+                fees=fees,
+            ) from exc
+        if not any(each.get("description_hash") == history_marker for each in history):
+            original_comment = str(entry.get("comment") or "").strip()
+            comment = "Funds transfer failed"
+            if original_comment:
+                comment += f": {original_comment}"
+            comment += f". {reason} No payment value was transferred."
+            if int(fees):
+                comment += (
+                    f" The preparatory proof swap consumed {int(fees)} sats "
+                    "in mint fees."
+                )
+            try:
+                await self.add_tx_history(
+                    tx_type="X",
+                    amount=int(entry.get("amount") or 0),
+                    comment=comment,
+                    tendered_amount=entry.get("tendered_amount"),
+                    tendered_currency=str(entry.get("tendered_currency") or "SAT"),
+                    fees=int(fees),
+                    payment_hash=entry.get("payment_hash"),
+                    description_hash=history_marker,
+                )
+            except Exception as exc:
+                raise PaymentFinalizationError(
+                    f"Mint confirmed that Lightning payment quote {quote} was "
+                    "not paid, but the failure could not be written to transaction "
+                    "history. Do not retry until reconciliation completes.",
+                    fees=fees,
+                ) from exc
+
+        await self._remove_pending_melt(quote)
+        return fees
 
     async def reconcile_pending_melts(self) -> dict:
         """
@@ -10245,7 +10554,10 @@ class Acorn:
                 await self._finalize_paid_melt(entry, payload)
                 result["paid"] += 1
             elif state == "UNPAID":
-                await self._remove_pending_melt(quote)
+                await self._finalize_unpaid_melt(
+                    entry,
+                    "The mint confirmed that the Lightning payment was unpaid.",
+                )
                 result["unpaid"] += 1
             else:
                 result["unresolved"] += 1
@@ -10602,6 +10914,20 @@ class Acorn:
 
                     data_to_send = {"quote": post_melt_response.quote,
                                 "inputs": melt_proofs }
+                    change_outputs: List[dict] = []
+                    change_recovery: List[dict] = []
+                    if await self._mint_supports_nut08(
+                        self.known_mints[chosen_keyset],
+                        timeout=timeout,
+                    ):
+                        change_outputs, change_recovery = (
+                            self._prepare_melt_change_outputs(
+                                keyset=chosen_keyset,
+                                fee_reserve=int(post_melt_response.fee_reserve),
+                            )
+                        )
+                        if change_outputs:
+                            data_to_send["outputs"] = change_outputs
                     self.logger.debug("op=pay_multi status=checkpoint_before_melt amount=%s", amount)
 
                     # Persist all post-swap proofs before submitting the melt.
@@ -10629,8 +10955,12 @@ class Acorn:
                         "fee_reserve": int(
                             amount_needed - amount + swap_input_fee
                         ),
+                        "lightning_fee_reserve": int(
+                            post_melt_response.fee_reserve
+                        ),
                         "mint_input_fee": int(melt_input_fee),
                         "swap_input_fee": int(swap_input_fee),
+                        "change_outputs": change_recovery,
                         "lnaddress": lnaddress,
                         "comment": comment,
                         "tendered_amount": tendered_amount,
@@ -10650,38 +10980,53 @@ class Acorn:
                             headers=headers,
                             timeout=timeout,
                         )
-                    except PaymentFailedError:
-                        await self._remove_pending_melt(post_melt_response.quote)
-                        raise
+                    except PaymentFailedError as exc:
+                        failure_fees = await self._finalize_unpaid_melt(
+                            pending_entry,
+                            "The mint rejected the melt before submitting a Lightning payment.",
+                        )
+                        raise PaymentFailedError(
+                            str(exc),
+                            fees=failure_fees,
+                            history_recorded=True,
+                        ) from exc
+                    except PaymentOutcomeUnknownError as exc:
+                        raise PaymentOutcomeUnknownError(
+                            str(exc),
+                            fees=self._failed_melt_fees(pending_entry),
+                        ) from exc
                     if outcome["state"] == "UNPAID":
-                        await self._remove_pending_melt(post_melt_response.quote)
+                        failure_fees = await self._finalize_unpaid_melt(
+                            pending_entry,
+                            "The mint confirmed that the Lightning payment was unpaid.",
+                        )
                         raise PaymentFailedError(
                             f"Lightning payment to {lnaddress} of {amount} sats "
                             "was not paid. The mint reports UNPAID; the "
-                            "post-swap proofs remain in the wallet."
+                            "post-swap proofs remain in the wallet.",
+                            fees=failure_fees,
+                            history_recorded=True,
                         )
 
-                    await self._finalize_paid_melt(
+                    fee_result = await self._finalize_paid_melt(
                         pending_entry,
                         outcome["payload"],
                     )
-                    final_fees = amount_needed - amount + swap_input_fee
-                    mint_fees = melt_input_fee + swap_input_fee
                     final_fees = PaymentFees(
-                        final_fees,
-                        mint_fees=mint_fees,
-                        lightning_fee_reserve=int(
-                            post_melt_response.fee_reserve
-                        ),
+                        fee_result["total_fees"],
+                        mint_fees=fee_result["mint_fees"],
+                        lightning_fee_reserve=fee_result["lightning_fee_reserve"],
+                        lightning_fee=fee_result["lightning_fee"],
+                        lightning_fee_return=fee_result["lightning_fee_return"],
                     )
                     msg_out = (
                         f"Payment of {amount} sats with fee {final_fees} sats "
                         f"to {lnaddress} successful!\n"
                         + self._format_lightning_fee_breakdown(
-                            mint_fees=mint_fees,
-                            lightning_fee_reserve=int(
-                                post_melt_response.fee_reserve
-                            ),
+                            mint_fees=fee_result["mint_fees"],
+                            lightning_fee_reserve=fee_result["lightning_fee_reserve"],
+                            lightning_fee=fee_result["lightning_fee"],
+                            lightning_fee_return=fee_result["lightning_fee_return"],
                         )
                     )
                     self.logger.info(
@@ -10785,6 +11130,20 @@ class Acorn:
 
             data_to_send = {"quote": post_melt_response.quote,
                         "inputs": melt_proofs }
+            change_outputs: List[dict] = []
+            change_recovery: List[dict] = []
+            if await self._mint_supports_nut08(
+                self.known_mints[chosen_keyset],
+                timeout=timeout,
+            ):
+                change_outputs, change_recovery = (
+                    self._prepare_melt_change_outputs(
+                        keyset=chosen_keyset,
+                        fee_reserve=int(post_melt_response.fee_reserve),
+                    )
+                )
+                if change_outputs:
+                    data_to_send["outputs"] = change_outputs
             
         
             
@@ -11051,8 +11410,10 @@ class Acorn:
                 "fee_reserve": int(
                     amount_needed - ln_amount + swap_input_fee
                 ),
+                "lightning_fee_reserve": int(post_melt_response.fee_reserve),
                 "mint_input_fee": int(melt_input_fee),
                 "swap_input_fee": int(swap_input_fee),
+                "change_outputs": change_recovery,
                 "comment": comment,
                 "tendered_amount": tendered_amount,
                 "tendered_currency": tendered_currency,
@@ -11073,31 +11434,53 @@ class Acorn:
                     headers=headers,
                     timeout=timeout,
                 )
-            except PaymentFailedError:
-                await self._remove_pending_melt(post_melt_response.quote)
-                raise
+            except PaymentFailedError as exc:
+                failure_fees = await self._finalize_unpaid_melt(
+                    pending_entry,
+                    "The mint rejected the melt before submitting a Lightning payment.",
+                )
+                raise PaymentFailedError(
+                    str(exc),
+                    fees=failure_fees,
+                    history_recorded=True,
+                ) from exc
+            except PaymentOutcomeUnknownError as exc:
+                raise PaymentOutcomeUnknownError(
+                    str(exc),
+                    fees=self._failed_melt_fees(pending_entry),
+                ) from exc
             if outcome["state"] == "UNPAID":
-                await self._remove_pending_melt(post_melt_response.quote)
+                failure_fees = await self._finalize_unpaid_melt(
+                    pending_entry,
+                    "The mint confirmed that the Lightning payment was unpaid.",
+                )
                 raise PaymentFailedError(
                     f"Lightning invoice payment of {ln_amount} sats was not "
                     "paid. The mint reports UNPAID; the post-swap proofs "
-                    "remain in the wallet."
+                    "remain in the wallet.",
+                    fees=failure_fees,
+                    history_recorded=True,
                 )
 
-            await self._finalize_paid_melt(pending_entry, outcome["payload"])
+            fee_result = await self._finalize_paid_melt(
+                pending_entry,
+                outcome["payload"],
+            )
             payment_preimage = outcome["payload"].get("payment_preimage")
-            final_fees = amount_needed - ln_amount + swap_input_fee
-            mint_fees = melt_input_fee + swap_input_fee
             final_fees = PaymentFees(
-                final_fees,
-                mint_fees=mint_fees,
-                lightning_fee_reserve=int(post_melt_response.fee_reserve),
+                fee_result["total_fees"],
+                mint_fees=fee_result["mint_fees"],
+                lightning_fee_reserve=fee_result["lightning_fee_reserve"],
+                lightning_fee=fee_result["lightning_fee"],
+                lightning_fee_return=fee_result["lightning_fee_return"],
             )
             msg_out = (
                 f"Paid {ln_amount} sats with fees {final_fees} sats successful!\n"
                 + self._format_lightning_fee_breakdown(
-                    mint_fees=mint_fees,
-                    lightning_fee_reserve=int(post_melt_response.fee_reserve),
+                    mint_fees=fee_result["mint_fees"],
+                    lightning_fee_reserve=fee_result["lightning_fee_reserve"],
+                    lightning_fee=fee_result["lightning_fee"],
+                    lightning_fee_return=fee_result["lightning_fee_return"],
                 )
             )
             self.logger.info(

@@ -370,6 +370,15 @@ the existing mint quote after interruption, and blocks another payment while a
 previous melt remains unresolved. This reduces duplicate-payment risk but
 cannot make an inconsistent or unavailable mint authoritative response appear.
 
+When a mint advertises NUT-08, the encrypted pending-melt record also contains
+the one-time secrets and blinding factors required to recover unused Lightning
+fee reserve as change proofs. Acorn verifies relay readback before submitting
+the melt and deletes this material after finalization. Anyone who compromises
+the Acorn key can decrypt this recovery state while it exists, so the home
+relay, application execution environment, and key remain inside the payment
+security boundary. The mint remains authoritative for the amount of change it
+returns.
+
 ### Future Lightning-address gateway
 
 The proposed Lightning-address gateway is not currently an implemented Acorn
@@ -561,7 +570,7 @@ formal audited severity score.
 | Legacy hash-to-curve proofs | Historical Acorn clients derived proof points differently from mandatory Cashu NUT-00. NUT-07 can report the standard `Y` as unspent while redemption still fails, so a state check alone can overstate spendable value. | Use the NUT-00 domain-separated algorithm and reference vectors; classify cached proof identifiers; report incompatible value separately; refuse payment, swap, refresh, repair, and pruning; preserve relay state and require mint-operator migration. |
 | Partial proof swap | A mint swap consumes bearer inputs before all later inputs or keysets have completed. A process or network failure can strand replacement proofs if they exist only in memory. | Publish and verify each successful replacement batch immediately; retain source events until all replacements are durable; inject later-step failures in tests; keep automatic maintenance disabled. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
-| Lightning ambiguity | Network or mint timeouts can leave payment outcome uncertain. | Persist pending melts and reconcile by quote ID; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
+| Lightning ambiguity and fee return | Network or mint timeouts can leave payment outcome uncertain. A lost NUT-08 response can also strand unused fee reserve unless its blank-output secrets survive. | Persist pending melts and encrypted NUT-08 recovery material on relays before submission; reconcile by quote ID; unblind returned change; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
 | Gateway registration control | A replayed, weakly bound, or improperly recovered registration could redirect a Lightning address to an attacker's key, relay, or mint policy. | Treat the gateway as future work; require short-lived single-use challenges, exact NIP-98 URL/method/body/public-key binding, versioned updates, explicit revocation, and old-key-authorized rotation. |
 | Gateway funds in transit | After Lightning settles, a future gateway temporarily controls value until the recipient accepts ecash or receives a valid refund. Provider failure, insolvency, or dishonest accounting can lose or delay funds. | Do not describe the bridge as trustless or non-custodial; use bounded amounts, explicit fees and mint policy, durable accounting, reconciliation, operational reserves, and an unclaimed-payment/refund policy before pilot use. |
 | Gateway bearer-token outbox | A gateway must retain an issued bearer token while delivery is pending. Theft permits spending; loss can strand settled value; a retry can issue value twice. | Encrypt the outbox at rest, restrict credentials and access, key every payment by Lightning payment hash, persist the exact serialized event for retry, inject failures at every transition, and never issue again merely because publication was ambiguous. |

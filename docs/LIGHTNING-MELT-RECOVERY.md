@@ -53,6 +53,25 @@ after `input_fee_ppk` covers the invoice and Lightning reserve. This preserves
 compatibility with zero-fee mints while preventing fee-charging mints from
 rejecting an otherwise valid melt as underfunded.
 
+## Returning unused Lightning reserve
+
+When a mint advertises NUT-08, Acorn does not treat the quoted Lightning fee
+reserve as the final routing fee. It creates the required blank blinded
+outputs, includes them in the melt request, and unblinds any `change` returned
+by the mint after payment. Those recovered proofs are restored to the wallet.
+
+The resulting accounting is:
+
+```text
+actual Lightning fee = quoted fee reserve - returned change
+actual total fee = mint input fees + actual Lightning fee
+```
+
+If the mint does not advertise NUT-08, the conservative outcome remains in
+effect: no fee change can be requested, so the full reserve may be retained by
+the mint. Acorn reports the reserve separately from mint fees so this remains
+visible rather than presenting it as a measured route fee.
+
 ## Durable ordering
 
 For a single-mint Lightning payment, Acorn performs these operations:
@@ -67,7 +86,11 @@ For a single-mint Lightning payment, Acorn performs these operations:
 
 The journal is a parameterized replaceable private record. It stores the quote,
 mint, keyset, submitted proof `Y` values, amount, fee reserve, invoice, and
-transaction-history context. It does not store proof secrets.
+transaction-history context. When NUT-08 is used, it also stores the randomly
+generated secrets and blinding factors needed to recover the returned change.
+This material is inside the same encrypted private record and is written and
+verified on the relay before the melt is submitted. It is removed with the
+journal after terminal finalization.
 
 Persisting the post-swap proofs before submission means a restarted Acorn can
 identify and remove the submitted proofs after a confirmed payment, or retain
@@ -77,8 +100,8 @@ them after a confirmed failure.
 
 | Mint state | Acorn action |
 | --- | --- |
-| `PAID` | Remove submitted proofs, persist the remaining proofs, write debit history, and remove the journal entry. |
-| `UNPAID` | Keep the post-swap proofs and remove the journal entry. |
+| `PAID` | Remove submitted proofs, recover and persist any NUT-08 fee-change proofs, write debit history using the actual fee, and remove the journal entry. |
+| `UNPAID` | Keep the post-swap proofs, write an idempotent error entry to transaction history, record any preparatory swap fee that was actually consumed, and remove the journal entry. |
 | `PENDING` | Keep the journal and refuse another spend until rechecked. |
 | `UNKNOWN` or unreachable | Keep the journal and refuse another spend until rechecked. |
 
@@ -136,6 +159,23 @@ Deterministic unit tests cover:
 - nonzero `input_fee_ppk` melt totals, including denomination boundaries;
 - restart recovery of a `PAID` melt;
 - restart recovery of an `UNPAID` melt.
+
+## Failure history and fee truthfulness
+
+A failed payment is not necessarily a zero-cost attempt. Preparing exact melt
+inputs can require a proof swap, and that swap may consume the keyset's
+`input_fee_ppk` even when the Lightning melt is later rejected or confirmed
+`UNPAID`. Acorn therefore writes a kind `7377` advisory (`tx_type="X"`) for a
+terminal failure. It records the requested amount as context, the current
+post-attempt balance, and only the preparatory swap fee known to have been
+consumed. The payment value, final melt-input fee, and Lightning fee reserve
+are not reported as spent when the mint confirms `UNPAID`.
+
+The failure marker is keyed by melt quote, making reconciliation idempotent
+after a restart. An unknown or pending outcome remains in the encrypted
+pending-melt journal and must not be labelled as a confirmed failure. An
+application may add a separate review advisory, but eventual `PAID` or
+`UNPAID` reconciliation remains authoritative.
 
 The tests assert that the melt `POST` occurs at most once. Live Lightning tests
 remain opt-in because they spend sats and depend on external mint and Lightning

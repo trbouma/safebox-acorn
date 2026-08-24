@@ -237,17 +237,23 @@ An HTTP 4xx melt rejection is reported with the mint's original status and
 response body because no ambiguous Lightning submission occurred. Fee-aware
 payment preparation includes both the preparatory swap input fee and the input
 fee charged on the final melt proofs.
-`UNPAID` retains the post-swap proofs. `PENDING`, an unknown state, or an
+`UNPAID` retains the post-swap proofs and writes an idempotent transaction
+history error entry. If payment preparation consumed a proof-swap input fee,
+that known mint fee is recorded even though no payment value or Lightning fee
+was spent. `PENDING`, an unknown state, or an
 unreachable mint keeps the recovery journal and blocks another spend.
 
-On confirmed success, `acorn pay` reports the total fee and separates it into
-mint fees and the Lightning fee reserve returned by the melt quote. Mint fees
-combine the input fee for the preparatory swap and the input fee for the final
-melt. The Lightning value is labelled as a reserve because the quote does not
-necessarily expose the eventual routing fee as a separate final field.
+On confirmed success, `acorn pay` reports the total fee and separates mint
+fees from the actual Lightning fee. Mint fees combine the input fee for the
+preparatory swap and the input fee for the final melt. When the mint advertises
+NUT-08, Acorn also displays the quoted Lightning reserve and the amount returned
+as freshly unblinded change proofs. If NUT-08 is unavailable, the reported
+Lightning fee remains equal to the reserve because the wallet has no protocol
+mechanism to reclaim the unused portion.
 The numeric fee value returned by the Python payment methods remains compatible
-with `int` while exposing `mint_fees` and `lightning_fee_reserve` attributes for
-applications that want to present the same breakdown without parsing text.
+with `int` while exposing `mint_fees`, `lightning_fee`,
+`lightning_fee_reserve`, and `lightning_fee_return` attributes for applications
+that want to present the same breakdown without parsing text.
 
 See [Lightning Melt Recovery](LIGHTNING-MELT-RECOVERY.md) for the state model
 and durable ordering.

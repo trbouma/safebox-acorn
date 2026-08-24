@@ -59,13 +59,19 @@ Acorn now:
 - applies the same accounting to Lightning-address payments, direct invoices,
   and mint-to-mint transfers;
 - reports the combined fee actually borne by the wallet and gives CLI users a
-  breakdown of mint fees and the Lightning fee reserve; and
+  breakdown of mint fees and the Lightning fee reserve;
+- uses NUT-08 blank outputs when advertised by the mint, restores unused
+  reserve as proofs, and reports the actual Lightning fee separately; and
 - treats an HTTP 4xx melt response as a definitive pre-submission rejection,
   preserving the mint's response instead of replacing it with a misleading
   `UNPAID` result from the unchanged quote.
 
 Ambiguous transport failures and server errors still require quote-state
 reconciliation. A definitive request rejection does not.
+
+The NUT-08 recovery material is persisted in the encrypted relay-backed melt
+journal before submission. This means a timeout or restart does not forfeit a
+fee refund merely because the immediate melt response was lost.
 
 ## Live evidence
 

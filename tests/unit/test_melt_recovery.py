@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from unittest.mock import AsyncMock
+from binascii import unhexlify
 
 import httpx
 import pytest
@@ -13,6 +14,8 @@ from acorn.acorn import (
     PaymentOutcomeUnknownError,
 )
 from acorn.models import Proof
+from acorn.b_dhke import step2_bob, verify
+from acorn.secp import PrivateKey, PublicKey
 
 
 class MeltResponse:
@@ -46,6 +49,22 @@ class MeltClient:
         if isinstance(type(self).post_result, httpx.Response):
             return type(self).post_result
         return MeltResponse(type(self).post_result)
+
+
+class ChangeClient:
+    key_payload = None
+
+    def __init__(self, *args, **kwargs):
+        pass
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc, traceback):
+        return False
+
+    async def get(self, url):
+        return MeltResponse(type(self).key_payload)
 
 
 def bare_wallet(proofs=None):
@@ -116,11 +135,15 @@ def test_lightning_fee_breakdown_separates_mint_and_lightning_fees():
 
     assert wallet._format_lightning_fee_breakdown(
         mint_fees=2,
-        lightning_fee_reserve=1,
+        lightning_fee_reserve=10,
+        lightning_fee=1,
+        lightning_fee_return=9,
     ) == (
         "Fee breakdown:\n"
         "- Mint fees: 2 sats\n"
-        "- Lightning fee reserve: 1 sats"
+        "- Lightning fee: 1 sats\n"
+        "- Lightning fee reserve: 10 sats\n"
+        "- Lightning fee returned: 9 sats"
     )
 
 
@@ -128,14 +151,106 @@ def test_payment_fees_remain_numeric_with_structured_breakdown():
     fees = PaymentFees(
         3,
         mint_fees=2,
-        lightning_fee_reserve=1,
+        lightning_fee_reserve=10,
+        lightning_fee=1,
+        lightning_fee_return=9,
     )
 
     assert isinstance(fees, int)
     assert fees == 3
     assert fees + 2 == 5
     assert fees.mint_fees == 2
-    assert fees.lightning_fee_reserve == 1
+    assert fees.lightning_fee_reserve == 10
+    assert fees.lightning_fee == 1
+    assert fees.lightning_fee_return == 9
+
+
+@pytest.mark.parametrize(
+    ("fee_reserve", "expected"),
+    [(0, 0), (1, 1), (2, 1), (3, 2), (10, 4), (1000, 10)],
+)
+def test_nut08_blank_output_count(fee_reserve, expected):
+    assert Acorn._melt_blank_output_count(fee_reserve) == expected
+
+
+def test_nut08_change_material_is_durable_and_outputs_hide_secrets():
+    outputs, recovery = Acorn._prepare_melt_change_outputs(
+        keyset="keyset",
+        fee_reserve=10,
+    )
+
+    assert len(outputs) == 4
+    assert len(recovery) == 4
+    assert all(output["amount"] == 1 for output in outputs)
+    assert all(output["id"] == "keyset" for output in outputs)
+    assert all("secret" not in output and "r" not in output for output in outputs)
+    assert all(len(item["secret"]) == 64 for item in recovery)
+    assert all(len(item["r"]) == 64 for item in recovery)
+
+
+@pytest.mark.asyncio
+async def test_nut08_change_is_unblinded_into_a_valid_proof(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    outputs, recovery = Acorn._prepare_melt_change_outputs(
+        keyset="keyset",
+        fee_reserve=2,
+    )
+    mint_private_key = PrivateKey()
+    blinded_message = PublicKey()
+    blinded_message.deserialize(unhexlify(outputs[0]["B_"]))
+    blinded_signature, _e, _s = step2_bob(
+        blinded_message,
+        mint_private_key,
+    )
+    ChangeClient.key_payload = {
+        "keysets": [
+            {
+                "id": "keyset",
+                "keys": {"2": mint_private_key.pubkey.serialize().hex()},
+            }
+        ]
+    }
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", ChangeClient)
+    wallet = bare_wallet()
+
+    proofs = await wallet._unblind_melt_change(
+        {
+            "mint": "https://mint.example",
+            "lightning_fee_reserve": 2,
+            "change_outputs": recovery,
+        },
+        {
+            "change": [
+                {
+                    "id": "keyset",
+                    "amount": 2,
+                    "C_": blinded_signature.serialize().hex(),
+                }
+            ]
+        },
+    )
+
+    assert len(proofs) == 1
+    assert proofs[0].amount == 2
+    assert proofs[0].secret == recovery[0]["secret"]
+    signature = PublicKey()
+    signature.deserialize(unhexlify(proofs[0].C))
+    assert verify(mint_private_key, signature, proofs[0].secret)
+
+
+@pytest.mark.asyncio
+async def test_nut08_is_used_only_when_mint_advertises_support(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", ChangeClient)
+    wallet = bare_wallet()
+
+    ChangeClient.key_payload = {"nuts": {"8": {"supported": True}}}
+    assert await wallet._mint_supports_nut08("https://mint.example") is True
+
+    ChangeClient.key_payload = {"nuts": {"8": {"supported": False}}}
+    assert await wallet._mint_supports_nut08("https://mint.example") is False
 
 
 @pytest.mark.asyncio
@@ -313,6 +428,57 @@ async def test_restart_reconciliation_finalizes_paid_melt_once():
 
 
 @pytest.mark.asyncio
+async def test_paid_melt_restores_nut08_change_and_records_actual_fee():
+    spend = Proof(id="keyset", amount=32, secret="spend", C="02a", Y="03spend")
+    keep = Proof(id="keyset", amount=4, secret="keep", C="02b", Y="03keep")
+    change = Proof(id="keyset", amount=9, secret="change", C="02c", Y="03change")
+    wallet = bare_wallet([spend, keep])
+    entry = {
+        "quote": "quote-change",
+        "mint": "https://mint.example",
+        "keyset": "keyset",
+        "spend_ys": ["03spend"],
+        "amount": 21,
+        "fee_reserve": 12,
+        "lightning_fee_reserve": 10,
+        "mint_input_fee": 1,
+        "swap_input_fee": 1,
+        "comment": "change test",
+        "tendered_currency": "SAT",
+    }
+    history = []
+
+    wallet._unblind_melt_change = AsyncMock(return_value=[change])
+    wallet.write_proofs = AsyncMock()
+    wallet.get_tx_history = AsyncMock(return_value=[])
+    wallet.add_tx_history = AsyncMock(
+        side_effect=lambda **kwargs: history.append(kwargs)
+    )
+    wallet._remove_pending_melt = AsyncMock()
+
+    result = await wallet._finalize_paid_melt(
+        entry,
+        {"state": "PAID", "change": [{"amount": 9}]},
+    )
+
+    assert [(proof.secret, proof.amount) for proof in wallet.proofs] == [
+        ("keep", 4),
+        ("change", 9),
+    ]
+    assert wallet.balance == 13
+    assert result == {
+        "total_fees": 3,
+        "mint_fees": 2,
+        "lightning_fee_reserve": 10,
+        "lightning_fee_return": 9,
+        "lightning_fee": 1,
+        "change_amount": 9,
+    }
+    assert history[0]["fees"] == 3
+    wallet._remove_pending_melt.assert_awaited_once_with("quote-change")
+
+
+@pytest.mark.asyncio
 async def test_restart_reconciliation_preserves_proofs_for_unpaid_melt():
     spend = Proof(id="keyset", amount=2, secret="spend", C="02a", Y="03spend")
     wallet = bare_wallet([spend])
@@ -323,6 +489,9 @@ async def test_restart_reconciliation_preserves_proofs_for_unpaid_melt():
             "spend_ys": ["03spend"],
             "amount": 1,
             "fee_reserve": 1,
+            "lightning_fee_reserve": 1,
+            "swap_input_fee": 1,
+            "comment": "unpaid test",
         }
     ]
 
@@ -335,6 +504,8 @@ async def test_restart_reconciliation_preserves_proofs_for_unpaid_melt():
     wallet._load_pending_melts = load_pending
     wallet._save_pending_melts = save_pending
     wallet._query_melt_quote = AsyncMock(return_value={"state": "UNPAID"})
+    wallet.get_tx_history = AsyncMock(return_value=[])
+    wallet.add_tx_history = AsyncMock()
 
     result = await wallet.reconcile_pending_melts()
 
@@ -342,6 +513,29 @@ async def test_restart_reconciliation_preserves_proofs_for_unpaid_melt():
     assert wallet.proofs == [spend]
     assert wallet.balance == 2
     assert journal == []
+    history = wallet.add_tx_history.await_args.kwargs
+    assert history["tx_type"] == "X"
+    assert history["amount"] == 1
+    assert history["fees"] == 1
+    assert history["description_hash"] == "cashu-melt-failed:quote-unpaid"
+    assert "No payment value was transferred" in history["comment"]
+    assert "consumed 1 sats in mint fees" in history["comment"]
+
+
+def test_unpaid_melt_reports_only_consumed_preparatory_swap_fee():
+    fees = Acorn._failed_melt_fees(
+        {
+            "swap_input_fee": 2,
+            "mint_input_fee": 3,
+            "lightning_fee_reserve": 10,
+        }
+    )
+
+    assert fees == 2
+    assert fees.mint_fees == 2
+    assert fees.lightning_fee == 0
+    assert fees.lightning_fee_reserve == 10
+    assert fees.lightning_fee_return == 10
 
 
 @pytest.mark.asyncio

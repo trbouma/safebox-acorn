@@ -263,10 +263,10 @@ Swap input fees required to create exact melt inputs must also be included in
 proof preparation. The planner must not assume that `fee_reserve` includes
 NUT-02 input fees.
 
-The initial implementation may preserve Acorn's existing conservative handling
-of fee reserves. NUT-08 change-output support can later return unused fee
-reserve, but MPP must not report an estimated reserve as an exact fee when the
-mint returns authoritative fee or change information.
+Single-path melts now use NUT-08 change outputs when the mint advertises
+support. The MPP implementation must extend that behavior independently to
+every path and must not report an estimated reserve as an exact fee when a mint
+returns authoritative change information.
 
 ### Plan result
 
