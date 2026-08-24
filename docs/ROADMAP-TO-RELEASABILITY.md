@@ -659,6 +659,19 @@ At least one pilot should exercise:
 - multiple application processes without wallet-state leakage;
 - operator support procedures.
 
+Independent-mint testing has already produced material release evidence. On
+August 24, 2026, a mint with nonzero NUT-02 proof-input fees exposed an Acorn
+payment-planning defect that a zero-fee development mint could not reveal.
+Acorn was corrected to account for both preparatory-swap and final-melt input
+fees, and a live 21-sat payment then completed successfully through the
+fee-charging mint. See the
+[Mint-Fee Interoperability Milestone](MINT-FEE-INTEROPERABILITY-MILESTONE-2026-08-24.md).
+
+This does not complete the independent-mint release gate by itself. The gate
+also requires repeatable capability tests, documented mint identity and
+configuration, failure-path exercises, and results suitable for release
+evidence.
+
 Pilot findings should be classified:
 
 - fund or key safety;

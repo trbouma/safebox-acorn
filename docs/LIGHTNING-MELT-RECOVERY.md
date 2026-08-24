@@ -140,3 +140,7 @@ Deterministic unit tests cover:
 The tests assert that the melt `POST` occurs at most once. Live Lightning tests
 remain opt-in because they spend sats and depend on external mint and Lightning
 infrastructure.
+
+The independent-mint failure that prompted this accounting work and its live
+verification are recorded in the
+[Mint-Fee Interoperability Milestone](MINT-FEE-INTEROPERABILITY-MILESTONE-2026-08-24.md).
