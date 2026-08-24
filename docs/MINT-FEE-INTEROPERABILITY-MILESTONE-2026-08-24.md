@@ -58,7 +58,8 @@ Acorn now:
   number of proofs and therefore the fee calculation;
 - applies the same accounting to Lightning-address payments, direct invoices,
   and mint-to-mint transfers;
-- reports the combined fee actually borne by the wallet; and
+- reports the combined fee actually borne by the wallet and gives CLI users a
+  breakdown of mint fees and the Lightning fee reserve; and
 - treats an HTTP 4xx melt response as a definitive pre-submission rejection,
   preserving the mint's response instead of replacing it with a misleading
   `UNPAID` result from the unchanged quote.

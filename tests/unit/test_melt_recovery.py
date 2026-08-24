@@ -8,6 +8,7 @@ import pytest
 from acorn.acorn import (
     Acorn,
     PaymentFailedError,
+    PaymentFees,
     PaymentFinalizationError,
     PaymentOutcomeUnknownError,
 )
@@ -108,6 +109,33 @@ def test_select_proofs_rejects_exact_balance_consumed_by_fee():
 
     with pytest.raises(ValueError, match="after mint input fees"):
         wallet._select_proofs_for_net_amount(proofs, 21, 100)
+
+
+def test_lightning_fee_breakdown_separates_mint_and_lightning_fees():
+    wallet = bare_wallet()
+
+    assert wallet._format_lightning_fee_breakdown(
+        mint_fees=2,
+        lightning_fee_reserve=1,
+    ) == (
+        "Fee breakdown:\n"
+        "- Mint fees: 2 sats\n"
+        "- Lightning fee reserve: 1 sats"
+    )
+
+
+def test_payment_fees_remain_numeric_with_structured_breakdown():
+    fees = PaymentFees(
+        3,
+        mint_fees=2,
+        lightning_fee_reserve=1,
+    )
+
+    assert isinstance(fees, int)
+    assert fees == 3
+    assert fees + 2 == 5
+    assert fees.mint_fees == 2
+    assert fees.lightning_fee_reserve == 1
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ __all__ = [
     "AmbiguousSwapError",
     "BitcoinCapabilityError",
     "OptionalDependencyError",
+    "PaymentFees",
     "broadcast_silent_payment_sweep",
     "create_silent_payment_sweep_preview",
     "derive_nostr_silent_payment_address",
@@ -36,7 +37,12 @@ class OptionalDependencyError(RuntimeError):
 
 
 def __getattr__(name):
-    if name in {"Acorn", "AmbiguousSwapError", "RetryablePreSwapError"}:
+    if name in {
+        "Acorn",
+        "AmbiguousSwapError",
+        "PaymentFees",
+        "RetryablePreSwapError",
+    }:
         from acorn import acorn
 
         return getattr(acorn, name)

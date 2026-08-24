@@ -310,6 +310,23 @@ class PaymentFailedError(RuntimeError):
     """The mint definitively reports that the payment was not paid."""
 
 
+class PaymentFees(int):
+    """Numeric total fees with a structured Lightning payment breakdown."""
+
+    def __new__(
+        cls,
+        total: int,
+        *,
+        mint_fees: int,
+        lightning_fee_reserve: int,
+    ):
+        value = int(total)
+        instance = super().__new__(cls, value)
+        instance.mint_fees = int(mint_fees)
+        instance.lightning_fee_reserve = int(lightning_fee_reserve)
+        return instance
+
+
 class RetryablePreSwapError(RuntimeError):
     """A transient failure occurred before a mint swap was submitted."""
 
@@ -8212,6 +8229,23 @@ class Acorn:
                 return candidate, input_fee
             candidate += 1
 
+    @staticmethod
+    def _format_lightning_fee_breakdown(
+        *,
+        mint_fees: int,
+        lightning_fee_reserve: int,
+    ) -> str:
+        return "\n".join(
+            [
+                "Fee breakdown:",
+                f"- Mint fees: {int(mint_fees)} sats",
+                (
+                    "- Lightning fee reserve: "
+                    f"{int(lightning_fee_reserve)} sats"
+                ),
+            ]
+        )
+
     def _select_proofs_for_net_amount(
         self,
         proofs: Sequence[Proof],
@@ -10632,9 +10666,23 @@ class Acorn:
                         outcome["payload"],
                     )
                     final_fees = amount_needed - amount + swap_input_fee
+                    mint_fees = melt_input_fee + swap_input_fee
+                    final_fees = PaymentFees(
+                        final_fees,
+                        mint_fees=mint_fees,
+                        lightning_fee_reserve=int(
+                            post_melt_response.fee_reserve
+                        ),
+                    )
                     msg_out = (
                         f"Payment of {amount} sats with fee {final_fees} sats "
-                        f"to {lnaddress} successful!"
+                        f"to {lnaddress} successful!\n"
+                        + self._format_lightning_fee_breakdown(
+                            mint_fees=mint_fees,
+                            lightning_fee_reserve=int(
+                                post_melt_response.fee_reserve
+                            ),
+                        )
                     )
                     self.logger.info(
                         "op=pay_multi status=complete amount=%s source=%s",
@@ -11039,7 +11087,19 @@ class Acorn:
             await self._finalize_paid_melt(pending_entry, outcome["payload"])
             payment_preimage = outcome["payload"].get("payment_preimage")
             final_fees = amount_needed - ln_amount + swap_input_fee
-            msg_out = f"Paid {ln_amount} sats with fees {final_fees} sats successful!"
+            mint_fees = melt_input_fee + swap_input_fee
+            final_fees = PaymentFees(
+                final_fees,
+                mint_fees=mint_fees,
+                lightning_fee_reserve=int(post_melt_response.fee_reserve),
+            )
+            msg_out = (
+                f"Paid {ln_amount} sats with fees {final_fees} sats successful!\n"
+                + self._format_lightning_fee_breakdown(
+                    mint_fees=mint_fees,
+                    lightning_fee_reserve=int(post_melt_response.fee_reserve),
+                )
+            )
             self.logger.info(
                     "op=pay_multi_invoice status=complete source=%s",
                     outcome["source"],

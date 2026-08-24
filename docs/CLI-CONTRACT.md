@@ -240,6 +240,15 @@ fee charged on the final melt proofs.
 `UNPAID` retains the post-swap proofs. `PENDING`, an unknown state, or an
 unreachable mint keeps the recovery journal and blocks another spend.
 
+On confirmed success, `acorn pay` reports the total fee and separates it into
+mint fees and the Lightning fee reserve returned by the melt quote. Mint fees
+combine the input fee for the preparatory swap and the input fee for the final
+melt. The Lightning value is labelled as a reserve because the quote does not
+necessarily expose the eventual routing fee as a separate final field.
+The numeric fee value returned by the Python payment methods remains compatible
+with `int` while exposing `mint_fees` and `lightning_fee_reserve` attributes for
+applications that want to present the same breakdown without parsing text.
+
 See [Lightning Melt Recovery](LIGHTNING-MELT-RECOVERY.md) for the state model
 and durable ordering.
 
