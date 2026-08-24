@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from binascii import unhexlify
 
@@ -186,6 +188,101 @@ def test_nut08_change_material_is_durable_and_outputs_hide_secrets():
     assert all("secret" not in output and "r" not in output for output in outputs)
     assert all(len(item["secret"]) == 64 for item in recovery)
     assert all(len(item["r"]) == 64 for item in recovery)
+
+
+@pytest.mark.asyncio
+async def test_invoice_payment_prepares_durable_nut08_change(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    class QuoteResponse:
+        is_error = False
+
+        def json(self):
+            return {
+                "quote": "invoice-quote",
+                "amount": 21,
+                "fee_reserve": 2,
+                "state": "UNPAID",
+                "expiry": None,
+            }
+
+    class QuoteClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def post(self, **kwargs):
+            return QuoteResponse()
+
+    wallet = bare_wallet(
+        [Proof(id="keyset", amount=32, secret="source", C="02source", Y="03source")]
+    )
+    wallet.known_mints = {"keyset": "https://mint.example"}
+    wallet.logger = logging.getLogger("invoice-change-test")
+    wallet.acquire_lock = AsyncMock()
+    wallet.release_lock = AsyncMock()
+    wallet._reconcile_spent_proofs_locked = AsyncMock()
+    wallet._require_resolved_pending_melts = AsyncMock()
+    wallet._keyset_input_fee_ppk = AsyncMock(return_value=0)
+    wallet.swap_for_payment_multi = AsyncMock(
+        return_value=[
+            Proof(id="keyset", amount=16, secret="a", C="02a", Y="03a"),
+            Proof(id="keyset", amount=4, secret="b", C="02b", Y="03b"),
+            Proof(id="keyset", amount=2, secret="c", C="02c", Y="03c"),
+            Proof(id="keyset", amount=1, secret="d", C="02d", Y="03d"),
+        ]
+    )
+    wallet._mint_supports_nut08 = AsyncMock(return_value=True)
+    wallet._prepare_melt_change_outputs = lambda **kwargs: (
+        [{"amount": 1, "id": "keyset", "B_": "02blind"}],
+        [{"id": "keyset", "secret": "secret", "r": "factor", "Y": "03y"}],
+    )
+    wallet.write_proofs = AsyncMock()
+    wallet._upsert_pending_melt = AsyncMock()
+
+    async def resolve_melt_submission(**kwargs):
+        assert kwargs["request_payload"]["outputs"] == [
+            {"amount": 1, "id": "keyset", "B_": "02blind"}
+        ]
+        return {
+            "state": "PAID",
+            "source": "submission",
+            "payload": {"payment_preimage": "preimage", "change": []},
+        }
+
+    wallet._resolve_melt_submission = resolve_melt_submission
+    wallet._finalize_paid_melt = AsyncMock(
+        return_value={
+            "total_fees": 0,
+            "mint_fees": 0,
+            "lightning_fee_reserve": 2,
+            "lightning_fee": 0,
+            "lightning_fee_return": 2,
+        }
+    )
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", QuoteClient)
+    monkeypatch.setattr(
+        acorn_module.bolt11,
+        "decode",
+        lambda invoice: SimpleNamespace(
+            amount_msat=21_000,
+            payment_hash="payment-hash",
+            description_hash=None,
+        ),
+    )
+
+    result = await wallet.pay_multi_invoice("lnbc-test", comment="invoice test")
+
+    pending_entry = wallet._upsert_pending_melt.await_args.args[0]
+    assert pending_entry["change_outputs"] == [
+        {"id": "keyset", "secret": "secret", "r": "factor", "Y": "03y"}
+    ]
+    assert result[0].startswith("Paid 21 sats")
 
 
 @pytest.mark.asyncio
@@ -518,8 +615,8 @@ async def test_restart_reconciliation_preserves_proofs_for_unpaid_melt():
     assert history["amount"] == 1
     assert history["fees"] == 1
     assert history["description_hash"] == "cashu-melt-failed:quote-unpaid"
-    assert "No payment value was transferred" in history["comment"]
-    assert "consumed 1 sats in mint fees" in history["comment"]
+    assert history["comment"] == "unpaid test"
+    assert history["error_code"] == "payment_failed"
 
 
 def test_unpaid_melt_reports_only_consumed_preparatory_swap_fee():

@@ -680,3 +680,4 @@ class TxHistory(BaseModel):
     preimage: str|None = None
     payment_hash: str|None = None
     description_hash: str|None=None
+    error_code: str|None = None

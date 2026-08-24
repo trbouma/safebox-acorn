@@ -67,12 +67,14 @@ async def test_add_tx_history_verifies_exact_event_readback(monkeypatch):
         tx_type="C",
         amount=25,
         comment="acorn deposit",
+        error_code="payment_failed",
         verify_timeout=1,
     )
 
     assert result["verified"] is True
     assert result["event_id"] == str(stored[0].id)
     assert publish_count == 2
+    assert '"error_code": "payment_failed"' in stored[0].content
 
 
 @pytest.mark.asyncio

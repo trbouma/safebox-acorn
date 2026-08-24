@@ -70,7 +70,12 @@ from acorn.b_dhke import (
     step3_alice,
 )
 from acorn.secp import PrivateKey, PublicKey
-from acorn.lightning import lightning_address_pay, lnaddress_to_lnurl, zap_address_pay
+from acorn.lightning import (
+    InvalidLightningAddressError,
+    lightning_address_pay,
+    lnaddress_to_lnurl,
+    zap_address_pay,
+)
 from acorn.nostr import bech32_to_hex, hex_to_bech32, nip05_to_npub, create_nembed_compressed,parse_nembed_compressed
 
 from acorn.models import nostrProfile, SafeboxItem, mintRequest, mintQuote, BlindedMessage, Proof, Proofs, proofEvent, proofEvents, KeysetsResponse, PostMeltQuoteResponse, walletQuote, NIP60Proofs, ClearProofState, ClearTransactionHistory
@@ -2858,6 +2863,7 @@ class Acorn:
                                 payment_preimage: str = None,
                                 payment_hash: str = None,
                                 description_hash: str = None,
+                                error_code: str = None,
                                 verify: bool = True,
                                 verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
                                 ):
@@ -2887,7 +2893,8 @@ class Acorn:
                                 invoice=invoice,
                                 payment_hash=payment_hash,
                                 preimage=payment_preimage,
-                                description_hash=description_hash
+                                description_hash=description_hash,
+                                error_code=error_code,
                                
                                  
                                 )
@@ -10486,25 +10493,17 @@ class Acorn:
             ) from exc
         if not any(each.get("description_hash") == history_marker for each in history):
             original_comment = str(entry.get("comment") or "").strip()
-            comment = "Funds transfer failed"
-            if original_comment:
-                comment += f": {original_comment}"
-            comment += f". {reason} No payment value was transferred."
-            if int(fees):
-                comment += (
-                    f" The preparatory proof swap consumed {int(fees)} sats "
-                    "in mint fees."
-                )
             try:
                 await self.add_tx_history(
                     tx_type="X",
                     amount=int(entry.get("amount") or 0),
-                    comment=comment,
+                    comment=original_comment,
                     tendered_amount=entry.get("tendered_amount"),
                     tendered_currency=str(entry.get("tendered_currency") or "SAT"),
                     fees=int(fees),
                     payment_hash=entry.get("payment_hash"),
                     description_hash=history_marker,
+                    error_code="payment_failed",
                 )
             except Exception as exc:
                 raise PaymentFinalizationError(
@@ -11052,6 +11051,13 @@ class Acorn:
                 await self.add_tx_history(tx_type='D', amount=amount, comment=comment, tendered_amount=tendered_amount, tendered_currency=tendered_currency, fees=final_fees)
         except (PaymentOutcomeUnknownError, PaymentFinalizationError, PaymentFailedError):
             raise
+        except InvalidLightningAddressError as e:
+            msg_out = "Not a valid Lightning address. Check the address and try again."
+            self.logger.warning(
+                "op=pay_multi status=invalid_lightning_address address=%s",
+                lnaddress,
+            )
+            raise RuntimeError(msg_out) from e
         except (ValueError, RuntimeError, httpx.HTTPError) as e:
             final_fees = 0
             if (
@@ -11387,6 +11393,20 @@ class Acorn:
 
             data_to_send = {"quote": post_melt_response.quote,
                         "inputs": melt_proofs }
+            change_outputs: List[dict] = []
+            change_recovery: List[dict] = []
+            if await self._mint_supports_nut08(
+                self.known_mints[chosen_keyset],
+                timeout=timeout,
+            ):
+                change_outputs, change_recovery = (
+                    self._prepare_melt_change_outputs(
+                        keyset=chosen_keyset,
+                        fee_reserve=int(post_melt_response.fee_reserve),
+                    )
+                )
+                if change_outputs:
+                    data_to_send["outputs"] = change_outputs
 
             keyset_proofs[chosen_keyset] = (
                 proofs_from_keyset + spend_proofs + keep_proofs

@@ -9,11 +9,23 @@ from mnemonic import Mnemonic
 
 LN_HTTP_TIMEOUT = 12
 
+
+class InvalidLightningAddressError(ValueError):
+    """The supplied address could not resolve to an LNURL-pay endpoint."""
+
+
+def _lightning_address_parts(lnaddress: str) -> tuple[str, str]:
+    value = str(lnaddress or "").strip()
+    if value.count("@") != 1:
+        raise InvalidLightningAddressError("Not a valid Lightning address")
+    local_part, domain = value.split("@", 1)
+    if not local_part or not domain:
+        raise InvalidLightningAddressError("Not a valid Lightning address")
+    return local_part, domain
+
 def lightning_address_pay(amount: int, lnaddress: str, comment:str="Payment made!"):
-    
-    ln_parts = lnaddress.split('@')
-    local_part = ln_parts[0]
-    url_to_call = "https://" + ln_parts[1]+"/.well-known/lnurlp/"+ln_parts[0].lower()
+    local_part, domain = _lightning_address_parts(lnaddress)
+    url_to_call = f"https://{domain}/.well-known/lnurlp/{local_part.lower()}"
     # print(f"Pay to: {url_to_call}")
     try:
         ln_parms = requests.get(url_to_call, timeout=LN_HTTP_TIMEOUT)
@@ -28,12 +40,17 @@ def lightning_address_pay(amount: int, lnaddress: str, comment:str="Payment made
         # print("ln_parms", ln_parms.json())
 
         # print("lightning address pay callback: multiplier", ln_parms.json()['currency']['multiplier'])
-    except Exception:
-        return {"status": "ERROR", "reason": "Lighting address does not exist!"}
+    except Exception as exc:
+        raise InvalidLightningAddressError("Not a valid Lightning address") from exc
+
+    if not isinstance(lnparms_obj, dict):
+        raise InvalidLightningAddressError("Not a valid Lightning address")
+    if lnparms_obj.get("status") == "ERROR" or not lnparms_obj.get("callback"):
+        raise InvalidLightningAddressError("Not a valid Lightning address")
     
     # print(f"Pay to: {ln_parms.json()['callback']}")
 
-    data_to_send = {    "wallet_name": ln_parts[0],
+    data_to_send = {    "wallet_name": local_part,
                         "amount": amount*1000,
                         "comment": comment,
                         "safebox": safebox,
@@ -41,8 +58,19 @@ def lightning_address_pay(amount: int, lnaddress: str, comment:str="Payment made
                         
                         }
 
-    ln_return = requests.get(ln_parms.json()['callback'], params=data_to_send, timeout=LN_HTTP_TIMEOUT)
-    return ln_return.json(), safebox, nonce
+    try:
+        ln_return = requests.get(
+            lnparms_obj["callback"],
+            params=data_to_send,
+            timeout=LN_HTTP_TIMEOUT,
+        )
+        ln_return.raise_for_status()
+        callback = ln_return.json()
+    except Exception as exc:
+        raise RuntimeError("Lightning address invoice service is unavailable") from exc
+    if not isinstance(callback, dict):
+        raise RuntimeError("Lightning address invoice service returned an invalid response")
+    return callback, safebox, nonce
 
 def lnaddress_to_lnurl(lnaddress):
     domain = lnaddress.split('@')[1]
@@ -107,4 +135,3 @@ def zap_address_pay(amount: int, lnaddress: str, zap_dict: dict):
         raise RuntimeError("Zap callback did not return invoice")
 
     return pr, allows_nostr, nostr_pubkey
-
