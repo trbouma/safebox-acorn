@@ -260,6 +260,7 @@ DEFAULT_BLOSSOM_HOME_SERVER: str = "https://blossom.getsafebox.app"
 DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
+PENDING_SWAPS_LABEL: str = "pending_swaps"
 PROOF_PERSISTENCE_PREFLIGHT_LABEL: str = "proof_persistence_preflight"
 CONTINUITY_RECEIPTS_LABEL: str = "continuity_receipts"
 WALLET_LOCK_LABEL: str = "lock"
@@ -289,6 +290,7 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
         "mints",
         "payment_request",
         PENDING_MELTS_LABEL,
+        PENDING_SWAPS_LABEL,
         PROOF_PERSISTENCE_PREFLIGHT_LABEL,
         "privkey",
         "profile",
@@ -527,6 +529,7 @@ class Acorn:
             self._lock_token: str | None = None
             self._lock_depth: int = 0
             self._process_wallet_lock: asyncio.Lock | None = None
+            self._active_swap_intent_id: str | None = None
         else:
             return "Need nsec" 
 
@@ -5447,6 +5450,7 @@ class Acorn:
             for proof in refreshed_proofs:
                 self.known_mints[proof.id] = mint
             await self.add_proofs_obj(refreshed_proofs, verify=True)
+            await self._complete_pending_swap()
             self.proofs = self._deduplicate_proofs(
                 [*self.proofs, *refreshed_proofs]
             )
@@ -6136,6 +6140,7 @@ class Acorn:
                         source_receipts=[normalized_id],
                         verify=True,
                     )
+                    await self._complete_pending_swap()
                     proof_event_ids = [str(proof_result["event_id"])]
             if sum(int(proof.amount) for proof in refreshed_proofs) != amount:
                 raise RuntimeError("Stored Clear proof amount does not match its receipt")
@@ -11676,6 +11681,308 @@ class Acorn:
             "verified": bool(verify),
         }
 
+    @staticmethod
+    def _swap_input_fingerprint(
+        proofs: Sequence[Proof],
+        *,
+        mint: str,
+        unit: str,
+    ) -> str:
+        """Return a stable, non-secret identifier for one set of swap inputs."""
+
+        identities = sorted(
+            (
+                str(proof.id or ""),
+                hashlib.sha256(str(proof.secret).encode()).hexdigest(),
+            )
+            for proof in proofs
+        )
+        payload = json.dumps(
+            {
+                "mint": normalize_mint_url(mint),
+                "unit": str(unit or "sat").strip().lower(),
+                "inputs": identities,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return hashlib.sha256(payload.encode()).hexdigest()
+
+    async def _load_pending_swaps(self) -> List[dict]:
+        raw = await self.get_wallet_info(label=PENDING_SWAPS_LABEL)
+        if not raw:
+            return []
+        try:
+            loaded = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise AmbiguousSwapError(
+                "Pending mint swap recovery state is unreadable; refusing to swap."
+            ) from exc
+        if not isinstance(loaded, list) or not all(
+            isinstance(entry, dict) for entry in loaded
+        ):
+            raise AmbiguousSwapError(
+                "Pending mint swap recovery state has an invalid format; refusing to swap."
+            )
+        return loaded
+
+    async def _save_pending_swaps(self, entries: List[dict]) -> None:
+        try:
+            await self.set_wallet_info(
+                label=PENDING_SWAPS_LABEL,
+                label_info=json.dumps(entries, separators=(",", ":"), sort_keys=True),
+                verify=True,
+            )
+        except Exception as exc:
+            raise RetryablePreSwapError(
+                "Pending mint swap recovery state could not be published and "
+                "verified before submission. The swap was not submitted."
+            ) from exc
+        # Recovery state protects bearer value only if it survives a process
+        # exit. Verify decrypted relay readback before inputs reach the mint.
+        for attempt in range(1, 6):
+            try:
+                observed = await self._load_pending_swaps()
+                if observed == entries:
+                    return
+            except AmbiguousSwapError:
+                pass
+            await asyncio.sleep(0.4 * attempt)
+        raise RetryablePreSwapError(
+            "Pending mint swap recovery state could not be read back from the "
+            "home relay. The swap was not submitted."
+        )
+
+    async def _upsert_pending_swap(self, entry: dict) -> None:
+        try:
+            pending = await self._load_pending_swaps()
+        except AmbiguousSwapError:
+            raise
+        except Exception as exc:
+            raise RetryablePreSwapError(
+                "Pending mint swap recovery state could not be checked before "
+                "submission. The swap was not submitted."
+            ) from exc
+        pending = [
+            existing
+            for existing in pending
+            if str(existing.get("id") or "") != str(entry.get("id") or "")
+        ]
+        pending.append(entry)
+        await self._save_pending_swaps(pending)
+
+    async def _remove_pending_swap(self, intent_id: str) -> None:
+        pending = await self._load_pending_swaps()
+        remaining = [
+            entry
+            for entry in pending
+            if str(entry.get("id") or "") != str(intent_id)
+        ]
+        if remaining != pending:
+            await self._save_pending_swaps(remaining)
+
+    async def _complete_pending_swap(self) -> None:
+        """Retire the most recently returned swap after proof persistence."""
+
+        intent_id = str(getattr(self, "_active_swap_intent_id", "") or "")
+        if not intent_id:
+            return
+        try:
+            await self._remove_pending_swap(intent_id)
+        except Exception as exc:
+            # Replacement proofs are already durable. A stale recovery intent
+            # is safe and can be retired by a later retry.
+            self.logger.warning(
+                "op=swap_recovery status=cleanup_deferred intent=%s error=%s",
+                intent_id,
+                _exception_detail(exc),
+            )
+        else:
+            self._active_swap_intent_id = None
+
+    async def _swap_output_keys(
+        self,
+        *,
+        mint: str,
+        keyset_ids: Sequence[str],
+        timeout: httpx.Timeout,
+    ) -> dict[str, dict[str, str]]:
+        keys_by_keyset: dict[str, dict[str, str]] = {}
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            for keyset_id in dict.fromkeys(str(each) for each in keyset_ids):
+                response = await client.get(f"{mint}/v1/keys/{keyset_id}")
+                response.raise_for_status()
+                payload = response.json()
+                keysets = payload.get("keysets") if isinstance(payload, dict) else None
+                if not isinstance(keysets, list):
+                    raise RuntimeError("Mint key response keysets was not a list")
+                matching = next(
+                    (
+                        candidate
+                        for candidate in keysets
+                        if isinstance(candidate, dict)
+                        and str(candidate.get("id") or "") == keyset_id
+                    ),
+                    keysets[0] if len(keysets) == 1 else None,
+                )
+                if not isinstance(matching, dict) or not isinstance(
+                    matching.get("keys"), dict
+                ):
+                    raise RuntimeError(
+                        f"Mint key response did not contain keyset {keyset_id}"
+                    )
+                keys = matching["keys"]
+                for denomination, serialized_key in keys.items():
+                    try:
+                        public_key = PublicKey()
+                        public_key.deserialize(unhexlify(serialized_key))
+                    except (RuntimeError, ValueError, TypeError) as exc:
+                        raise RuntimeError(
+                            "Mint keyset contains an invalid public key for "
+                            f"denomination {denomination}"
+                        ) from exc
+                keys_by_keyset[keyset_id] = keys
+        return keys_by_keyset
+
+    async def _unblind_swap_recovery(
+        self,
+        *,
+        intent: dict,
+        returned_outputs: Sequence[dict],
+        signatures: Sequence[dict],
+        timeout: httpx.Timeout,
+    ) -> List[Proof]:
+        if len(returned_outputs) != len(signatures):
+            raise AmbiguousSwapError(
+                "Mint restore returned mismatched output and signature counts."
+            )
+        recovery = intent.get("recovery")
+        if not isinstance(recovery, list):
+            raise AmbiguousSwapError("Pending mint swap recovery material is missing.")
+        material_by_blinded = {
+            str(item.get("B_") or ""): item
+            for item in recovery
+            if isinstance(item, dict) and item.get("B_")
+        }
+        if len(returned_outputs) != len(recovery):
+            raise AmbiguousSwapError(
+                "Mint restore returned only part of the interrupted swap. "
+                "Keep the recovery state and retry later."
+            )
+        keyset_ids = [str(signature.get("id") or "") for signature in signatures]
+        keys_by_keyset = await self._swap_output_keys(
+            mint=normalize_mint_url(str(intent["mint"])),
+            keyset_ids=keyset_ids,
+            timeout=timeout,
+        )
+        proofs: List[Proof] = []
+        for output, signature in zip(returned_outputs, signatures):
+            if not isinstance(output, dict) or not isinstance(signature, dict):
+                raise AmbiguousSwapError("Mint restore returned malformed data.")
+            material = material_by_blinded.get(str(output.get("B_") or ""))
+            if not material:
+                raise AmbiguousSwapError(
+                    "Mint restore returned an output not present in the recovery state."
+                )
+            amount = int(signature["amount"])
+            keyset_id = str(signature.get("id") or material.get("id") or "")
+            if amount != int(material["amount"]) or keyset_id != str(material["id"]):
+                raise AmbiguousSwapError(
+                    "Mint restore signature did not match its prepared output."
+                )
+            serialized_key = keys_by_keyset[keyset_id].get(str(amount))
+            if not serialized_key:
+                raise AmbiguousSwapError(
+                    f"Mint keyset {keyset_id} has no key for denomination {amount}."
+                )
+            blinded_signature = PublicKey()
+            blinded_signature.deserialize(unhexlify(signature["C_"]))
+            mint_key = PublicKey()
+            mint_key.deserialize(unhexlify(serialized_key))
+            blinding_factor = PrivateKey(
+                privkey=bytes.fromhex(str(material["r"])),
+                raw=True,
+            )
+            secret = str(material["secret"])
+            y_point = hash_to_curve(secret.encode("utf-8"))
+            if y_point.serialize().hex() != str(material["Y"]):
+                raise AmbiguousSwapError(
+                    "Pending mint swap recovery secret does not match its Y."
+                )
+            signature_point = step3_alice(
+                blinded_signature,
+                blinding_factor,
+                mint_key,
+            )
+            proofs.append(
+                Proof(
+                    amount=amount,
+                    id=keyset_id,
+                    secret=secret,
+                    C=signature_point.serialize().hex(),
+                    Y=y_point.serialize().hex(),
+                )
+            )
+        return proofs
+
+    async def _restore_pending_swap(
+        self,
+        intent: dict,
+        *,
+        timeout: httpx.Timeout,
+        attempts: int = 4,
+    ) -> List[Proof] | None:
+        """Recover an interrupted swap through NUT-09 without resubmitting inputs."""
+
+        outputs = intent.get("outputs")
+        if not isinstance(outputs, list) or not outputs:
+            raise AmbiguousSwapError("Pending mint swap outputs are missing.")
+        mint = normalize_mint_url(str(intent.get("mint") or ""))
+        last_error: Exception | None = None
+        for attempt in range(max(1, int(attempts))):
+            if attempt:
+                await asyncio.sleep(0.5 * attempt)
+            try:
+                async with httpx.AsyncClient(timeout=timeout) as client:
+                    response = await client.post(
+                        f"{mint}/v1/restore",
+                        json={"outputs": outputs},
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+                returned_outputs = payload.get("outputs") if isinstance(payload, dict) else None
+                signatures = payload.get("signatures") if isinstance(payload, dict) else None
+                if not isinstance(returned_outputs, list) or not isinstance(
+                    signatures, list
+                ):
+                    raise ValueError("mint restore response was malformed")
+                if not returned_outputs and not signatures:
+                    continue
+                proofs = await self._unblind_swap_recovery(
+                    intent=intent,
+                    returned_outputs=returned_outputs,
+                    signatures=signatures,
+                    timeout=timeout,
+                )
+                self.logger.info(
+                    "op=swap_recovery status=restored intent=%s outputs=%s amount=%s",
+                    intent.get("id"),
+                    len(proofs),
+                    sum(int(proof.amount) for proof in proofs),
+                )
+                return proofs
+            except AmbiguousSwapError:
+                raise
+            except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
+                last_error = exc
+        self.logger.warning(
+            "op=swap_recovery status=pending intent=%s mint=%s error=%s",
+            intent.get("id"),
+            mint,
+            _exception_detail(last_error) if last_error else "signatures not found",
+        )
+        return None
+
     async def swap_proofs(
         self,
         incoming_swap_proofs: List[Proof],
@@ -11683,20 +11990,16 @@ class Acorn:
         mint_base: str | None = None,
         unit: str | None = None,
     ):
-        '''This function swaps proofs'''
+        """Refresh proofs with durable recovery for interrupted NUT-03 swaps."""
         self.logger.debug("Swap proofs")
         if not incoming_swap_proofs:
             raise RuntimeError("No proofs supplied for swap")
 
         await self._preflight_proof_persistence()
+        self._active_swap_intent_id = None
 
-        swap_amount =0
-        count = 0
-        
-        headers = { "Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json"}
         timeout = httpx.Timeout(30.0, connect=5.0)
-        
-        #keyset_url = f"{self.mints[0]}/v1/keysets"
         proof_keyset = incoming_swap_proofs[0].id
         mint_base = mint_base or self.known_mints.get(proof_keyset)
         if not mint_base:
@@ -11704,83 +12007,109 @@ class Acorn:
         mint_base = normalize_mint_url(mint_base)
 
         keyset_url = f"{mint_base}/v1/keysets"
-        async with httpx.AsyncClient(timeout=timeout) as client:
-            response = await client.get(keyset_url, headers=headers)
-            response.raise_for_status()
-            keysets = response.json().get("keysets") or []
-            if not isinstance(keysets, list):
-                raise RuntimeError("Mint keyset response was not a list")
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.get(keyset_url, headers=headers)
+                response.raise_for_status()
+                payload = response.json()
+        except httpx.TransportError as exc:
+            raise RetryablePreSwapError(
+                "Mint keyset lookup failed before swap submission: "
+                f"{_exception_detail(exc)}"
+            ) from exc
+        keysets = payload.get("keysets") if isinstance(payload, dict) else None
+        if not isinstance(keysets, list):
+            raise RuntimeError("Mint keyset response was not a list")
 
-            input_keysets = []
-            input_fee_ppk_total = 0
-            for proof in incoming_swap_proofs:
-                input_keyset = next(
-                    (
-                        candidate
-                        for candidate in keysets
-                        if isinstance(candidate, dict)
-                        and str(candidate.get("id") or "") == str(proof.id or "")
-                    ),
-                    None,
-                )
-                if input_keyset is None:
-                    raise RuntimeError(
-                        f"Mint does not advertise input keyset {proof.id}"
-                    )
-                input_keysets.append(input_keyset)
-                input_fee_ppk_total += int(input_keyset.get("input_fee_ppk") or 0)
-
-            advertised_input_units = {
-                str(candidate.get("unit") or "").strip().lower()
-                for candidate in input_keysets
-                if str(candidate.get("unit") or "").strip()
-            }
-            if len(advertised_input_units) > 1:
-                raise RuntimeError("Incoming proofs use keysets with different units")
-            requested_unit = str(
-                unit
-                or (
-                    next(iter(advertised_input_units))
-                    if advertised_input_units
-                    else "sat"
-                )
-            ).strip().lower()
-            normalized_unit = (
-                "sat"
-                if requested_unit == "sat"
-                else self._normalize_clear_unit(requested_unit)
+        input_keysets: List[dict] = []
+        for proof in incoming_swap_proofs:
+            input_keyset = next(
+                (
+                    candidate
+                    for candidate in keysets
+                    if isinstance(candidate, dict)
+                    and str(candidate.get("id") or "") == str(proof.id or "")
+                ),
+                None,
             )
-            if advertised_input_units and normalized_unit not in advertised_input_units:
-                raise RuntimeError(
-                    f"Incoming proofs are denominated in "
-                    f"{next(iter(advertised_input_units))}, not {normalized_unit}"
+            if input_keyset is None:
+                raise RuntimeError(f"Mint does not advertise input keyset {proof.id}")
+            input_keysets.append(input_keyset)
+
+        advertised_input_units = {
+            str(candidate.get("unit") or "").strip().lower()
+            for candidate in input_keysets
+            if str(candidate.get("unit") or "").strip()
+        }
+        if len(advertised_input_units) > 1:
+            raise RuntimeError("Incoming proofs use keysets with different units")
+        requested_unit = str(
+            unit
+            or (next(iter(advertised_input_units)) if advertised_input_units else "sat")
+        ).strip().lower()
+        normalized_unit = (
+            "sat"
+            if requested_unit == "sat"
+            else self._normalize_clear_unit(requested_unit)
+        )
+        if advertised_input_units and normalized_unit not in advertised_input_units:
+            raise RuntimeError(
+                "Incoming proofs are denominated in "
+                f"{next(iter(advertised_input_units))}, not {normalized_unit}"
+            )
+
+        input_fingerprint = self._swap_input_fingerprint(
+            incoming_swap_proofs,
+            mint=mint_base,
+            unit=normalized_unit,
+        )
+        try:
+            pending = await self._load_pending_swaps()
+        except AmbiguousSwapError:
+            raise
+        except Exception as exc:
+            raise RetryablePreSwapError(
+                "Pending mint swap recovery state could not be checked before "
+                "submission. The swap was not submitted."
+            ) from exc
+        if pending:
+            matching = next(
+                (
+                    entry
+                    for entry in pending
+                    if str(entry.get("input_fingerprint") or "") == input_fingerprint
+                ),
+                None,
+            )
+            if matching is None:
+                raise AmbiguousSwapError(
+                    "Another mint swap has unresolved relay-backed recovery state. "
+                    "Resolve it before submitting different bearer inputs."
                 )
+            restored = await self._restore_pending_swap(matching, timeout=timeout)
+            if restored:
+                self._active_swap_intent_id = str(matching.get("id") or "")
+                return restored
+            raise AmbiguousSwapError(
+                "The earlier mint swap outcome remains unresolved. Acorn retained "
+                "its encrypted recovery state and did not resubmit the inputs."
+            )
 
-            output_keysets = [
-                candidate
-                for candidate in keysets
-                if isinstance(candidate, dict)
-                and candidate.get("active", True)
-                and str(candidate.get("unit") or normalized_unit).strip().lower()
-                == normalized_unit
-            ]
-            if not output_keysets:
-                qualifier = f" for unit {normalized_unit}"
-                raise RuntimeError(f"Mint has no active keyset{qualifier}")
-            keyset = output_keysets[0]["id"]
-
-        swap_url = f"{mint_base}/v1/swap"
-        swap_proofs = []
-        blinded_swap_proofs = []
-        blinded_values =[]
-        blinded_messages = []
-        new_proofs = []
-        for each_proof in incoming_swap_proofs:
-            swap_amount+=each_proof.amount        
-            swap_proofs.append(each_proof.to_dict())                    
-            count +=1
-        
-        r = PrivateKey()
+        output_keysets = [
+            candidate
+            for candidate in keysets
+            if isinstance(candidate, dict)
+            and candidate.get("active", True)
+            and str(candidate.get("unit") or normalized_unit).strip().lower()
+            == normalized_unit
+        ]
+        if not output_keysets:
+            raise RuntimeError(f"Mint has no active keyset for unit {normalized_unit}")
+        keyset = str(output_keysets[0]["id"])
+        input_fee_ppk_total = sum(
+            int(candidate.get("input_fee_ppk") or 0) for candidate in input_keysets
+        )
+        swap_amount = sum(int(proof.amount) for proof in incoming_swap_proofs)
         swap_fee = math.ceil(input_fee_ppk_total / 1000)
         output_amount = swap_amount - swap_fee
         if output_amount <= 0:
@@ -11795,207 +12124,152 @@ class Acorn:
             swap_amount,
             swap_fee,
             output_amount,
-            count,
+            len(incoming_swap_proofs),
         )
-        for each in powers_of_2:
-                secret = secrets.token_hex(32)
-                B_, r, Y = step1_alice(secret)
-                blinded_values.append((B_,r, secret,Y))
-                
-                blinded_messages.append(    BlindedMessage( amount=each,
-                                                            id=keyset,
-                                                            B_=B_.serialize().hex(),
-                                                            Y = Y.serialize().hex(),
-                                                            ).model_dump()
-                                        )
-            
-        data_to_send = {
-                            "inputs":   swap_proofs,
-                            "outputs": blinded_messages
-                            
-        }
-        
+        blinded_messages: List[dict] = []
+        recovery: List[dict] = []
+        for amount in powers_of_2:
+            secret = secrets.token_hex(32)
+            blinded_point, blinding_factor, y_point = step1_alice(secret)
+            blinded_hex = blinded_point.serialize().hex()
+            blinded_messages.append(
+                BlindedMessage(
+                    amount=amount,
+                    id=keyset,
+                    B_=blinded_hex,
+                    Y=y_point.serialize().hex(),
+                ).model_dump()
+            )
+            recovery.append(
+                {
+                    "amount": int(amount),
+                    "id": keyset,
+                    "B_": blinded_hex,
+                    "secret": secret,
+                    "r": blinding_factor.private_key.hex(),
+                    "Y": y_point.serialize().hex(),
+                }
+            )
+
         try:
-                async with httpx.AsyncClient(timeout=timeout) as client:
-                    mint_key_url = f"{mint_base}/v1/keys/{keyset}"
-                    request_url = mint_key_url
-                    response = await client.get(mint_key_url, headers=headers)
-                    if response.status_code >= 400:
-                        body = response.text[:500]
-                        self.logger.error(
-                            "op=swap_proofs status=keys_http_error mint=%s keyset=%s code=%s body=%s",
-                            mint_base,
-                            keyset,
-                            response.status_code,
-                            body,
-                        )
-                    response.raise_for_status()
-                    key_payload = response.json()
-                    if not isinstance(key_payload, dict):
-                        raise RuntimeError("Mint key response was not a JSON object")
-                    key_responses = key_payload.get("keysets") or []
-                    if not isinstance(key_responses, list):
-                        raise RuntimeError("Mint key response keysets was not a list")
-                    matching_keyset = next(
-                        (
-                            candidate
-                            for candidate in key_responses
-                            if isinstance(candidate, dict)
-                            if str(candidate.get("id") or "") == str(keyset)
-                        ),
-                        None,
-                    )
-                    if matching_keyset is None:
-                        returned_ids = [
-                            str(candidate.get("id") or "")
-                            for candidate in key_responses
-                            if isinstance(candidate, dict)
-                        ]
-                        raise RuntimeError(
-                            "Mint key response did not contain the requested "
-                            f"keyset {keyset}; returned keysets: "
-                            f"{', '.join(returned_ids) or '(none)'}"
-                        )
-                    keys = matching_keyset.get("keys") or {}
-                    if not isinstance(keys, dict):
-                        raise RuntimeError("Mint keyset keys was not a JSON object")
-
-                    output_keys: dict[int, PublicKey] = {}
-                    for amount in powers_of_2:
-                        serialized_key = keys.get(str(int(amount)))
-                        if not serialized_key:
-                            raise RuntimeError(
-                                "Mint keyset does not support output denomination "
-                                f"{amount}"
-                            )
-                        try:
-                            output_key = PublicKey()
-                            output_key.deserialize(unhexlify(serialized_key))
-                        except (RuntimeError, ValueError, TypeError) as exc:
-                            raise RuntimeError(
-                                "Mint keyset contains an invalid public key for "
-                                f"denomination {amount} ({type(exc).__name__}): "
-                                f"{_exception_detail(exc)}"
-                            ) from exc
-                        output_keys[int(amount)] = output_key
-
-                    # Validate every key needed to recover the returned promises
-                    # before the mint atomically consumes the bearer inputs.
-                    request_url = swap_url
-                    response = await client.post(url=swap_url, json=data_to_send, headers=headers)
-                    if response.status_code >= 400:
-                        body = response.text[:500]
-                        self.logger.error(
-                            "op=swap_proofs status=swap_http_error mint=%s keyset=%s code=%s body=%s",
-                            mint_base,
-                            proof_keyset,
-                            response.status_code,
-                            body,
-                        )
-                    response.raise_for_status()
-                    swap_payload = response.json()
-                    if not isinstance(swap_payload, dict):
-                        raise RuntimeError("Mint swap response was not a JSON object")
-                    promises = swap_payload.get("signatures")
-                    if not isinstance(promises, list):
-                        raise RuntimeError("Mint swap response signatures was not a list")
-                # print(keys)
-                new_proofs = []
-                i = 0
-
-                if len(promises) != len(blinded_values):
+            keys_by_keyset = await self._swap_output_keys(
+                mint=mint_base,
+                keyset_ids=[keyset],
+                timeout=timeout,
+            )
+            for amount in powers_of_2:
+                if not keys_by_keyset[keyset].get(str(int(amount))):
                     raise RuntimeError(
-                        "Mint swap returned an unexpected number of signatures: "
-                        f"expected {len(blinded_values)}, received {len(promises)}"
+                        f"Mint keyset does not support output denomination {amount}"
                     )
-            
-                for each in promises:
-                    try:
-                        if not isinstance(each, dict):
-                            raise TypeError("signature was not a JSON object")
-                        promise_amount = int(each['amount'])
-                        expected_amount = int(powers_of_2[i])
-                        if promise_amount != expected_amount:
-                            raise ValueError(
-                                "signature denomination did not match its output: "
-                                f"expected {expected_amount}, received {promise_amount}"
-                            )
-                        promise_keyset = str(each.get("id") or "")
-                        if promise_keyset != str(keyset):
-                            raise ValueError(
-                                "signature keyset did not match its output: "
-                                f"expected {keyset}, received "
-                                f"{promise_keyset or '(missing)'}"
-                            )
-                        pub_key_c = PublicKey()
-                        # print("each:", each['C_'])
-                        pub_key_c.deserialize(unhexlify(each['C_']))
-                        pub_key_a = output_keys[promise_amount]
-                        r = blinded_values[i][1]
-                        Y = blinded_values[i][3]
-                        # print(pub_key_c, promise_amount,A, r)
-                        C = step3_alice(pub_key_c,r,pub_key_a)
-                    except (
-                        RuntimeError,
-                        ValueError,
-                        TypeError,
-                        KeyError,
-                        IndexError,
-                        AttributeError,
-                    ) as exc:
-                        raise RuntimeError(
-                            "Mint swap signature could not be unblinded "
-                            f"at output {i} ({type(exc).__name__}): "
-                            f"{_exception_detail(exc)}"
-                        ) from exc
-                    proof = {   "amount": promise_amount,
-                            "id": keyset,
-                            "secret": blinded_values[i][2],
-                            "C":    C.serialize().hex(),
-                            "Y":    Y.serialize().hex()
-                            }
-                    new_proofs.append(proof)
-                    # print(proofs)
-                    i+=1
-        except httpx.HTTPStatusError as e:
-                response_text = ""
-                try:
-                    response_text = (e.response.text or "")[:500]
-                except Exception:
-                    response_text = ""
-                raise RuntimeError(
-                    f"Problem with swap HTTP {e.response.status_code} on {request_url}: {response_text}"
-                ) from e
-        except (
-            RuntimeError,
-            ValueError,
-            TypeError,
-            KeyError,
-            IndexError,
-            AttributeError,
-            json.JSONDecodeError,
-            httpx.HTTPError,
-        ) as e:
-                error_detail = _exception_detail(e)
-                self.logger.exception(
-                    "op=swap_proofs status=failed mint=%s input_keyset=%s "
-                    "output_keyset=%s error_type=%s error=%s",
-                    mint_base,
-                    proof_keyset,
-                    keyset,
-                    type(e).__name__,
-                    error_detail,
+        except httpx.TransportError as exc:
+            raise RetryablePreSwapError(
+                "Mint key lookup failed before swap submission: "
+                f"{_exception_detail(exc)}"
+            ) from exc
+
+        restore_outputs = [
+            {
+                "amount": int(message["amount"]),
+                "id": str(message["id"]),
+                "B_": str(message["B_"]),
+            }
+            for message in blinded_messages
+        ]
+        intent_id = secrets.token_hex(16)
+        intent = {
+            "version": 1,
+            "id": intent_id,
+            "created_at": int(datetime.now().timestamp()),
+            "mint": mint_base,
+            "unit": normalized_unit,
+            "input_fingerprint": input_fingerprint,
+            "input_amount": swap_amount,
+            "output_amount": output_amount,
+            "outputs": restore_outputs,
+            "recovery": recovery,
+        }
+        await self._upsert_pending_swap(intent)
+        self.logger.info(
+            "op=swap_recovery status=prepared intent=%s mint=%s outputs=%s amount=%s",
+            intent_id,
+            mint_base,
+            len(restore_outputs),
+            output_amount,
+        )
+
+        swap_url = f"{mint_base}/v1/swap"
+        request_payload = {
+            "inputs": [proof.to_dict() for proof in incoming_swap_proofs],
+            "outputs": blinded_messages,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=timeout) as client:
+                response = await client.post(
+                    swap_url,
+                    json=request_payload,
+                    headers=headers,
                 )
+                if response.status_code >= 400:
+                    self.logger.error(
+                        "op=swap_proofs status=swap_http_error mint=%s keyset=%s "
+                        "code=%s body=%s",
+                        mint_base,
+                        proof_keyset,
+                        response.status_code,
+                        response.text[:500],
+                    )
+                response.raise_for_status()
+                swap_payload = response.json()
+            signatures = (
+                swap_payload.get("signatures")
+                if isinstance(swap_payload, dict)
+                else None
+            )
+            if not isinstance(signatures, list):
+                raise ValueError("mint swap response signatures was not a list")
+            refreshed = await self._unblind_swap_recovery(
+                intent=intent,
+                returned_outputs=restore_outputs,
+                signatures=signatures,
+                timeout=timeout,
+            )
+        except httpx.HTTPStatusError as exc:
+            if 400 <= exc.response.status_code < 500:
+                # Client rejection is definitive: the atomic swap was not
+                # accepted, so the prepared outputs can be retired.
+                await self._remove_pending_swap(intent_id)
                 raise RuntimeError(
-                    f"Problem with swap ({type(e).__name__}): {error_detail}"
-                ) from e
+                    f"Problem with swap HTTP {exc.response.status_code} on "
+                    f"{swap_url}: {(exc.response.text or '')[:500]}"
+                ) from exc
+            restored = await self._restore_pending_swap(intent, timeout=timeout)
+            if not restored:
+                raise AmbiguousSwapError(
+                    "Mint swap response was interrupted. Acorn retained encrypted "
+                    "relay-backed recovery state and will restore the replacement "
+                    "proofs without resubmitting the inputs."
+                ) from exc
+            refreshed = restored
+        except (httpx.TransportError, ValueError, TypeError, KeyError) as exc:
+            restored = await self._restore_pending_swap(intent, timeout=timeout)
+            if not restored:
+                raise AmbiguousSwapError(
+                    "Mint swap response was interrupted. Acorn retained encrypted "
+                    "relay-backed recovery state and will restore the replacement "
+                    "proofs without resubmitting the inputs."
+                ) from exc
+            refreshed = restored
+        except AmbiguousSwapError:
+            raise
+        except Exception as exc:
+            raise AmbiguousSwapError(
+                "Mint swap may have completed, but replacement proofs could not "
+                "be finalized. Encrypted recovery state remains on the relay."
+            ) from exc
 
-        # need to convert new_proofs into objects
-        new_proof_obj_list = []
-        for each in new_proofs:
-            new_proof_obj_list.append(Proof(**each))
-
-        return new_proof_obj_list
+        self._active_swap_intent_id = intent_id
+        return refreshed
     
     async def swap_multi_consolidate(self):
         #TODO run swap_multi_each first to get rid of any potential doublespends
@@ -13204,6 +13478,7 @@ class Acorn:
             )
             
             await self.add_proofs_obj(swap_proofs, verify=True)
+            await self._complete_pending_swap()
 
             self.proofs = self._deduplicate_proofs([*self.proofs, *swap_proofs])
             self.balance = sum(proof.amount for proof in self.proofs)

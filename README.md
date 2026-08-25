@@ -123,6 +123,7 @@ implemented and reviewed.
 - [Relay Migration Runbook](./docs/RELAY-MIGRATION-RUNBOOK.md)
 - [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
+- [Interrupted Swap Recovery Milestone](./docs/INTERRUPTED-SWAP-RECOVERY-MILESTONE-2026-08-25.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
 - [Roadmap to Releasability](./docs/ROADMAP-TO-RELEASABILITY.md)
 - [FreeBSD Jail Installation](./docs/FREEBSD-JAIL-INSTALL.md)

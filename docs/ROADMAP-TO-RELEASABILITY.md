@@ -31,6 +31,13 @@ operated application. The incident materially improved the release baseline,
 but it also confirms that proof failure injection and recovery remain gates
 rather than optional polish.
 
+The [August 25 Interrupted Swap Recovery Milestone](INTERRUPTED-SWAP-RECOVERY-MILESTONE-2026-08-25.md)
+records a second major reliability finding: a mint can spend swap inputs even
+when the wallet never receives the HTTP response. Acorn now durably records the
+exact output recovery material before crossing that irreversible boundary and
+uses NUT-09 restoration rather than resubmitting the swap after an ambiguous
+outcome.
+
 The commissioning scope for an external review is maintained in the
 [Independent Security Audit Plan](INDEPENDENT-SECURITY-AUDIT-PLAN.md). It
 defines the pre-audit readiness gate, fund-safety and cryptographic workstreams,
@@ -56,6 +63,25 @@ As of July 2026, the project has demonstrated:
 This is a credible hardened alpha foundation. The remaining work is primarily
 about operational discipline, failure recovery, stable interfaces, and release
 automation.
+
+## Milestone evidence discipline
+
+Major fixes and improvements should produce a dated milestone note while the
+operational evidence and design reasoning are still fresh. This applies when a
+change materially affects:
+
+- key or fund safety;
+- data-loss prevention or recovery;
+- protocol interoperability;
+- component, security, or trust boundaries; or
+- operational reliability and performance.
+
+Each milestone note should record the observation and user-visible impact, the
+root cause, the invariant or design correction, verification evidence, known
+limitations and residual risk, and links to the specifications or runbooks that
+were changed. Routine maintenance does not require a milestone note. The
+purpose is to preserve why consequential changes were made, not merely what the
+final code does.
 
 ## Recommended execution order
 

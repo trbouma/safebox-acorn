@@ -170,3 +170,4 @@ operational detail.
 - [CLI and Safebox Interoperability](https://github.com/trbouma/safebox-acorn/blob/main/docs/ACORN-WEBAPP-INTEROPERABILITY.md)
 - [August 13 Fund-Safety Hardening Milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/FUND-SAFETY-HARDENING-MILESTONE-2026-08-13.md)
 - [August 17 Clear Transfer Wallet Milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/CLEAR-TRANSFER-WALLET-MILESTONE-2026-08-17.md)
+- [August 25 Interrupted Swap Recovery Milestone](https://github.com/trbouma/safebox-acorn/blob/main/docs/INTERRUPTED-SWAP-RECOVERY-MILESTONE-2026-08-25.md)

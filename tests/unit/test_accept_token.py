@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -32,6 +33,9 @@ def wallet_with_key() -> Acorn:
     )
     wallet._require_resolved_pending_melts = AsyncMock()
     wallet._keyset_input_fee_ppk = AsyncMock(return_value=0)
+    wallet._load_pending_swaps = AsyncMock(return_value=[])
+    wallet._upsert_pending_swap = AsyncMock()
+    wallet._remove_pending_swap = AsyncMock()
     wallet.add_proofs_obj = AsyncMock(return_value={"verified": True})
     wallet.add_tx_history = AsyncMock()
     wallet._maybe_maintain_received_proofs = AsyncMock()
@@ -45,6 +49,22 @@ def test_relay_verify_timeout_default_and_validation():
         acorn_module._positive_timeout("0", name="timeout")
     with pytest.raises(ValueError, match="must be a positive number"):
         acorn_module._positive_timeout("invalid", name="timeout")
+
+
+@pytest.mark.asyncio
+async def test_pending_swap_recovery_state_requires_verified_relay_readback():
+    wallet = wallet_with_key()
+    entries = [{"id": "intent-1", "outputs": [{"B_": "02" + "11" * 32}]}]
+    wallet.set_wallet_info = AsyncMock(return_value={"verified": True})
+    wallet._load_pending_swaps = AsyncMock(return_value=entries)
+
+    await Acorn._save_pending_swaps(wallet, entries)
+
+    wallet.set_wallet_info.assert_awaited_once()
+    call = wallet.set_wallet_info.await_args
+    assert call.kwargs["label"] == acorn_module.PENDING_SWAPS_LABEL
+    assert call.kwargs["verify"] is True
+    assert json.loads(call.kwargs["label_info"]) == entries
 
 
 @pytest.mark.asyncio
@@ -192,7 +212,11 @@ async def test_accept_token_registers_rotated_keyset_and_updates_balance(monkeyp
         "deserialize",
         classmethod(lambda cls, token: token_obj),
     )
-    wallet.swap_proofs = AsyncMock(return_value=[refreshed])
+    async def swap_with_intent(*args, **kwargs):
+        wallet._active_swap_intent_id = "intent-1"
+        return [refreshed]
+
+    wallet.swap_proofs = AsyncMock(side_effect=swap_with_intent)
 
     message, amount = await wallet.accept_token("cashuB-test")
 
@@ -204,6 +228,7 @@ async def test_accept_token_registers_rotated_keyset_and_updates_balance(monkeyp
     assert wallet.proofs == [refreshed]
     assert wallet.balance == 3
     wallet.add_proofs_obj.assert_awaited_once_with([refreshed], verify=True)
+    wallet._remove_pending_swap.assert_awaited_once_with("intent-1")
     wallet.add_tx_history.assert_awaited_once()
     history = wallet.add_tx_history.await_args.kwargs
     assert history["amount"] == 3
@@ -273,11 +298,6 @@ async def test_swap_proofs_accounts_for_input_fee(
         "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
     )
     dummy_point = SimpleNamespace(serialize=lambda: bytes.fromhex(serialized_point))
-    monkeypatch.setattr(
-        acorn_module,
-        "step1_alice",
-        lambda secret: (dummy_point, object(), dummy_point),
-    )
     monkeypatch.setattr(acorn_module, "step3_alice", lambda *args: dummy_point)
 
     class Response:
@@ -361,6 +381,140 @@ async def test_swap_proofs_accounts_for_input_fee(
 
     assert sum(output["amount"] for output in captured["swap"]["outputs"]) == expected_amount
     assert sum(proof.amount for proof in refreshed) == expected_amount
+    intent = wallet._upsert_pending_swap.await_args.args[0]
+    assert intent["input_amount"] == 77
+    assert intent["output_amount"] == expected_amount
+    assert all(item.get("secret") and item.get("r") for item in intent["recovery"])
+
+
+@pytest.mark.asyncio
+async def test_interrupted_swap_is_restored_without_resubmitting_inputs(monkeypatch):
+    wallet = wallet_with_key()
+    wallet._preflight_proof_persistence = AsyncMock()
+    mint = "https://restore-mint.example"
+    keyset = "restore-keyset"
+    wallet.known_mints[keyset] = mint
+    incoming = Proof(
+        amount=2,
+        id=keyset,
+        secret="interrupted-input",
+        C="02" + "11" * 32,
+    )
+    stored = []
+    submitted_outputs = []
+    restore_ready = False
+    swap_submissions = 0
+    restore_requests = 0
+    serialized_point = (
+        "0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"
+    )
+    dummy_point = SimpleNamespace(serialize=lambda: bytes.fromhex(serialized_point))
+    monkeypatch.setattr(acorn_module, "step3_alice", lambda *args: dummy_point)
+    monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+
+    async def load_pending():
+        return list(stored)
+
+    async def store_pending(intent):
+        stored[:] = [intent]
+
+    wallet._load_pending_swaps = AsyncMock(side_effect=load_pending)
+    wallet._upsert_pending_swap = AsyncMock(side_effect=store_pending)
+
+    class Response:
+        def __init__(self, payload):
+            self._payload = payload
+            self.status_code = 200
+            self.text = ""
+
+        def json(self):
+            return self._payload
+
+        def raise_for_status(self):
+            return None
+
+    class Client:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, **kwargs):
+            if url.endswith("/v1/keysets"):
+                return Response(
+                    {
+                        "keysets": [
+                            {
+                                "id": keyset,
+                                "active": True,
+                                "unit": "sat",
+                                "input_fee_ppk": 0,
+                            }
+                        ]
+                    }
+                )
+            return Response(
+                {
+                    "keysets": [
+                        {
+                            "id": keyset,
+                            "keys": {"1": serialized_point, "2": serialized_point},
+                        }
+                    ]
+                }
+            )
+
+        async def post(self, url, **kwargs):
+            nonlocal swap_submissions, restore_requests
+            if url.endswith("/v1/swap"):
+                swap_submissions += 1
+                submitted_outputs[:] = [
+                    {
+                        "amount": int(output["amount"]),
+                        "id": str(output["id"]),
+                        "B_": str(output["B_"]),
+                    }
+                    for output in kwargs["json"]["outputs"]
+                ]
+                raise httpx.ReadTimeout("swap response lost")
+            if url.endswith("/v1/restore"):
+                restore_requests += 1
+                if not restore_ready:
+                    return Response({"outputs": [], "signatures": []})
+                return Response(
+                    {
+                        "outputs": submitted_outputs,
+                        "signatures": [
+                            {
+                                "id": keyset,
+                                "amount": output["amount"],
+                                "C_": serialized_point,
+                            }
+                            for output in submitted_outputs
+                        ],
+                    }
+                )
+            raise AssertionError(f"unexpected POST {url}")
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", Client)
+
+    with pytest.raises(AmbiguousSwapError, match="retained encrypted"):
+        await wallet.swap_proofs([incoming], mint_base=mint, unit="sat")
+
+    assert swap_submissions == 1
+    assert stored and stored[0]["outputs"] == submitted_outputs
+
+    restore_ready = True
+    refreshed = await wallet.swap_proofs([incoming], mint_base=mint, unit="sat")
+
+    assert swap_submissions == 1
+    assert restore_requests >= 5
+    assert sum(proof.amount for proof in refreshed) == 2
+    assert wallet._active_swap_intent_id == stored[0]["id"]
 
 
 @pytest.mark.asyncio
@@ -377,7 +531,11 @@ async def test_accept_token_does_not_report_success_when_proofs_are_not_verified
         "deserialize",
         classmethod(lambda cls, token: token_obj),
     )
-    wallet.swap_proofs = AsyncMock(return_value=[refreshed])
+    async def swap_with_intent(*args, **kwargs):
+        wallet._active_swap_intent_id = "intent-unpersisted"
+        return [refreshed]
+
+    wallet.swap_proofs = AsyncMock(side_effect=swap_with_intent)
     wallet.add_proofs_obj = AsyncMock(
         side_effect=RuntimeError("Proof publish could not be verified")
     )
@@ -388,6 +546,7 @@ async def test_accept_token_does_not_report_success_when_proofs_are_not_verified
     assert wallet.proofs == []
     assert wallet.balance == 0
     wallet.release_lock.assert_awaited_once()
+    wallet._remove_pending_swap.assert_not_awaited()
     wallet.add_tx_history.assert_not_awaited()
     wallet._maybe_maintain_received_proofs.assert_not_awaited()
 

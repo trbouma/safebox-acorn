@@ -303,12 +303,35 @@ submitted.
 Acorn also makes the swap submission boundary explicit to applications.
 Transient transport or persistence failures proven to occur before `/v1/swap`
 raise `RetryablePreSwapError`; no bearer inputs were submitted, so a supervising
-durable workflow may retry with bounded backoff. A read/write timeout during
-submission, a failure after the mint accepted the swap, or an inability to
-persist replacement proofs raises `AmbiguousSwapError`. Repeating that operation
-could spend or deliver twice and therefore requires reconciliation rather than
-automatic retry. Exceptions during later gift-wrapped relay publication remain
-ambiguous because token issuance has already committed.
+durable workflow may retry with bounded backoff.
+
+For proof refreshes used when accepting Cash or Clear transfers, Acorn now
+creates an encrypted `pending_swaps` record before submitting `/v1/swap`. The
+record contains the blinded outputs, output secrets, blinding factors, and a
+non-secret fingerprint of the inputs. Acorn verifies that this record is
+readable from the home relay before the mint receives the bearer inputs. It is
+not an application-local journal.
+
+If the swap response is interrupted, Acorn retains that record and uses NUT-09
+`/v1/restore` to recover the mint's signatures. A retry with the same inputs
+restores the prepared outputs; it does not create new outputs or resubmit the
+spent inputs. A different swap is refused while recovery remains unresolved.
+The intent is retired only after the replacement Cash proof events or Clear
+proof event have been published and verified on the relay. If cleanup fails,
+the already-durable proofs remain authoritative and the stale intent can be
+cleaned up later.
+
+If restoration is unavailable or incomplete, Acorn raises
+`AmbiguousSwapError` and leaves the encrypted intent in place. It must not turn
+that condition into a terminal double-spend merely because a later proof-state
+check reports the inputs as spent. NUT-09 is optional in the Cashu protocol, so
+mint support remains an interoperability requirement for automatic interrupted
+swap recovery. `https://mint.safebox.dev` was observed advertising NUT-09 on
+August 25, 2026, when this behavior was implemented.
+
+Exceptions during later gift-wrapped relay publication remain ambiguous because
+token issuance has already committed; that separate outgoing-transfer outbox
+boundary is not solved by swap restoration.
 
 It should:
 
@@ -585,3 +608,11 @@ allow mutating operations to remove mint-confirmed spent proofs;
 use repair-proofs for an explicit whole-wallet refresh;
 verify balance before spending again.
 ```
+
+## Milestone record
+
+The production-like incident that led to durable pre-swap recovery intents is
+documented in the
+[Interrupted Swap Recovery Milestone](INTERRUPTED-SWAP-RECOVERY-MILESTONE-2026-08-25.md).
+It preserves the observed failure sequence, the NUT-09 recovery invariant,
+verification evidence, and the remaining operational boundaries.
