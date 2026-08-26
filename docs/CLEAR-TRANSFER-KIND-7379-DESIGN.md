@@ -65,6 +65,25 @@ receiver-generated request and transported payment payload, while kinds
 `7379`, `7380`, and `7381` remain Acorn's native transfer, spendable-state, and
 history model.
 
+### Paying a request
+
+`Acorn.inspect_payment_request()` decodes a request without spending value. It
+requires an amount, a canonical CMU, a supported Nostr NIP-17 transport, and a
+single Clear keyset capable of satisfying the request. A strict mint list is
+honoured; a preferred mint list is tried before other matching balances.
+
+`Acorn.send_payment_request()` repeats that validation against current state,
+exports proofs from the selected keyset, and delivers the standard NUT-18
+payload as a private kind `14` message. Because NUT-18 amounts are net of input
+fees, Acorn reads the selected keyset's advertised `input_fee_ppk` and sends
+enough proof value for the receiver to retain the requested amount after mint
+refresh. The result separates the requested amount, proof amount, receiver
+input fee, and sender-side swap fee.
+
+Once proof export has begun, a timeout or delivery exception is an unresolved
+outcome. Callers must inspect Clear transaction history rather than retrying
+blindly.
+
 ## Payload
 
 The encrypted inner event content is JSON:

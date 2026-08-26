@@ -61,6 +61,7 @@ from acorn.record_transfer import (
 from acorn.record_protection import validate_record_protection_key
 from acorn.payment_request import (
     PaymentRequest,
+    decode_payment_request,
     encode_payment_request,
     nostr_nip17_transport,
 )
@@ -3265,6 +3266,7 @@ class Acorn:
         amount: int,
         memo: str = "Clear transfer",
         counterparty: str = "",
+        keyset: str | None = None,
     ) -> dict:
         """Export an exact amount from one Clear balance as a bearer token.
 
@@ -3318,17 +3320,25 @@ class Acorn:
                 amounts_by_keyset[keyset_id] = (
                     amounts_by_keyset.get(keyset_id, 0) + int(proof.amount)
                 )
-            chosen_keyset = next(
-                (
-                    keyset_id
-                    for keyset_id in sorted(
-                        amounts_by_keyset,
-                        key=lambda candidate: amounts_by_keyset[candidate],
-                    )
-                    if amounts_by_keyset[keyset_id] >= transfer_amount
-                ),
-                None,
-            )
+            requested_keyset = str(keyset or "").strip()
+            if requested_keyset:
+                chosen_keyset = (
+                    requested_keyset
+                    if amounts_by_keyset.get(requested_keyset, 0) >= transfer_amount
+                    else None
+                )
+            else:
+                chosen_keyset = next(
+                    (
+                        keyset_id
+                        for keyset_id in sorted(
+                            amounts_by_keyset,
+                            key=lambda candidate: amounts_by_keyset[candidate],
+                        )
+                        if amounts_by_keyset[keyset_id] >= transfer_amount
+                    ),
+                    None,
+                )
             if chosen_keyset is None:
                 raise ValueError(
                     "Clear transfer amount is not available within one keyset"
@@ -3506,6 +3516,203 @@ class Acorn:
             "mint": exported["mint"],
             "fee": int(exported.get("fee") or 0),
             "history_event_id": exported.get("history_event_id"),
+        }
+
+    def _nut18_nostr_destination(self, request: PaymentRequest) -> tuple[str, List[str]]:
+        """Return the pubkey and relay hints for a supported NUT-18 transport."""
+
+        transport = next(
+            (
+                candidate
+                for candidate in request.transports
+                if candidate.transport_type == "nostr"
+                and ("n", "17") in candidate.tags
+            ),
+            None,
+        )
+        if transport is None:
+            raise ValueError("Payment request does not offer a Nostr NIP-17 transport")
+        try:
+            target = Entities.decode(transport.target)
+        except Exception as exc:
+            raise ValueError("Payment request contains an invalid nprofile") from exc
+        if not isinstance(target, dict):
+            raise ValueError("Payment request contains an invalid nprofile")
+        pubkey = str(target.get("pubkey") or "").lower()
+        if len(pubkey) != 64 or any(
+            character not in string.hexdigits for character in pubkey
+        ):
+            raise ValueError("Payment request nprofile has an invalid public key")
+        raw_relays = target.get("relay")
+        if isinstance(raw_relays, str):
+            relay_values = [raw_relays]
+        elif isinstance(raw_relays, list):
+            relay_values = raw_relays
+        else:
+            relay_values = []
+        relays = self._normalize_relays(relay_values)
+        if not relays:
+            raise ValueError("Payment request nprofile does not provide a relay")
+        return pubkey, relays
+
+    async def inspect_payment_request(self, encoded_request: str) -> Dict[str, Any]:
+        """Validate a NUT-18 request against one spendable Clear balance."""
+
+        request = decode_payment_request(encoded_request)
+        if request.amount is None or request.unit is None:
+            raise ValueError("Payment request must specify an amount and unit")
+        requested_amount = int(request.amount)
+        requested_unit = self._normalize_clear_unit(request.unit)
+        recipient_pubkey, relays = self._nut18_nostr_destination(request)
+        listed_mints = tuple(normalize_mint_url(mint) for mint in request.mints)
+        strict_mints = bool(listed_mints) and request.mint_list_preferred is not True
+
+        balances = [
+            balance
+            for balance in await self.get_clear_balances()
+            if str(balance.get("unit") or "") == requested_unit
+            and (
+                not strict_mints
+                or normalize_mint_url(balance.get("mint")) in listed_mints
+            )
+        ]
+        if listed_mints:
+            mint_order = {mint: index for index, mint in enumerate(listed_mints)}
+            balances.sort(
+                key=lambda balance: (
+                    mint_order.get(normalize_mint_url(balance.get("mint")), len(mint_order)),
+                    normalize_mint_url(balance.get("mint")),
+                )
+            )
+
+        choices: List[Dict[str, Any]] = []
+        for balance in balances:
+            mint = normalize_mint_url(balance.get("mint"))
+            for keyset_row in balance.get("keysets") or []:
+                keyset_id = str(keyset_row.get("keyset") or "").strip()
+                keyset_amount = int(keyset_row.get("amount") or 0)
+                if not keyset_id:
+                    continue
+                self.known_mints[keyset_id] = mint
+                input_fee_ppk = await self._keyset_input_fee_ppk(keyset_id)
+                gross_amount, receiver_input_fee = self._melt_amount_with_input_fee(
+                    requested_amount,
+                    input_fee_ppk,
+                )
+                if keyset_amount >= gross_amount:
+                    choices.append(
+                        {
+                            "mint": mint,
+                            "unit": requested_unit,
+                            "keyset": keyset_id,
+                            "available_amount": keyset_amount,
+                            "requested_amount": requested_amount,
+                            "proof_amount": gross_amount,
+                            "receiver_input_fee": receiver_input_fee,
+                        }
+                    )
+        if not choices:
+            raise ValueError(
+                "No single Clear keyset can satisfy this payment request after mint input fees"
+            )
+        selected = min(
+            choices,
+            key=lambda choice: (
+                listed_mints.index(choice["mint"])
+                if choice["mint"] in listed_mints
+                else len(listed_mints),
+                int(choice["available_amount"]),
+                str(choice["keyset"]),
+            ),
+        )
+        return {
+            **selected,
+            "payment_request_id": request.payment_id,
+            "description": request.description or "",
+            "single_use": request.single_use,
+            "recipient_pubkey": recipient_pubkey,
+            "relays": relays,
+            "transport": "nostr-nip17",
+        }
+
+    async def send_payment_request(
+        self,
+        encoded_request: str,
+        *,
+        memo: str = "Paid from Acorn",
+    ) -> Dict[str, Any]:
+        """Pay a NUT-18 Clear request through its advertised NIP-17 transport."""
+
+        request = decode_payment_request(encoded_request)
+        prepared = await self.inspect_payment_request(encoded_request)
+        payment_memo = str(memo or "Paid from Acorn").strip()
+        if len(payment_memo) > 200:
+            raise ValueError("Payment memo must be 200 characters or fewer")
+        exported = await self.export_clear_token(
+            mint=prepared["mint"],
+            unit=prepared["unit"],
+            amount=prepared["proof_amount"],
+            memo=payment_memo,
+            counterparty=prepared["recipient_pubkey"],
+            keyset=prepared["keyset"],
+        )
+        token = TokenV3.deserialize(exported["token"])
+        token_entries = list(token.token)
+        if len(token_entries) != 1:
+            raise RuntimeError("NUT-18 payment export must contain exactly one mint")
+        payment_payload: Dict[str, Any] = {
+            "mint": exported["mint"],
+            "unit": exported["unit"],
+            "proofs": [proof.model_dump() for proof in token_entries[0].proofs],
+        }
+        if request.payment_id is not None:
+            payment_payload["id"] = request.payment_id
+        if payment_memo:
+            payment_payload["memo"] = payment_memo
+
+        gift_wrapper = KindOtherGiftWrap(
+            BasicKeySigner(self.k),
+            kind_gift_wrap=ECASH_TRANSFER_GIFT_WRAP_KIND,
+            preserve_rumour_kind=True,
+        )
+        inner_event = Event(
+            kind=14,
+            content=json.dumps(payment_payload, separators=(",", ":")),
+            pub_key=self.pubkey_hex,
+            tags=[["p", prepared["recipient_pubkey"]]],
+        )
+        outer_event, transient_key = await gift_wrapper.wrap(
+            inner_event,
+            to_pub_k=prepared["recipient_pubkey"],
+        )
+        try:
+            async with ClientPool(prepared["relays"]) as client:
+                client.publish(outer_event)
+                await asyncio.sleep(0.2)
+        except Exception as exc:
+            raise RuntimeError(
+                "Clear value was exported from the wallet, but NUT-18 delivery "
+                "did not complete. Do not repeat the payment blindly; inspect "
+                "Clear transaction history first."
+            ) from exc
+
+        return {
+            "status": "OK",
+            "protocol": "cashu-nut18-nip17",
+            "kind": outer_event.kind,
+            "transfer_kind": 14,
+            "event_id": str(outer_event.id),
+            "payment_request_id": request.payment_id,
+            "recipient_pubkey": prepared["recipient_pubkey"],
+            "relays": prepared["relays"],
+            "requested_amount": int(prepared["requested_amount"]),
+            "proof_amount": int(prepared["proof_amount"]),
+            "receiver_input_fee": int(prepared["receiver_input_fee"]),
+            "mint": exported["mint"],
+            "unit": exported["unit"],
+            "fee": int(exported.get("fee") or 0),
+            "history_event_id": exported.get("history_event_id"),
+            "transient_pubkey": transient_key.public_key_hex(),
         }
 
     async def delete_clear_proof_events(

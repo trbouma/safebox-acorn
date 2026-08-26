@@ -16,6 +16,11 @@ from acorn.acorn import (
     _exception_detail,
 )
 from acorn.models import ClearProofState, Proof, TokenV3, TokenV3Token
+from acorn.payment_request import (
+    PaymentRequest,
+    encode_payment_request,
+    nostr_nip17_transport,
+)
 
 
 class PlaintextNip44:
@@ -415,6 +420,119 @@ def test_nut18_nip17_payload_adapts_to_clear_receipt_token():
     token = TokenV3.deserialize(payload["token"])
     assert token.get_amount() == 25
     assert token.get_mints() == ["https://clear.one"]
+
+
+@pytest.mark.asyncio
+async def test_send_payment_request_delivers_net_amount_as_nut18_nip17(
+    monkeypatch,
+):
+    acorn = wallet()
+    recipient = Keys(priv_k="22" * 32)
+    recipient_pubkey = recipient.public_key_hex()
+    nprofile = acorn_module.Entities.encode(
+        "nprofile",
+        {"pubkey": recipient_pubkey, "relay": ["ws://recipient:7777"]},
+    )
+    encoded_request = encode_payment_request(
+        PaymentRequest(
+            payment_id="request-123",
+            amount=25,
+            unit="cmu-one",
+            single_use=True,
+            mints=("https://clear.one",),
+            mint_list_preferred=False,
+            description="Boardroom credit",
+            transports=(nostr_nip17_transport(nprofile),),
+        )
+    )
+    acorn.get_clear_balances = AsyncMock(
+        return_value=[
+            {
+                "mint": "https://clear.one",
+                "unit": "cmu-one",
+                "amount": 100,
+                "proof_count": 1,
+                "keysets": [
+                    {"keyset": "keyset-a", "amount": 100, "proof_count": 1}
+                ],
+            }
+        ]
+    )
+    acorn._keyset_input_fee_ppk = AsyncMock(return_value=1000)
+    exported_token = TokenV3(
+        token=[
+            TokenV3Token(
+                mint="https://clear.one",
+                proofs=[
+                    proof(16, "keyset-a", "51"),
+                    proof(8, "keyset-a", "52"),
+                    proof(4, "keyset-a", "53"),
+                ],
+            )
+        ],
+        memo="Paid from Safebox Web",
+        unit="cmu-one",
+    ).serialize()
+    acorn.export_clear_token = AsyncMock(
+        return_value={
+            "status": "OK",
+            "token": exported_token,
+            "amount": 28,
+            "mint": "https://clear.one",
+            "unit": "cmu-one",
+            "fee": 1,
+            "history_event_id": "e" * 64,
+        }
+    )
+    captured = {}
+
+    class CapturingGiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def wrap(self, inner, *, to_pub_k, **_kwargs):
+            captured["inner"] = inner
+            captured["recipient"] = to_pub_k
+            outer = Event(
+                kind=1059,
+                content="wrapped",
+                pub_key=acorn.pubkey_hex,
+                tags=[["p", to_pub_k]],
+            )
+            outer.sign(acorn.privkey_hex)
+            return outer, Keys(priv_k="33" * 32)
+
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", CapturingGiftWrap)
+
+    result = await acorn.send_payment_request(
+        encoded_request,
+        memo="Paid from Safebox Web",
+    )
+
+    assert result["status"] == "OK"
+    assert result["protocol"] == "cashu-nut18-nip17"
+    assert result["transfer_kind"] == 14
+    assert result["requested_amount"] == 25
+    assert result["proof_amount"] == 28
+    assert result["receiver_input_fee"] == 3
+    assert result["fee"] == 1
+    assert result["payment_request_id"] == "request-123"
+    assert captured["recipient"] == recipient_pubkey
+    assert captured["inner"].kind == 14
+    payload = json.loads(captured["inner"].content)
+    assert payload["id"] == "request-123"
+    assert payload["memo"] == "Paid from Safebox Web"
+    assert payload["mint"] == "https://clear.one"
+    assert payload["unit"] == "cmu-one"
+    assert sum(int(item["amount"]) for item in payload["proofs"]) == 28
+    acorn.export_clear_token.assert_awaited_once_with(
+        mint="https://clear.one",
+        unit="cmu-one",
+        amount=28,
+        memo="Paid from Safebox Web",
+        counterparty=recipient_pubkey,
+        keyset="keyset-a",
+    )
 
 
 @pytest.mark.asyncio
