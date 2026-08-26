@@ -19,7 +19,7 @@ from hotel_names import hotel_names
 # from coolname import generate, generate_slug
 from binascii import unhexlify
 import hashlib
-import signal, sys, string, cbor2, base64,os
+import signal, sys, string, base64,os
 import contextlib
 
 
@@ -59,6 +59,11 @@ from acorn.record_transfer import (
     verify_record_transfer_ciphertext,
 )
 from acorn.record_protection import validate_record_protection_key
+from acorn.payment_request import (
+    PaymentRequest,
+    encode_payment_request,
+    nostr_nip17_transport,
+)
 
 
 tail = util_funcs.str_tails
@@ -5887,12 +5892,17 @@ class Acorn:
                     "unit": token_unit,
                     "keyset_ids": keyset_ids,
                     "comment": str(payload.get("comment") or payload.get("memo") or ""),
+                    "payment_request_id": payload.get("payment_request_id"),
                     "nonce": payload.get("nonce"),
                     "timestamp": int(timestamp),
                     "status": "pending",
                     "outer_kind": int(outer_kind),
                     "inner_kind": int(inner_kind),
-                    "protocol": "clear-token-transfer",
+                    "protocol": (
+                        "cashu-nut18-nip17"
+                        if int(inner_kind) == 14
+                        else "clear-token-transfer"
+                    ),
                 }
                 receipts.append(existing)
                 await self.set_wallet_info(
@@ -5904,6 +5914,54 @@ class Acorn:
         finally:
             if lock_acquired:
                 await self.release_lock()
+
+    def _clear_payload_from_nut18_message(
+        self,
+        content: str,
+    ) -> Dict[str, Any] | None:
+        """Adapt a standard NUT-18 NIP-17 payload to the Clear receipt model."""
+
+        try:
+            payment = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not isinstance(payment, dict) or not {
+            "mint",
+            "unit",
+            "proofs",
+        }.issubset(payment):
+            return None
+        raw_proofs = payment.get("proofs")
+        if not isinstance(raw_proofs, list) or not raw_proofs or len(raw_proofs) > 4096:
+            raise MalformedIncomingTransfer(
+                "NUT-18 payment payload must contain a bounded, non-empty proof array"
+            )
+        try:
+            proofs = [Proof.model_validate(proof) for proof in raw_proofs]
+        except Exception as exc:
+            raise MalformedIncomingTransfer(
+                "NUT-18 payment payload contains an invalid proof"
+            ) from exc
+        mint = normalize_mint_url(payment.get("mint"))
+        unit = self._normalize_clear_unit(payment.get("unit"))
+        token = TokenV3(
+            token=[TokenV3Token(mint=mint, proofs=proofs)],
+            memo=str(payment.get("memo") or ""),
+            unit=unit,
+        ).serialize()
+        return {
+            "version": 1,
+            "type": "clear-token",
+            "token": token,
+            "mint": mint,
+            "unit": unit,
+            "amount": sum(int(proof.amount) for proof in proofs),
+            "keyset_ids": sorted({str(proof.id) for proof in proofs}),
+            "comment": str(payment.get("memo") or ""),
+            "payment_request_id": (
+                str(payment.get("id")).strip() if payment.get("id") is not None else None
+            ),
+        }
 
     async def get_clear_receipts(
         self,
@@ -6391,27 +6449,41 @@ class Acorn:
                     latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                     continue
                 inner_kind = getattr(unwrapped_event, "kind", None)
-                if inner_kind != CLEAR_TRANSFER_KIND:
+                if inner_kind not in (CLEAR_TRANSFER_KIND, 14):
                     skipped.append({
                         "event_id": each_event.id,
                         "reason": "unsupported_inner_kind",
                         "timestamp": event_ts,
                         "outer_kind": each_event.kind,
                         "inner_kind": inner_kind,
-                        "expected_inner_kind": CLEAR_TRANSFER_KIND,
+                        "expected_inner_kinds": [CLEAR_TRANSFER_KIND, 14],
                     })
                     latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                     continue
-                try:
-                    payload = json.loads(unwrapped_event.content)
-                except (json.JSONDecodeError, TypeError) as payload_exc:
-                    raise MalformedIncomingTransfer(
-                        f"Clear transfer payload is not valid JSON: {payload_exc}"
-                    ) from payload_exc
-                if not isinstance(payload, dict):
-                    raise MalformedIncomingTransfer(
-                        "Clear transfer payload must be a JSON object"
+                if inner_kind == 14:
+                    payload = self._clear_payload_from_nut18_message(
+                        unwrapped_event.content
                     )
+                    if payload is None:
+                        skipped.append({
+                            "event_id": each_event.id,
+                            "reason": "unsupported_nip17_message",
+                            "timestamp": event_ts,
+                            "inner_kind": inner_kind,
+                        })
+                        latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                        continue
+                else:
+                    try:
+                        payload = json.loads(unwrapped_event.content)
+                    except (json.JSONDecodeError, TypeError) as payload_exc:
+                        raise MalformedIncomingTransfer(
+                            f"Clear transfer payload is not valid JSON: {payload_exc}"
+                        ) from payload_exc
+                    if not isinstance(payload, dict):
+                        raise MalformedIncomingTransfer(
+                            "Clear transfer payload must be a JSON object"
+                        )
                 if payload.get("type") != "clear-token":
                     skipped.append({
                         "event_id": each_event.id,
@@ -6436,6 +6508,7 @@ class Acorn:
                     "mints": sorted(str(mint).rstrip("/") for mint in token_obj.get_mints()),
                     "keyset_ids": sorted(str(keyset) for keyset in token_obj.get_keysets()),
                     "comment": str(payload.get("comment") or payload.get("memo") or ""),
+                    "payment_request_id": payload.get("payment_request_id"),
                     "outer_kind": each_event.kind,
                     "inner_kind": inner_kind,
                 }
@@ -14561,34 +14634,49 @@ class Acorn:
         await asyncio.sleep(1)
         self.logger.debug("op=async_task status=start")
 
-    def create_payment_request( self, 
-                                amount:int, 
-                                unit:str='sat', 
-                                single_use: bool=True,
-                                description: str = "Payment"):
-        payment_request_dict = {}
-        random_id = ''.join(secrets.choice(string.ascii_letters + string.digits) for _ in range(8))
+    def create_payment_request(
+        self,
+        amount: int,
+        unit: str = "sat",
+        single_use: bool = True,
+        description: str = "Payment",
+        mint: str | None = None,
+    ) -> str:
+        """Create a current NUT-18 request using this Acorn's NIP-17 inbox."""
 
-        payment_request_dict['i'] = random_id
-        payment_request_dict['a'] = amount
-        payment_request_dict['u'] = unit
-        payment_request_dict['s'] = single_use
-        payment_request_dict['d'] = description
-        payment_request_dict['m'] = self.mints
-        payment_request_dict['t'] = {
-                                    "t":"nostr",
-                                    "a": "nprofile",
-                                    "g": [["n","17"]]
+        requested_amount = int(amount)
+        if requested_amount <= 0:
+            raise ValueError("Payment request amount must be greater than zero")
+        requested_unit = str(unit or "").strip()
+        if not requested_unit:
+            raise ValueError("Payment request unit is required")
+        request_description = str(description or "Payment").strip()
+        if not request_description or len(request_description) > 512:
+            raise ValueError("Payment request description must be 1 to 512 characters")
 
-                                    }
+        if mint is not None:
+            request_mints = (normalize_mint_url(mint),)
+        else:
+            request_mints = tuple(
+                dict.fromkeys(normalize_mint_url(each) for each in self.mints)
+            )
 
-        self.logger.debug("op=get_payment_request status=payload_ready")
-        cbor_data = cbor2.dumps(payment_request_dict)
-        base64_encoded_data = base64.b64encode(cbor_data)
-        base64_string = base64_encoded_data.decode('utf-8')
-
-        payment_request = "creqA" + base64_string
-        return payment_request
+        nprofile = Entities.encode(
+            "nprofile",
+            {"pubkey": self.pubkey_hex, "relay": [self.home_relay]},
+        )
+        request = PaymentRequest(
+            payment_id=secrets.token_hex(4),
+            amount=requested_amount,
+            unit=requested_unit,
+            single_use=bool(single_use),
+            mints=request_mints,
+            mint_list_preferred=False if request_mints else None,
+            description=request_description,
+            transports=(nostr_nip17_transport(nprofile),),
+        )
+        self.logger.debug("op=create_payment_request status=payload_ready")
+        return encode_payment_request(request)
 
     async def _async_token_accept(self, token:str):
         return

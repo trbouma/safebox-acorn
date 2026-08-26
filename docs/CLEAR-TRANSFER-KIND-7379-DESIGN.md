@@ -39,6 +39,32 @@ Clear CMU tokens are different:
 For that reason, `sweep_ecash_transfers` skips gift-wrapped inner events whose
 inner kind is `7379`. Clear receive is handled by `sweep_clear_transfers`.
 
+## NUT-18 interoperability
+
+Acorn also recognizes the standard NUT-18 Nostr transport. A `creqA...`
+payment request advertises a Nostr NIP-17 transport, and a compatible sender
+returns a payment payload in a private kind `14` message containing:
+
+```json
+{
+  "id": "receiver-generated-request-id",
+  "memo": "optional sender memo",
+  "mint": "https://clear.example",
+  "unit": "cmu-00ce29eeaf094301",
+  "proofs": []
+}
+```
+
+`sweep_clear_transfers()` adapts this standard payload to the same pending
+Clear receipt model used by native kind `7379` transfers. The receipt retains
+the request ID and records the protocol as `cashu-nut18-nip17`. An unrelated
+kind `14` message is skipped without advancing it into Clear proof state.
+
+This compatibility path does not mix protocol roles: NUT-18 describes the
+receiver-generated request and transported payment payload, while kinds
+`7379`, `7380`, and `7381` remain Acorn's native transfer, spendable-state, and
+history model.
+
 ## Payload
 
 The encrypted inner event content is JSON:
@@ -67,7 +93,8 @@ path is added.
 1. queries relay-visible kind `1059` gift wraps addressed to the receiving
    public key;
 2. unwraps the NIP-59 event;
-3. requires inner kind `7379`;
+3. requires native inner kind `7379` or a valid NUT-18 NIP-17 kind `14`
+   payment payload;
 4. requires payload `type` to be `clear-token`;
 5. decodes the Cashu token;
 6. validates amount, mint count, unit, and optional keyset ids;
@@ -171,6 +198,8 @@ It never combines Clear balances or routes them through Cash state.
 
 The remaining hardening boundary is crash-recoverable outgoing delivery after
 proof export, together with broader mint interoperability and security review.
+Acorn carries a NUT-18 request ID into the receipt, but it does not yet persist
+an outstanding-request registry or mark a single-use request complete.
 
 The proposed finalized wallet model is defined in
 [Acorn Clear Spendable Proof State Kinds 7380 and 7381](CLEAR-SPENDABLE-PROOF-STATE-KINDS-7380-7381-DESIGN.md).

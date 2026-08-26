@@ -391,6 +391,32 @@ async def test_send_clear_transfer_uses_kind_7379_inside_gift_wrap():
     assert any(event.kind == 1059 for event in MemoryPool.events)
 
 
+def test_nut18_nip17_payload_adapts_to_clear_receipt_token():
+    acorn = wallet()
+    incoming = proof(25, "keyset-a", "41")
+
+    payload = acorn._clear_payload_from_nut18_message(
+        json.dumps(
+            {
+                "id": "request-123",
+                "memo": "Boardroom credit",
+                "mint": "https://clear.one/",
+                "unit": "cmu-one",
+                "proofs": [incoming.to_dict()],
+            }
+        )
+    )
+
+    assert payload is not None
+    assert payload["payment_request_id"] == "request-123"
+    assert payload["mint"] == "https://clear.one"
+    assert payload["unit"] == "cmu-one"
+    assert payload["amount"] == 25
+    token = TokenV3.deserialize(payload["token"])
+    assert token.get_amount() == 25
+    assert token.get_mints() == ["https://clear.one"]
+
+
 @pytest.mark.asyncio
 async def test_malformed_clear_proof_event_fails_without_changing_cash_state():
     acorn = wallet()

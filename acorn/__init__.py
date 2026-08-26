@@ -6,6 +6,9 @@ __all__ = [
     "BitcoinCapabilityError",
     "OptionalDependencyError",
     "PaymentFees",
+    "PaymentRequest",
+    "PaymentRequestError",
+    "PaymentRequestTransport",
     "broadcast_silent_payment_sweep",
     "create_silent_payment_sweep_preview",
     "derive_nostr_silent_payment_address",
@@ -14,6 +17,9 @@ __all__ = [
     "record_protection_key_from_entropy",
     "record_protection_key_from_recovery_phrase",
     "record_protection_recovery_phrase",
+    "decode_payment_request",
+    "encode_payment_request",
+    "nostr_nip17_transport",
     "RECORD_TRANSFER_PREFIX",
     "RECORD_PRESENTATION_PREFIX",
     "RetryablePreSwapError",
@@ -92,4 +98,15 @@ def __getattr__(name):
         from acorn import record_transfer
 
         return getattr(record_transfer, name)
+    if name in {
+        "PaymentRequest",
+        "PaymentRequestError",
+        "PaymentRequestTransport",
+        "decode_payment_request",
+        "encode_payment_request",
+        "nostr_nip17_transport",
+    }:
+        from acorn import payment_request
+
+        return getattr(payment_request, name)
     raise AttributeError(f"module 'acorn' has no attribute {name!r}")

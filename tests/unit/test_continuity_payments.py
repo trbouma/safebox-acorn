@@ -1171,6 +1171,86 @@ async def test_sweep_clear_transfers_stores_pending_without_ecash_accept(
 
 
 @pytest.mark.asyncio
+async def test_sweep_clear_transfers_accepts_nut18_nip17_payment_payload(
+    monkeypatch,
+) -> None:
+    from acorn import acorn as acorn_module
+
+    acorn = wallet()
+    incoming_proofs = [proof(16, "16"), proof(8, "8"), proof(1, "1")]
+    outer = Event(
+        id="5" * 64,
+        sig="00" * 64,
+        kind=ECASH_TRANSFER_GIFT_WRAP_KIND,
+        content="encrypted-nut18-payment",
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="44" * 32,
+        created_at=133,
+    )
+    inner = Event(
+        id="4" * 64,
+        sig=None,
+        kind=14,
+        content=json.dumps(
+            {
+                "id": "request-1234",
+                "memo": "NUT-18 CMU transfer",
+                "mint": "http://clear.example",
+                "unit": "cmu-test",
+                "proofs": [item.model_dump() for item in incoming_proofs],
+            }
+        ),
+        tags=[["p", acorn.pubkey_hex]],
+        pub_key="55" * 32,
+        created_at=133,
+    )
+    operations = []
+
+    class MemoryPool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def query(self, _filters):
+            return [outer]
+
+    class GiftWrap:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def unwrap(self, _event):
+            return inner
+
+    async def save(label, value, **_kwargs):
+        operations.append((label, value))
+        return {"status": "OK"}
+
+    monkeypatch.setattr(acorn_module, "ClientPool", MemoryPool)
+    monkeypatch.setattr(acorn_module, "KindOtherGiftWrap", GiftWrap)
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+    acorn.accept_token = AsyncMock()
+    acorn._store_continuity_receipt = AsyncMock()
+
+    result = await acorn.sweep_clear_transfers()
+
+    assert result["status"] == "OK"
+    assert result["stored_count"] == 1
+    assert result["stored_amount"] == 25
+    assert result["stored"][0]["unit"] == "cmu-test"
+    assert result["stored"][0]["payment_request_id"] == "request-1234"
+    assert result["stored"][0]["protocol"] == "cashu-nut18-nip17"
+    assert operations[0][0] == CLEAR_RECEIPTS_LABEL
+    assert operations[1][0] == CLEAR_TRANSFER_CURSOR_LABEL
+    acorn.accept_token.assert_not_awaited()
+    acorn._store_continuity_receipt.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_sweep_journals_malformed_event_and_continues_to_later_transfer(
     monkeypatch,
 ) -> None:
