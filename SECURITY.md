@@ -314,6 +314,11 @@ encrypted backups, and tested restoration remain necessary.
   gift wrap containing an inner kind `7378` transfer event.
 - Received proofs are accepted and refreshed through the mint before becoming
   part of the wallet's proof state.
+- Receiver-created Lightning quotes are encrypted in the relay-backed `quote`
+  journal before their invoices are exposed. Each quote remains bound to its
+  issuing mint and is removed only after proof and transaction-history
+  persistence. A coordinating web application needs only a quote hash and must
+  not copy the raw quote, invoice, nsec, or proofs into its database.
 - Direct token acceptance requires one identifiable issuing mint. Acorn rejects
   ambiguous tokens containing proofs from multiple mints.
 - A previously unseen mint can be learned from a valid token. Acorn associates
@@ -571,6 +576,7 @@ formal audited severity score.
 | Partial proof swap | A mint swap consumes bearer inputs before all later inputs or keysets have completed. A process or network failure can strand replacement proofs if they exist only in memory. | Publish and verify each successful replacement batch immediately; retain source events until all replacements are durable; inject later-step failures in tests; keep automatic maintenance disabled. |
 | Incoming replay and ordering | Delayed, duplicated, same-timestamp, or malicious transfer events can stress cursor and idempotency behavior. | Refresh proofs at the mint and maintain receive state; expand deterministic replay and same-timestamp tests as a release gate. |
 | Lightning ambiguity and fee return | Network or mint timeouts can leave payment outcome uncertain. A lost NUT-08 response can also strand unused fee reserve unless its blank-output secrets survive. | Persist pending melts and encrypted NUT-08 recovery material on relays before submission; reconcile by quote ID; unblind returned change; never blindly repeat an ambiguous payment; require operator review if the mint remains unavailable. |
+| Incoming invoice interruption | A payer may settle a receiver-created invoice after the browser closes, the process restarts, or the configured home mint changes. Mint proof issuance and relay publication are still separate operations. | Persist and verify the quote, invoice, amount, issuing mint, and stage in encrypted relay state before exposure; resume by exact quote and mint; use idempotent history markers; keep interruption testing at the mint-issuance and relay-publication boundary as a release gate. |
 | Gateway registration control | A replayed, weakly bound, or improperly recovered registration could redirect a Lightning address to an attacker's key, relay, or mint policy. | Treat the gateway as future work; require short-lived single-use challenges, exact NIP-98 URL/method/body/public-key binding, versioned updates, explicit revocation, and old-key-authorized rotation. |
 | Gateway funds in transit | After Lightning settles, a future gateway temporarily controls value until the recipient accepts ecash or receives a valid refund. Provider failure, insolvency, or dishonest accounting can lose or delay funds. | Do not describe the bridge as trustless or non-custodial; use bounded amounts, explicit fees and mint policy, durable accounting, reconciliation, operational reserves, and an unclaimed-payment/refund policy before pilot use. |
 | Gateway bearer-token outbox | A gateway must retain an issued bearer token while delivery is pending. Theft permits spending; loss can strand settled value; a retry can issue value twice. | Encrypt the outbox at rest, restrict credentials and access, key every payment by Lightning payment hash, persist the exact serialized event for retry, inject failures at every transition, and never issue again merely because publication was ambiguous. |

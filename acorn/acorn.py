@@ -267,6 +267,7 @@ DEFAULT_BLOSSOM_XFER_SERVER: str = "https://blossomx.getsafebox.app"
 DEFAULT_HOME_MINT: str = "https://mint.getsafebox.app"
 PENDING_MELTS_LABEL: str = "pending_melts"
 PENDING_SWAPS_LABEL: str = "pending_swaps"
+PENDING_DEPOSITS_LABEL: str = "quote"
 PROOF_PERSISTENCE_PREFLIGHT_LABEL: str = "proof_persistence_preflight"
 CONTINUITY_RECEIPTS_LABEL: str = "continuity_receipts"
 WALLET_LOCK_LABEL: str = "lock"
@@ -297,11 +298,11 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
         "payment_request",
         PENDING_MELTS_LABEL,
         PENDING_SWAPS_LABEL,
+        PENDING_DEPOSITS_LABEL,
         PROOF_PERSISTENCE_PREFLIGHT_LABEL,
         "privkey",
         "profile",
         "public_relays",
-        "quote",
         "relays",
         "trusted_mints",
         "user_records",
@@ -8338,6 +8339,182 @@ class Acorn:
       
 
         return success_mint, lninvoice
+
+    @staticmethod
+    def _normalize_pending_deposit(entry: dict) -> dict:
+        """Validate one encrypted relay-backed Lightning deposit intent."""
+
+        if not isinstance(entry, dict):
+            raise ValueError("Pending deposit entry must be an object")
+        quote = str(entry.get("quote") or "").strip()
+        invoice = str(entry.get("invoice") or "").strip()
+        mint = normalize_mint_url(str(entry.get("mint") or ""))
+        amount = int(entry.get("amount") or 0)
+        status = str(entry.get("status") or "pending").strip().lower()
+        created_at = int(entry.get("created_at") or 0)
+        if not quote or len(quote) > 512:
+            raise ValueError("Pending deposit quote is invalid")
+        if not invoice or len(invoice) > 4096:
+            raise ValueError("Pending deposit invoice is invalid")
+        if amount <= 0:
+            raise ValueError("Pending deposit amount must be positive")
+        if status not in {"pending", "proofs_persisted"}:
+            raise ValueError("Pending deposit status is invalid")
+        return {
+            "version": 1,
+            "quote": quote,
+            "amount": amount,
+            "invoice": invoice,
+            "mint": mint,
+            "status": status,
+            "created_at": created_at,
+        }
+
+    async def get_pending_deposits(self) -> List[dict]:
+        """Return outstanding Lightning mint quotes from encrypted relay state."""
+
+        raw = await self.get_wallet_info(label=PENDING_DEPOSITS_LABEL)
+        if not raw:
+            return []
+        try:
+            loaded = json.loads(raw)
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise RuntimeError("Pending deposit state is unreadable") from exc
+        if not isinstance(loaded, list):
+            raise RuntimeError("Pending deposit state has an invalid format")
+        try:
+            entries = [self._normalize_pending_deposit(entry) for entry in loaded]
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Pending deposit state has an invalid entry") from exc
+        entries.sort(key=lambda entry: (entry["created_at"], entry["quote"]))
+        return entries
+
+    async def _save_pending_deposits(self, entries: List[dict]) -> None:
+        normalized = [self._normalize_pending_deposit(entry) for entry in entries]
+        normalized.sort(key=lambda entry: (entry["created_at"], entry["quote"]))
+        payload = json.dumps(normalized, separators=(",", ":"), sort_keys=True)
+        await self.set_wallet_info(
+            label=PENDING_DEPOSITS_LABEL,
+            label_info=payload,
+            verify=True,
+        )
+        for attempt in range(1, 6):
+            try:
+                observed = await self.get_pending_deposits()
+                if observed == normalized:
+                    return
+            except RuntimeError:
+                pass
+            await asyncio.sleep(0.4 * attempt)
+        raise RuntimeError(
+            "Pending deposit state could not be verified on the home relay"
+        )
+
+    async def register_pending_deposit(
+        self,
+        *,
+        quote: str,
+        amount: int,
+        invoice: str,
+        mint: str | None = None,
+    ) -> dict:
+        """Persist a mint quote before exposing its invoice to a payer."""
+
+        await self.acquire_lock()
+        try:
+            entry = self._normalize_pending_deposit(
+                {
+                    "version": 1,
+                    "quote": quote,
+                    "amount": amount,
+                    "invoice": invoice,
+                    "mint": mint or self.home_mint,
+                    "status": "pending",
+                    "created_at": int(time()),
+                }
+            )
+            pending = await self.get_pending_deposits()
+            pending = [
+                existing
+                for existing in pending
+                if str(existing.get("quote")) != entry["quote"]
+            ]
+            pending.append(entry)
+            await self._save_pending_deposits(pending)
+            return entry
+        finally:
+            await self.release_lock()
+
+    async def _update_pending_deposit(self, quote: str, **changes: Any) -> dict:
+        await self.acquire_lock()
+        try:
+            pending = await self.get_pending_deposits()
+            updated = None
+            for index, entry in enumerate(pending):
+                if str(entry.get("quote")) != str(quote):
+                    continue
+                updated = self._normalize_pending_deposit({**entry, **changes})
+                pending[index] = updated
+                break
+            if updated is None:
+                raise ValueError("Pending deposit quote was not found")
+            await self._save_pending_deposits(pending)
+            return updated
+        finally:
+            await self.release_lock()
+
+    async def _remove_pending_deposit(self, quote: str) -> None:
+        await self.acquire_lock()
+        try:
+            pending = await self.get_pending_deposits()
+            remaining = [
+                entry for entry in pending if str(entry.get("quote")) != str(quote)
+            ]
+            if remaining != pending:
+                await self._save_pending_deposits(remaining)
+        finally:
+            await self.release_lock()
+
+    async def finalize_pending_deposit(self, quote: str) -> dict:
+        """Try once to claim a persisted quote; safe to call repeatedly."""
+
+        pending = await self.get_pending_deposits()
+        entry = next(
+            (item for item in pending if str(item.get("quote")) == str(quote)),
+            None,
+        )
+        if entry is None:
+            return {"status": "NOT_FOUND", "quote": str(quote)}
+
+        history_marker = f"cashu-mint:{entry['mint']}:{entry['quote']}"
+        history = await self.get_tx_history()
+        history_exists = any(
+            str(item.get("description_hash") or "") == history_marker
+            for item in history
+        )
+        if entry["status"] == "pending" and not history_exists:
+            paid, _invoice = await self.check_quote(
+                entry["quote"],
+                entry["amount"],
+                entry["mint"],
+            )
+            if not paid:
+                return {**entry, "status": "PENDING"}
+            entry = await self._update_pending_deposit(
+                entry["quote"],
+                status="proofs_persisted",
+            )
+
+        if not history_exists:
+            await self.add_tx_history(
+                tx_type="C",
+                amount=entry["amount"],
+                comment="acorn lightning invoice received",
+                invoice=entry["invoice"],
+                description_hash=history_marker,
+            )
+        await self._remove_pending_deposit(entry["quote"])
+        return {**entry, "status": "COMPLETE"}
         
        
         # return await self._check_quote(quote, amount,mint)

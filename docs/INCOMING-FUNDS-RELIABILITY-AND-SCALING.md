@@ -30,6 +30,31 @@ The incoming-funds path follows these rules:
 The wallet balance changes only after the mint accepts and refreshes the
 received proofs. Relay visibility alone is never treated as spendable balance.
 
+## Receiver-created Lightning invoice quotes
+
+Lightning invoices created for a direct Acorn deposit have a separate encrypted
+relay-backed journal under the reserved `quote` record. Each entry binds the
+mint quote to its amount, BOLT11 invoice, exact issuing mint, creation time, and
+finalization stage. The quote is written and read back from the home relay
+before an application may expose the invoice to a payer.
+
+This ordering closes the earlier application gap in which a browser could hold
+the only usable quote. If the page closes, the process restarts, or the user's
+configured home mint later changes, Acorn can still query the mint that actually
+issued the invoice. Unpaid and temporarily unreachable quotes remain in the
+journal. Multiple outstanding quotes are retained independently.
+
+`finalize_pending_deposit()` is a single idempotent attempt suitable for a CLI,
+web executor, or other orchestrator. It asks the recorded mint for settlement,
+persists and verifies newly issued proofs, records a credit with a stable
+mint-and-quote marker, and removes the journal entry only after durable history.
+The orchestrator may safely call it again after an unpaid or interrupted check.
+
+The relay journal does not make a user Acorn into a server-held wallet. An
+application such as Safebox Web still needs the user-controlled private key in
+memory to decrypt and mutate the record. Its database may coordinate workers by
+quote hash, but the raw quote and proof state remain encrypted relay data.
+
 ## Same-mint batch finalization
 
 Two or more pending receipts issued by the same mint and denominated in sats

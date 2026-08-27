@@ -176,6 +176,140 @@ async def test_check_quote_accepts_paid_state_response(monkeypatch):
     }
 
 
+def relay_backed_pending_deposit_wallet() -> tuple[Acorn, dict[str, str]]:
+    wallet = wallet_with_key()
+    storage: dict[str, str] = {}
+
+    async def get_wallet_info(*, label: str):
+        return storage.get(label)
+
+    async def set_wallet_info(*, label: str, label_info: str, **_kwargs):
+        storage[label] = label_info
+        return {"status": "OK"}
+
+    async def acquire_lock():
+        return True
+
+    async def release_lock():
+        return None
+
+    wallet.get_wallet_info = get_wallet_info
+    wallet.set_wallet_info = set_wallet_info
+    wallet.acquire_lock = acquire_lock
+    wallet.release_lock = release_lock
+    return wallet, storage
+
+
+@pytest.mark.asyncio
+async def test_pending_deposit_is_persisted_with_its_issuing_mint():
+    wallet, storage = relay_backed_pending_deposit_wallet()
+
+    entry = await wallet.register_pending_deposit(
+        quote="quote-old-mint",
+        amount=2500,
+        invoice="lnbc25u1test",
+        mint="https://mint.getsafebox.app/",
+    )
+
+    assert entry["mint"] == "https://mint.getsafebox.app"
+    assert entry["status"] == "pending"
+    assert storage[acorn_module.PENDING_DEPOSITS_LABEL]
+    assert await wallet.get_pending_deposits() == [entry]
+
+
+@pytest.mark.asyncio
+async def test_multiple_pending_deposits_are_retained_independently():
+    wallet, _storage = relay_backed_pending_deposit_wallet()
+
+    await wallet.register_pending_deposit(
+        quote="quote-one",
+        amount=21,
+        invoice="lnbc210n1one",
+        mint="https://mint.safebox.dev",
+    )
+    await wallet.register_pending_deposit(
+        quote="quote-two",
+        amount=34,
+        invoice="lnbc340n1two",
+        mint="https://mint.getsafebox.app",
+    )
+
+    pending = await wallet.get_pending_deposits()
+    assert {entry["quote"] for entry in pending} == {"quote-one", "quote-two"}
+    assert {entry["mint"] for entry in pending} == {
+        "https://mint.safebox.dev",
+        "https://mint.getsafebox.app",
+    }
+
+
+@pytest.mark.asyncio
+async def test_pending_deposit_finalization_is_idempotent_and_mint_bound():
+    wallet, _storage = relay_backed_pending_deposit_wallet()
+    await wallet.register_pending_deposit(
+        quote="quote-new-mint",
+        amount=21,
+        invoice="lnbc210n1test",
+        mint="https://mint.safebox.dev",
+    )
+    quote_checks = []
+    history = []
+
+    async def check_quote(quote, amount, mint):
+        quote_checks.append((quote, amount, mint))
+        return True, "lnbc210n1test"
+
+    async def get_tx_history():
+        return list(history)
+
+    async def add_tx_history(**entry):
+        history.append(entry)
+        return {"status": "OK"}
+
+    wallet.check_quote = check_quote
+    wallet.get_tx_history = get_tx_history
+    wallet.add_tx_history = add_tx_history
+
+    result = await wallet.finalize_pending_deposit("quote-new-mint")
+    repeated = await wallet.finalize_pending_deposit("quote-new-mint")
+
+    assert result["status"] == "COMPLETE"
+    assert repeated["status"] == "NOT_FOUND"
+    assert quote_checks == [
+        ("quote-new-mint", 21, "https://mint.safebox.dev")
+    ]
+    assert len(history) == 1
+    assert history[0]["description_hash"] == (
+        "cashu-mint:https://mint.safebox.dev:quote-new-mint"
+    )
+    assert await wallet.get_pending_deposits() == []
+
+
+@pytest.mark.asyncio
+async def test_unpaid_pending_deposit_remains_recoverable():
+    wallet, _storage = relay_backed_pending_deposit_wallet()
+    await wallet.register_pending_deposit(
+        quote="quote-unpaid",
+        amount=34,
+        invoice="lnbc340n1test",
+        mint="https://mint.safebox.dev",
+    )
+    async def history():
+        return []
+
+    async def check_quote(_quote, _amount, _mint):
+        return False, None
+
+    wallet.get_tx_history = history
+    wallet.check_quote = check_quote
+
+    result = await wallet.finalize_pending_deposit("quote-unpaid")
+
+    assert result["status"] == "PENDING"
+    assert [entry["quote"] for entry in await wallet.get_pending_deposits()] == [
+        "quote-unpaid"
+    ]
+
+
 def test_source_mint_keysets_filters_and_sorts_by_mint():
     wallet = wallet_with_key()
     wallet.known_mints = {
