@@ -1,6 +1,6 @@
 ---
 title: Recovery and Continuity
-description: What an Acorn wallet needs for recovery and how continuity survives changes in applications, devices, operators, and infrastructure.
+description: What an Acorn wallet needs for recovery and how continuity carries across changes in applications, devices, operators, and infrastructure.
 ---
 
 # Recovery and continuity

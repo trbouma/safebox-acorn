@@ -35,9 +35,9 @@ remain replaceable without turning that separation into an obstacle to
 continuity.
 
 The user path should remain simple. In ordinary conditions, someone can use a
-web-connected service. If the hosted service, provider, or wider internet is
-unavailable, Mainstay should be able to fall back to local Lockbox services
-without becoming a separate emergency-only app.
+web-connected service. If the hosted service, provider, or outside connectivity
+is limited, Mainstay should be able to use local Lockbox services without
+becoming a separate special-purpose app.
 
 The existing sibling architecture is the foundation Mainstay will unify:
 

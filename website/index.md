@@ -129,10 +129,10 @@ This design supports individual use, trusted service providers, community
 infrastructure, and appliance-style deployments without requiring every user
 to become a full-time infrastructure operator.
 
-The same separation also makes room for future Continuity Payments. When mints
-or wider payment infrastructure are unavailable, nearby Acorns should be able
-to transfer previously issued ecash locally, mark the result as provisional,
-and reconcile with the issuing mint when connectivity returns.
+The same separation also makes room for future Continuity Payments. During
+limited-connectivity periods, nearby Acorns should be able to transfer
+previously issued ecash locally, mark the result as provisional, and reconcile
+with the issuing mint when connectivity returns.
 
 ## Reciprocal resilience
 

@@ -157,7 +157,7 @@ encrypted state without sharing plaintext, signing keys, or pooled custody.
 
 Private infrastructure is not a substitute for backups, and replication is not
 a substitute for encryption. Together they reduce the chance that one breach,
-provider failure, natural hazard, or political disruption becomes permanent
+provider failure, site move, or regional service interruption becomes permanent
 loss.
 
 [Read Relay Availability and Reciprocal Resilience](relay-availability-and-reciprocal-resilience.md){ .md-button }

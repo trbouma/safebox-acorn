@@ -167,21 +167,21 @@ Lockbox can help transfer and preserve payment material locally, but the
 external mint, issuer, registry, or counterparty still decides what it
 recognizes when the wider network is reachable again.
 
-### Scenario: a global mint with a blocked local link
+### Scenario: a global mint with a limited local link
 
 A community may normally rely on a mint that enables global payments. During
 ordinary operation, Acorns deposit, pay, receive, and refresh proofs through
 that mint. The mint provides the final spend-state check, while local Acorns
 hold the issued bearer proofs.
 
-The failure may be local rather than global. A cruise ship may have a blocked
-or rationed satellite link. A remote community may have intermittent satellite
-service. An emergency response site may retain a local network but lose
-internet, mobile service, bank terminals, Lightning routes, and access to the
-mint.
+The interruption may be local rather than global. A cruise ship or resort may
+have a rationed satellite link. A remote community may have intermittent
+satellite service. A co-working facility, clinic, or field operation may retain
+a local network while outside payment and connectivity providers are
+unavailable.
 
-In that situation, the community is globally disconnected but locally online.
-Lockbox can support local payment continuity:
+In that situation, the community or facility is locally connected while outside
+services are limited. Lockbox can support local payment continuity:
 
 - Acorns use previously issued proofs already held by their wallets;
 - local network, mesh, or appliance transport carries encrypted payment
@@ -191,11 +191,11 @@ Lockbox can support local payment continuity:
 - when the mint becomes reachable, the receiver checks, refreshes, or swaps
   the proofs to establish finality.
 
-This is useful for small, bounded local payments: meals and supplies on a ship,
-community store purchases, clinic logistics, local transport, emergency fuel,
-or temporary mutual-aid activity. It should not be presented as unconditional
-settlement. It is a continuity mechanism for payment material until the
-external mint can be consulted again.
+This is useful for small, bounded local payments: meals and supplies on a ship
+or resort, community store purchases, clinic logistics, local transport,
+workspace services, or temporary mutual-aid activity. It should not be
+presented as unconditional settlement. It is a continuity mechanism for payment
+material until the external mint can be consulted again.
 
 When mints are unavailable, a payment may not be exact. Without mint access,
 the sending Acorn may not be able to swap proofs into exact denominations. The

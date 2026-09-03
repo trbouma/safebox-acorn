@@ -109,7 +109,7 @@ independence and support that fits their needs while encrypted state remains
 portable.
 
 This is useful during ordinary provider changes, site moves, regional service
-interruptions, and physical disruption. A home, office, resort, community
+interruptions, and maintenance windows. A home, office, resort, community
 facility, device, or data centre can become temporarily unreachable. Copies in
 independently operated locations provide additional recovery paths.
 

@@ -24,8 +24,8 @@ the missing questions visible.
 
 The word **wallet** is commonly used for both a container and everything the
 container manages. That makes it difficult to distinguish the application from
-the resources that must survive when the application, device, or provider is
-replaced.
+the resources that must remain portable when the application, device, or
+provider is replaced.
 
 The word **credential** is sometimes extended to cover nearly every important
 digital object. Credentials are valuable, but they are a specialized kind of

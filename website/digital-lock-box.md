@@ -48,9 +48,9 @@ hold a small number of high-value resources well.
 ## A household safekeeping appliance
 
 The long-term product direction is straightforward: a Safebox appliance that
-could have a place in every home, much as a physical safe, emergency kit, or
-fire-resistant document box does today. It would safeguard three bounded
-classes of resources:
+could have a place in every home, office, resort, or community facility, much
+as a physical safe or fire-resistant document box does today. It would
+safeguard three bounded classes of resources:
 
 1. **Master keys** — recovery and authority material needed to regain control
    of an Acorn and the resources it protects;
@@ -94,15 +94,15 @@ local access and carry payment messages across a direct, community-operated
 network.
 
 The user-facing name for this capability is **Continuity Payments**. The phrase
-keeps the emphasis on what people need in a disruption: enough local payment
-continuity for households, organizations, and communities to keep operating
-while final mint reconciliation is temporarily unavailable.
+keeps the emphasis on what people need during limited connectivity: enough
+local payment continuity for households, organizations, and communities to keep
+operating while final mint reconciliation is temporarily unavailable.
 
 For example, a cruise ship or resort might normally use a mint that connects to
 external payment services, but have limited outside connectivity for hours. A
 remote community may have a local network but only intermittent satellite
 service. A co-working facility may keep local access and member services
-running while a provider outage is resolved. In each case, people are not fully
+running while a provider interruption is resolved. In each case, people are not fully
 disconnected from one another; they are locally connected while outside systems
 are temporarily unavailable.
 
@@ -151,10 +151,11 @@ payment request and complete the normal online payment flow. In local or mesh
 mode it could exchange an ecash transfer directly with another Safebox or
 participating device and preserve the pending transfer until mint access
 returns. This gives the same appliance a practical community role: it can be a
-safe during ordinary life and a local point of exchange during disruption.
+safe during ordinary life and a local point of exchange when outside services
+are interrupted.
 
 The point is not limited to formal emergencies. The same preparation matters
-during regional outages, seasonal storms, travel, site moves, remote
+during regional service interruptions, seasonal travel, site moves, remote
 operations, provider transitions, or the sudden loss of a trusted service.
 Safebox combines a continuity reserve with the essential records a person,
 organization, resort, or community may need while normal channels are restored.
@@ -173,18 +174,18 @@ That local home is not the only copy:
 local Safebox appliance
 ├── Acorn component, keys, and execution
 ├── local relay
-├── emergency funds
-└── critical encrypted records
+├── essential funds and credits
+└── important encrypted records
          │
          ├── encrypted replica on another household appliance
          ├── encrypted replica on community infrastructure
          └── encrypted replica with selected service providers
 ```
 
-Replication provides continuity across device loss, local infrastructure
-failure, displacement, wildfire, flood, earthquake, service interruption, or
-institutional failure. The independent hosts provide availability without
-receiving normal plaintext access to the records they hold.
+Replication provides continuity across device replacement, provider changes,
+site moves, regional service interruptions, and local infrastructure problems.
+The independent hosts provide availability without receiving normal plaintext
+access to the records they hold.
 
 This is closer to a network of **reciprocal safes** than a shared folder.
 Participants help preserve one another's encrypted resources while each
@@ -292,9 +293,9 @@ design, its secure element could hold a key or unlock an encrypted bootstrap
 package. The Acorn holds the funds and records in its protected, relay-backed
 state.
 
-A recipient could then use the card at a Safebox terminal operated by an
-emergency food bank, shelter, clinic, community distribution point, or mobile
-response team:
+A recipient could then use the card at a Safebox terminal operated by a food
+bank, clinic, community distribution point, resort service desk, co-working
+front desk, or mobile response team:
 
 ```text
 issuer provides card + PIN
@@ -308,12 +309,12 @@ recipient taps at a Safebox terminal
 ```
 
 When infrastructure is connected, the terminal can check and refresh ecash
-through the issuing mint. During a disruption, participating Safeboxes can
-carry a provisional ecash transfer over local relays or the community mesh and
-reconcile it when mint access returns. This can preserve access to food,
-medicine, shelter, transportation, and other essential resources without
-requiring every participant to reach a remote application at the moment of
-need.
+through the issuing mint. During a service interruption, participating
+Safeboxes can carry a provisional ecash transfer over local relays or the
+community network and reconcile it when mint access returns. This can preserve
+access to food, medicine, lodging, transportation, workspace, and other
+essential services without requiring every participant to reach a remote
+application at the moment of need.
 
 The same Acorn could hold a community-issued record relevant to the exchange:
 for example, an entitlement, referral, authorization, membership, care
@@ -325,10 +326,10 @@ integrity, and associated control events.
 OpenETR verification does not make the terminal the authority. It lets the
 terminal evaluate whether the artifact matches what was issued, which keys
 signed the relevant events, how control or status changed, and whether the
-relying community recognizes those keys and rules. During an outage, this
-verification is limited to the record history and recognition material already
-available through local relays or synchronized Safeboxes; new or missing state
-can be reconciled when connectivity returns.
+relying community recognizes those keys and rules. During limited connectivity,
+this verification is limited to the record history and recognition material
+already available through local relays or synchronized Safeboxes; new or
+missing state can be reconciled when connectivity returns.
 
 Funds and records should remain separately controlled. Presenting an
 eligibility or authorization record must not expose every private record or the
@@ -355,13 +356,13 @@ recovery path if the appliance or Safebox Key is lost, damaged, or locked.
 ## Four modes of continuity
 
 Safebox should not be reduced to a binary choice between online and offline.
-It can change how it operates as infrastructure becomes unavailable, moving
-from ordinary network access to increasingly local forms of continuity.
+It can change how it operates as connectivity changes, moving from ordinary
+network access to increasingly local forms of continuity.
 
 | Mode | Available connectivity | Primary purpose |
 | --- | --- | --- |
 | **Connected Mode** | Normal Ethernet or Wi-Fi with upstream access | Relay synchronization, mint access, replication, updates, and ordinary use |
-| **Local Mode** | A temporary Safebox SSID without upstream access | Operate the local Safebox from a nearby phone or computer when external networks are unavailable |
+| **Local Mode** | A temporary Safebox SSID without upstream access | Operate the local Safebox from a nearby phone or computer during limited connectivity |
 | **Mobile Mode** | A phone or other mobile device supplies upstream connectivity | Reach relays and mints through cellular service without making the mobile device the custodian of Safebox keys |
 | **Community Mode** | Nearby Safeboxes and participating devices communicate directly | Exchange signed events, carry messages, and preserve encrypted replicas until broader connectivity returns |
 
@@ -399,7 +400,7 @@ must be transferred immediately.
 
 ### Community Mode
 
-Community Mode makes reciprocal resilience operational during a wider outage.
+Community Mode makes reciprocal resilience operational across a nearby network.
 Nearby Safeboxes or participating devices can discover approved peers and
 exchange signed events, encrypted messages, and opaque replicas without
 requiring a central internet connection. A participant that later regains
@@ -427,7 +428,8 @@ delayed state can be reconciled when normal infrastructure returns.
 
 ### Graceful degradation has limits
 
-The four modes do not make every operation equally available during an outage:
+The four modes do not make every operation equally available during limited
+connectivity:
 
 - private records and previously synchronized signed events can remain locally
   available;
@@ -642,10 +644,11 @@ community elder, local health worker, or midwife and later receive an
 attestation from a regional or national registry. The later event does not need
 to erase the earlier evidence or the community context in which it mattered.
 
-This makes the model useful where national infrastructure is absent,
-inaccessible, distrusted, or temporarily unavailable. Communities can preserve
-continuity using authorities they already recognize without foreclosing later
-interoperability with larger institutions.
+This makes the model useful where communities want locally meaningful evidence
+to remain available before, during, and after interaction with regional or
+national systems. Communities can preserve continuity using authorities they
+already recognize without foreclosing later interoperability with larger
+institutions.
 
 ## Keys provide evidence, not identity
 
@@ -742,7 +745,7 @@ product lessons.
 | [Arca](https://arcasafes.com/) | A physical digital safe for keys, files, recovery material, isolated tenants, and geographically distributed Swarm mirroring | Closest to the appliance and reciprocal-safe concepts, but not organized around Acorn's protocol-portable funds, relay events, four continuity modes, and community mesh operation |
 | [Passport Prime](https://foundation.xyz/2024/12/introducing-passport-prime/) | Secure keys, PIN-protected hardware, encrypted files, NFC recovery cards, USB-C, and a phone companion | A personal security device rather than a household relay appliance or community replication network |
 | [Start9](https://start9.com/) and [Umbrel Home](https://umbrel.com/umbrel-home) | Small personal servers providing private services, storage, and Bitcoin infrastructure | General-purpose home servers rather than bounded continuity safes for recoverable funds and essential records |
-| [Smarana](https://mysmarana.com/) and [DataBunker](https://databunker1.com/) | Family readiness, emergency documents, local or offline storage, and disaster recovery | Records-focused products without integrated ecash, relay-backed signed events, or reciprocal protocol replication |
+| [Smarana](https://mysmarana.com/) and [DataBunker](https://databunker1.com/) | Family readiness, important documents, local or offline storage, and recovery planning | Records-focused products without integrated ecash, relay-backed signed events, or reciprocal protocol replication |
 | [Meshtastic](https://meshtastic.org/) and [Berty](https://berty.tech/features/) | Infrastructure-independent communication, nearby device pairing, and off-grid message exchange | Communication systems rather than safekeeping appliances for keys, funds, records, and recovery state |
 
 These precedents show that the individual building blocks are understandable
@@ -777,8 +780,8 @@ The defensible product claim is therefore one of **distinct synthesis**, not
 the invention of every underlying mechanism:
 
 > **Safebox combines established ideas from personal servers, secure hardware,
-> preparedness, digital cash, and resilient networking into a distinct digital
-> lock box architecture.**
+> operational readiness, digital cash, and resilient networking into a distinct
+> digital lock box architecture.**
 
 This comparison is illustrative rather than exhaustive and is not a patent,
 trademark, or formal novelty search. Adjacent products will continue to evolve;

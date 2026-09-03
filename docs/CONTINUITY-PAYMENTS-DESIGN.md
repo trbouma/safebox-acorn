@@ -4,8 +4,8 @@
 
 This note defines the first experimental implementation of Continuity Payments
 between Safebox wallets. It is intentionally narrow. The purpose is to preserve
-useful local payment capability during an external outage without describing a
-provisional transfer as settled.
+useful local payment capability during limited connectivity without describing
+a provisional transfer as settled.
 
 ## User outcome
 
@@ -13,10 +13,11 @@ A user can choose **Continuity** while paying another Safebox address. Safebox
 then transfers previously issued Cashu proofs directly to the recipient without
 contacting the mint or attempting a Lightning payment.
 
-This supports a community that remains connected locally while its wider
-network path is unavailable. A ship, remote community, or emergency site can
-continue exchanging payment material over its available relay or mesh and
-reconcile with the mint after connectivity returns.
+This supports a community or facility that remains connected locally while its
+outside network path is unavailable. A ship, resort, remote community,
+co-working facility, or field site can continue exchanging payment material
+over its available relay or mesh and reconcile with the mint after connectivity
+returns.
 
 ## Two payment modes
 
@@ -64,8 +65,8 @@ the settlement boundary visible. When the user chooses **Finalize Pending
 Transactions**, Acorn attempts to refresh every pending receipt with its mint.
 A Safebox finalization action first collects addressed relay transfers into the
 pending journal without contacting a mint, then runs reconciliation as a
-separate phase. A mint outage or timeout therefore cannot interrupt durable
-collection.
+separate phase. A mint timeout or period of unavailability therefore cannot
+interrupt durable collection.
 
 When two or more pending receipts use the same sat-denominated mint, Acorn can
 combine their bearer proofs into one finalization swap. This is particularly

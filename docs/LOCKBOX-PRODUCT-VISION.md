@@ -27,10 +27,10 @@ communities that want custody, records, payments, storage, local credits, and
 relay continuity under local stewardship.
 
 The ordinary user experience can still be web-connected. A person may use a
-hosted Safebox Web service in normal conditions, then fall back to their local
-Lockbox when a provider, service, or internet connection is unavailable. The
-future Mainstay app should provide the same user entry point across those modes
-rather than becoming a separate emergency-only tool.
+hosted Safebox Web service in normal conditions, then use their local Lockbox
+when a provider, service, or internet connection is unavailable. The future
+Mainstay app should provide the same user entry point across those modes rather
+than becoming a separate special-purpose tool.
 
 The initial target platform is:
 
@@ -141,8 +141,8 @@ Working sentence for Mainstay:
 
 ```text
 Mainstay is a local-first application for records, identity, payments, and
-community resource coordination that keeps working across connected and
-disrupted conditions.
+community resource coordination that keeps working across connected, local,
+mobile, and community conditions.
 ```
 
 Working sentence for Lockbox:
@@ -305,15 +305,15 @@ into a mint operator.
 
 ## Continuity Payments
 
-**Continuity Payments** are a powerful future Lockbox capability: Acorns should
-be able to keep making local payments to one another when the wider network,
-Lightning, or Cashu mints are unavailable.
+**Continuity Payments** are a future Lockbox capability for limited-connectivity
+local commerce: Acorns should be able to make local payments to one another
+when outside payment paths, Lightning, or Cashu mints are unavailable.
 
 The user-facing idea is simple:
 
 ```text
-When ordinary payment infrastructure is unavailable, nearby Acorns can still
-transfer previously issued ecash locally and reconcile with mints later.
+During a payment-service interruption, nearby Acorns can transfer previously
+issued ecash locally and reconcile with mints later.
 ```
 
 Under the hood, this is an in-kind ecash transfer. The payment object itself is
@@ -324,29 +324,30 @@ mint.
 This creates a useful continuity path for individuals, organizations, and
 communities:
 
-- a remote community can keep local commerce moving during a satellite or
-  upstream internet outage;
-- a ship, camp, clinic, or field operation can keep ordinary small payments
-  working while its upstream link is blocked, expensive, or intermittent;
-- an organization can continue limited local operations while payment
-  infrastructure is degraded;
+- a remote community can keep local commerce moving during limited satellite or
+  upstream connectivity;
+- a ship, camp, clinic, resort, or field operation can keep ordinary small
+  payments working while its upstream link is expensive or intermittent;
+- an organization can continue local operations while a payment provider is
+  slow or unavailable;
 - two Acorns can exchange bearer proof material through local network, mesh, or
   appliance-mediated transport;
 - Spurline can preserve the local payment events and evidence;
 - when connectivity returns, Acorn can contact the relevant mints to refresh or
   swap received proofs and determine finality.
 
-### Scenario: local commerce during intermittent connectivity
+### Scenario: Local Commerce During Intermittent Connectivity
 
 Imagine a community that normally uses a Cashu mint connected to global payment
 infrastructure. In ordinary **Connected Mode**, people can deposit, pay,
 receive, and reconcile normally. Their Acorns hold spendable proofs issued by
 the mint, and the mint provides final spend-state confirmation.
 
-Now the upstream link becomes unreliable. A cruise ship may lose or ration its
-satellite connection. A remote community may have a shared satellite service
-that is sketchy at best. An emergency site may retain a local network while
-internet, mobile service, banks, and Lightning routes are unavailable.
+Now the upstream link becomes unreliable. A cruise ship or resort may ration
+its satellite connection. A remote community may have intermittent shared
+satellite service. A co-working facility, clinic, or field operation may retain
+a local network while outside payment and connectivity providers are
+unavailable.
 
 Inside the local environment, people are not isolated from each other. They may
 still have Wi-Fi, local Ethernet, Bluetooth, LoRa, a mesh network, or a
@@ -365,7 +366,7 @@ connectivity restored
 ```
 
 This does not make Lockbox a mint, bank, or global settlement network. It gives
-the community a practical local payment continuity layer while the global
+the community a practical local payment continuity layer while the outside
 payment path is unavailable. The user app should keep that boundary visible:
 local transfer now, mint finality later.
 
@@ -380,9 +381,10 @@ mint finality pending
 reconciliation required when connected
 ```
 
-The product should also handle non-exact payments. When the mint is offline,
-Acorn may not be able to swap proofs to make exact change. The user app should
-calculate the closest transferable proof set and ask for explicit approval:
+The product should also handle non-exact payments. When the mint cannot be
+reached, Acorn may not be able to swap proofs to make exact change. The user
+app should calculate the closest transferable proof set and ask for explicit
+approval:
 
 ```text
 Requested: 100 sats
@@ -426,7 +428,7 @@ flows around it.
 
 ### Acorn
 
-Acorn is the continuity and authority runtime. It coordinates keys, signing,
+Acorn is the continuity and authorization runtime. It coordinates keys, signing,
 wallet state, Nostr events, encrypted records, transfer flows, and recovery
 material.
 
@@ -441,7 +443,7 @@ plaintext records they represent.
 ### Spurline
 
 Spurline provides the local-first Nostr relay. It should preserve events
-locally, support continuity during network disruption, and eventually
+locally, support continuity during network interruptions, and eventually
 participate in selective synchronization with the broader relay network and
 local mesh.
 

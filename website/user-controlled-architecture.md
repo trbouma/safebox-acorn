@@ -43,7 +43,7 @@ provider account
 This arrangement is efficient and familiar, but it concentrates continuity in
 one administrative system. If the application closes, changes its terms,
 loses data, disables an account, or stops supporting an export format, the
-user's practical ability to continue may disappear with it.
+user's practical ability to continue may be interrupted with it.
 
 Backups can protect the provider. Data exports can help the user. Neither, by
 itself, makes another application capable of continuing the same key authority and
@@ -179,15 +179,15 @@ identity services.
 A Safebox provider, for example, can operate Acorn as a private component on
 the user's behalf. The provider supplies the execution environment and user
 experience. The design remains user-controlled when recovery material,
-portable state, and compatible alternatives provide a practical way to leave
-or recover if that provider is no longer available.
+portable state, and compatible alternatives provide a practical way to change
+providers or recover if that provider is no longer available.
 
 This creates a middle path between complete SaaS dependence and demanding that
 every person become an infrastructure specialist:
 
 ```text
-dependable services when they work;
-portable continuity when they do not.
+dependable services in ordinary use;
+portable continuity when conditions change.
 ```
 
 ## What the inversion enables
@@ -207,8 +207,8 @@ When the model works as intended, a user can:
 These are not automatic guarantees. They require careful key handling,
 compatible implementations, suitable relays, sound recovery procedures, and
 clear mint and issuer boundaries. Acorn's purpose is to make those paths part
-of the architecture rather than emergency features added after lock-in has
-already occurred.
+of the architecture from the beginning rather than special-case features added
+after lock-in has already occurred.
 
 [Explore the Nostr-native approach](nostr-native-approach.md){ .md-button .md-button--primary }
 [Explore user-controlled keys, funds and records](user-controlled-funds-and-records.md){ .md-button }
