@@ -346,6 +346,6 @@ publish, reconcile, and settle.
 The product promise should be local continuity, not unilateral finality:
 
 ```text
-Lockbox preserves local authority, continuity, and evidence.
+Lockbox preserves local stewardship, continuity, and evidence.
 External systems decide what they recognize.
 ```

@@ -2,11 +2,12 @@
 
 ## A community continuity scenario
 
-A satellite link goes down. A distant cloud service starts behaving
-unpredictably. A tornado takes out the local registry office and bank. Solar
-power and backup systems are keeping the electricity on, but the community has
-lost access to much of what it needs to function: payment services, critical
-records, local evidence, and the remote systems used to coordinate them.
+A community, resort, campus, or co-working facility may still have people,
+staff, devices, local power, and a local network even when outside services are
+slow or unavailable. A payment provider may be unreachable. A booking or access
+system may be offline. A registry, health-record system, or cloud application
+may be temporarily inaccessible. The community still needs to coordinate the
+work in front of it.
 
 The people, funds, and records have not disappeared. Access to the distant
 infrastructure has. Mainstay provides the local point of continuity, while a
@@ -22,8 +23,8 @@ local home for Mainstay and its supporting services.
 
 Together, they bring Acorn, Safebox Web, Grove, Spurline, and optional Clear
 mints into a coherent experience for individuals, organizations, and
-communities that want custody, records, payments, storage, local currencies,
-and relay continuity under local control.
+communities that want custody, records, payments, storage, local credits, and
+relay continuity under local stewardship.
 
 The ordinary user experience can still be web-connected. A person may use a
 hosted Safebox Web service in normal conditions, then fall back to their local
@@ -40,8 +41,8 @@ with a physical keypad and TROPIC01 HSM
 
 Lockbox should feel like an appliance rather than a hosted web application. It
 should boot predictably, run locally, expose a clear local web interface, keep
-state on durable local storage, and use hardware-backed controls for sensitive
-authority.
+state on durable local storage, and use hardware-backed approval for sensitive
+actions.
 
 The existing sibling architecture is the foundation Mainstay will unify:
 
@@ -155,11 +156,11 @@ Alternate:
 
 ```text
 Lockbox is the local home for the Acorn stack: custody, records, storage, and
-relay continuity, with optional local currencies, running under your control.
+relay continuity, with optional local credits, running under local stewardship.
 ```
 
 The product should emphasize practical local continuity rather than isolation.
-Network services can assist, but local presence controls authority.
+Network services can assist, but sensitive actions stay locally approved.
 
 ## Appliance model
 
@@ -184,13 +185,13 @@ boundary:
 - the keypad supports local presence, PIN entry, unlock, approval, and recovery
   flows;
 - the HSM protects key material and constrains sensitive operations;
-- the web interface can request authority, but local hardware should approve or
+- the web interface can request an action, but local hardware should approve or
   deny high-risk actions.
 
 ## Design principle
 
 ```text
-Network services can assist, but local presence controls authority.
+Network services can assist, but sensitive actions stay locally approved.
 ```
 
 This principle should shape both the product experience and the internal
@@ -203,7 +204,7 @@ architecture:
   provide bounded local currency under an organization's own treasury policy;
 - web workflows may be convenient, but Acorn owns the protocol runtime;
 - browser sessions may request actions, but keypad and HSM-backed policies
-  should govern sensitive authority;
+  should govern sensitive approvals;
 - hosted operators may provide support, but Lockbox should keep a credible path
   to local continuity.
 
@@ -233,14 +234,14 @@ Lockbox should give the user app a clear vocabulary for how it is operating:
 | --- | --- |
 | **Connected Mode** | Normal use with upstream internet, hosted services, relays, external mints, local Clear currencies, synchronization, and updates available. |
 | **Local Mode** | Direct local use of the Lockbox appliance without upstream internet; the user reaches local Acorn, Spurline, Grove, and any configured Clear mint nearby. |
-| **Mobile Mode** | A phone or other nearby device provides temporary upstream connectivity while Lockbox remains the local authority environment. |
+| **Mobile Mode** | A phone or other nearby device provides temporary upstream connectivity while Lockbox keeps sensitive approvals local. |
 | **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages through local or mesh transport. |
 
 The app can hardcode **Connected Mode** at first. Later releases can determine
 mode from actual service reachability, local pairing state, bridge state, and
 community mesh participation.
 
-## Local internal economies with Clear
+## Local credits and vouchers with Clear
 
 **Clear** adds an optional local-first mint to the Mainstay family. It uses
 Cashu bearer proofs for private transfer and double-spend protection, but it
@@ -249,14 +250,16 @@ root authority establishes governance, authorized treasurers approve issuance
 and retirement, and participating people and providers decide whether to
 recognize that specific currency.
 
-This makes Clear suitable for organizations and communities that want an
-internal economy without adopting Bitcoin or operating Lightning
+This makes Clear suitable for organizations and communities that want bounded
+credits or vouchers without adopting Bitcoin or operating Lightning
 infrastructure. Examples include:
 
 - a church coordinating meal, transportation, or benevolence vouchers;
 - a food-bank network issuing credits recognized by participating providers;
-- a campus, event, camp, or community association allocating services;
-- an emergency operation coordinating scarce local supplies; and
+- a campus, event, camp, co-working facility, or community association
+  allocating services;
+- an Indigenous community program or local service network coordinating
+  recognized credits; and
 - a resort running guest credits, staff allowances, activity vouchers, or a
   localized payment system on its own network.
 

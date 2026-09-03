@@ -7,11 +7,12 @@ description: How Mainstay and Lockbox bring Acorn, Safebox Web, Grove, Spurline,
 
 ## A community continuity scenario
 
-A satellite link goes down. A distant cloud service starts behaving
-unpredictably. A tornado takes out the local registry office and bank. Solar
-power and backup systems are keeping the electricity on, but the community has
-lost access to much of what it needs to function: payment services, critical
-records, local evidence, and the remote systems used to coordinate them.
+A community, resort, campus, or co-working facility may still have people,
+staff, devices, local power, and a local network even when outside services are
+slow or unavailable. A payment provider may be unreachable. A booking or access
+system may be offline. A registry, health-record system, or cloud application
+may be temporarily inaccessible. The community still needs to coordinate the
+work in front of it.
 
 The people, funds, and records have not disappeared. Access to the distant
 infrastructure has. This is the moment Mainstay is intended for: providing a
@@ -152,7 +153,7 @@ unlock, approval, and recovery flows. The HSM provides a hardware-backed
 boundary for sensitive key material and signing operations. The web interface
 can request authority, but local hardware should govern high-risk actions.
 
-> Network services can assist. Local presence controls authority.
+> Network services can assist. Sensitive actions stay locally approved.
 
 ## Continuity modes
 
@@ -162,14 +163,14 @@ Lockbox gives the user app four plain operating modes:
 | --- | --- |
 | **Connected Mode** | Normal connected use with hosted services, relays, external mints, optional Clear currencies, synchronization, and updates available. |
 | **Local Mode** | Direct local use of the Lockbox appliance, including any configured Clear mint, when upstream internet or hosted services are unavailable. |
-| **Mobile Mode** | A phone or nearby device supplies temporary upstream connectivity while Lockbox remains the local authority environment. |
+| **Mobile Mode** | A phone or nearby device supplies temporary upstream connectivity while Lockbox keeps sensitive approvals local. |
 | **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages locally. |
 
 The current Safebox Web app can start by showing **Connected Mode**. Later
 versions can determine mode from service reachability, local pairing, bridge
 state, and community mesh participation.
 
-## Local internal economies with Clear
+## Local credits and vouchers with Clear
 
 Clear extends the Mainstay family beyond globally connected payments. It is an
 optional local-first mint for organizations and communities that want to create
@@ -186,7 +187,7 @@ This can support:
 
 - church meal, transportation, or benevolence vouchers;
 - food-bank credits recognized by participating providers;
-- campus, event, camp, or emergency allocations; and
+- campus, event, camp, member, or community-program allocations; and
 - a resort payment system for guest credits, staff allowances, shops,
   restaurants, and activities on the resort's own network.
 
@@ -239,13 +240,13 @@ with clear settlement boundaries:
 - mint finality is pending;
 - reconciliation happens when the mint is reachable again.
 
-A practical example is a cruise ship, remote community, or emergency response
-site that normally uses a mint connected to global payments. If the satellite
-link is blocked, rationed, or unreliable, the people nearby may still be able
-to reach each other over a local network or mesh. Continuity Payments would let
-them keep making small local payments from ecash already held by their Acorns,
-then refresh or reconcile those proofs with the mint when the global link
-returns.
+A practical example is a cruise ship, remote community, resort, or shared
+facility that normally uses a mint connected to external payment services. If
+the outside link is unavailable, rationed, or unreliable, the people nearby may
+still be able to reach each other over a local network or mesh. Continuity
+Payments would let them keep making small local payments from ecash already
+held by their Acorns, then refresh or reconcile those proofs with the mint when
+the outside link returns.
 
 When the mint is offline, a payment may not be exact because proofs cannot be
 swapped for change. Safebox Web should show the closest transferable amount,

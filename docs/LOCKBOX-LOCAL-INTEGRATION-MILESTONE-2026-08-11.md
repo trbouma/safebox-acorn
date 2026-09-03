@@ -148,7 +148,7 @@ Spurline and Grove can run locally as ordinary services.
 That supports the Lockbox product direction:
 
 ```text
-Lockbox preserves local authority, continuity, and evidence.
+Lockbox preserves local stewardship, continuity, and evidence.
 ```
 
 The important architectural point is that no single hosted service is required

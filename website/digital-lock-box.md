@@ -1,23 +1,23 @@
 ---
 title: Safebox and the Digital Lock Box
-description: Product positioning for Safebox as a digital lock box and community continuity system for master keys, emergency funds, critical records, and local mesh payments, powered by the Acorn protocol component.
+description: Product positioning for Safebox as a digital lock box and community continuity system for master keys, essential records, bounded funds, and local payments, powered by the Acorn protocol component.
 ---
 
 # Safebox and the digital lock box
 
-![Concept illustration of a compact Safebox appliance with an integrated keypad, NFC tap point, short LoRa-style antenna, and physical Wi-Fi control, ready beside a small emergency bag, car keys, five passports, an emergency folder, and a family photograph](assets/images/safebox-appliance-concept.jpg)
+![Concept illustration of a compact Safebox appliance with an integrated keypad, NFC tap point, short LoRa-style antenna, and physical Wi-Fi control, ready beside travel documents, keys, essential records, and a family photograph](assets/images/safebox-appliance-concept.jpg)
 
-*An illustrative product concept: Safebox alongside the final essentials a
-household or community might need to keep close, recoverable, and usable. The
+*An illustrative product concept: Safebox alongside the essentials a household,
+organization, resort, or community might need to keep close, recoverable, and usable. The
 concept includes a physical keypad, Safebox Key tap point, short LoRa-style
 antenna, and deliberately activated local Wi-Fi. Final hardware and enclosure
 design may differ.*
 
-## Emergency funds and critical records, kept ready
+## Essential funds and records, kept ready
 
 Safebox is a digital lock box: a deliberately compact place for the funds,
 master keys, and records that a person, family, organization, or community
-cannot afford to lose when ordinary systems become unavailable.
+needs to keep available when ordinary systems change or become unavailable.
 
 Safebox is the product people use. **Acorn is the protocol-first component
 inside it**, providing portable key authority, private records, funds logic,
@@ -27,17 +27,17 @@ It is not intended to be a generalized storage device, a replacement for a
 cloud drive, or an archive of everything a person has ever created. Its purpose
 is narrower and more consequential:
 
-> **Safeguard the resources that must remain recoverable and usable during
-> disruption.**
+> **Safeguard the resources that must remain recoverable, understandable, and
+> usable when conditions change.**
 
 A Safebox might contain:
 
-- emergency funds;
+- essential funds or service credits;
 - birth certificates and civil records;
 - passport and travel-document copies;
 - health records, prescriptions, and care instructions;
 - property, insurance, and legal records;
-- emergency contacts and recovery instructions;
+- important contacts and recovery instructions;
 - community-issued records and attestations; and
 - evidence needed to establish the origin, integrity, status, or control of an
   important record.
@@ -54,10 +54,10 @@ classes of resources:
 
 1. **Master keys** — recovery and authority material needed to regain control
    of an Acorn and the resources it protects;
-2. **Emergency funds** — a deliberately limited reserve kept available for
-   disruption and recovery; and
-3. **Critical records** — the small set of documents and evidence that must
-   survive device, provider, network, and building loss.
+2. **Essential funds** — a deliberately limited reserve or service-credit
+   balance kept available for continuity; and
+3. **Essential records** — the small set of documents and evidence that must
+   remain available through device, provider, network, or site changes.
 
 “Master keys” does not mean that Safebox should become a general password
 manager or collect every credential a household uses. It means the root
@@ -76,38 +76,38 @@ The aim is not to put another indispensable platform in every home. It is to
 make dependable household safekeeping practical without making any one device,
 application, relay, mint, or service provider irreplaceable.
 
-## Community mesh payment system
+## Local continuity payments
 
-Some people keep **earthquake money**: a modest reserve for transportation,
+Many households and organizations keep a modest reserve for transportation,
 temporary accommodation, food, medicine, communication, and other immediate
-needs when an emergency interrupts normal services. That is a useful starting
-point, but the broader need is not merely to preserve one household's reserve.
-A disrupted community may also need a way to continue exchanging value when
-ordinary payment terminals, banks, mobile networks, Lightning routes, or
-internet services are unavailable.
+needs when ordinary services are interrupted. That is a useful starting point,
+but the broader need is not merely to preserve one household's reserve. A
+community, resort, campus, or shared facility may also need a way to continue
+exchanging value when ordinary payment terminals, mobile networks, Lightning
+routes, or internet services are unavailable.
 
-Safebox generalizes the earthquake-money idea into a **community mesh payment
-system**. An Acorn can hold a deliberately limited reserve of ecash, while a
-local relay running in the Safebox appliance keeps the wallet's signed state
-available without an internet connection. Nearby Safeboxes and participating
-devices can provide local access and carry payment messages across a direct,
-community-operated mesh.
+Safebox generalizes this reserve into **Continuity Payments**. An Acorn can
+hold a deliberately limited reserve of ecash, while a local relay running in
+the Safebox appliance keeps the wallet's signed state available without an
+internet connection. Nearby Safeboxes and participating devices can provide
+local access and carry payment messages across a direct, community-operated
+network.
 
 The user-facing name for this capability is **Continuity Payments**. The phrase
 keeps the emphasis on what people need in a disruption: enough local payment
 continuity for households, organizations, and communities to keep operating
 while final mint reconciliation is temporarily unavailable.
 
-For example, a cruise ship might normally use a mint that enables global
-payments, but lose reliable satellite access for hours. A remote community may
-have a local network but only intermittent satellite service. An emergency
-site may keep local communications running after internet, mobile service,
-bank terminals, or Lightning routes have failed. In each case, people are not
-fully disconnected from one another; they are locally connected while globally
-cut off.
+For example, a cruise ship or resort might normally use a mint that connects to
+external payment services, but have limited outside connectivity for hours. A
+remote community may have a local network but only intermittent satellite
+service. A co-working facility may keep local access and member services
+running while a provider outage is resolved. In each case, people are not fully
+disconnected from one another; they are locally connected while outside systems
+are temporarily unavailable.
 
-> **One Safebox can preserve emergency funds. A mesh of Safeboxes can help a
-> community continue exchanging value during disruption.**
+> **One Safebox can preserve essential funds. A network of Safeboxes can help a
+> community continue exchanging value when outside services are unavailable.**
 
 A possible offline flow is:
 
@@ -153,11 +153,11 @@ participating device and preserve the pending transfer until mint access
 returns. This gives the same appliance a practical community role: it can be a
 safe during ordinary life and a local point of exchange during disruption.
 
-The point is not limited to earthquakes. The same preparation matters during
-wildfires, floods, storms, displacement, prolonged outages, infrastructure
-failure, politically turbulent conditions, or the sudden loss of a trusted
-service. Safebox combines the emergency reserve with the critical records a
-person or community may need during and after the disruption.
+The point is not limited to formal emergencies. The same preparation matters
+during regional outages, seasonal storms, travel, site moves, remote
+operations, provider transitions, or the sudden loss of a trusted service.
+Safebox combines a continuity reserve with the essential records a person,
+organization, resort, or community may need while normal channels are restored.
 
 ## A local home with independent continuity
 
@@ -279,11 +279,11 @@ shared custodian or acquire authority over another participant's Acorn.
 
 ### Community-issued funds and records
 
-This terminal model can support practical emergency-distribution programs. A
-community, aid organization, food bank, local authority, or other recognized
-issuer could provision a bounded Acorn with emergency funds and provide the
-recipient with a secure NFC card and PIN through which that Acorn can be
-accessed.
+This terminal model can support practical distribution and service-credit
+programs. A community, aid organization, food bank, local government, resort,
+co-working operator, or other recognized issuer could provision a bounded
+Acorn with funds or credits and provide the recipient with a secure NFC card
+and PIN through which that Acorn can be accessed.
 
 The distinction between card and wallet should remain clear. The NFC card is a
 portable access and authorization factor for the Acorn; it need not hold
@@ -297,9 +297,9 @@ emergency food bank, shelter, clinic, community distribution point, or mobile
 response team:
 
 ```text
-community issues card + PIN
+issuer provides card + PIN
   -> card gives controlled access to the recipient's Acorn
-  -> Acorn contains issued emergency funds and relevant records
+  -> Acorn contains issued funds, credits, and relevant records
 recipient taps at a Safebox terminal
   -> terminal identifies payment or record-presentation mode
   -> PIN confirms the recipient's intended action
@@ -741,7 +741,7 @@ product lessons.
 | --- | --- | --- |
 | [Arca](https://arcasafes.com/) | A physical digital safe for keys, files, recovery material, isolated tenants, and geographically distributed Swarm mirroring | Closest to the appliance and reciprocal-safe concepts, but not organized around Acorn's protocol-portable funds, relay events, four continuity modes, and community mesh operation |
 | [Passport Prime](https://foundation.xyz/2024/12/introducing-passport-prime/) | Secure keys, PIN-protected hardware, encrypted files, NFC recovery cards, USB-C, and a phone companion | A personal security device rather than a household relay appliance or community replication network |
-| [Start9](https://start9.com/) and [Umbrel Home](https://umbrel.com/umbrel-home) | Small personal servers providing private services, storage, and Bitcoin infrastructure | General-purpose home servers rather than bounded emergency safes for recoverable funds and critical records |
+| [Start9](https://start9.com/) and [Umbrel Home](https://umbrel.com/umbrel-home) | Small personal servers providing private services, storage, and Bitcoin infrastructure | General-purpose home servers rather than bounded continuity safes for recoverable funds and essential records |
 | [Smarana](https://mysmarana.com/) and [DataBunker](https://databunker1.com/) | Family readiness, emergency documents, local or offline storage, and disaster recovery | Records-focused products without integrated ecash, relay-backed signed events, or reciprocal protocol replication |
 | [Meshtastic](https://meshtastic.org/) and [Berty](https://berty.tech/features/) | Infrastructure-independent communication, nearby device pairing, and off-grid message exchange | Communication systems rather than safekeeping appliances for keys, funds, records, and recovery state |
 
@@ -751,7 +751,7 @@ and useful. Safebox's distinction is the way they are composed:
 ```text
 physical household appliance
 + Safebox Key and PIN ceremony
-+ emergency funds and critical records
++ essential funds and records
 + protocol-portable Acorn authority
 + local relay
 + encrypted reciprocal replication
@@ -760,7 +760,7 @@ physical household appliance
 ```
 
 The result is not merely a personal server, hardware wallet, encrypted drive,
-emergency-document application, or mesh communicator. It is a continuity
+document-readiness application, or mesh communicator. It is a continuity
 system in which:
 
 - funds and records are controlled protocol objects rather than an undifferentiated
@@ -777,8 +777,8 @@ The defensible product claim is therefore one of **distinct synthesis**, not
 the invention of every underlying mechanism:
 
 > **Safebox combines established ideas from personal servers, secure hardware,
-> emergency preparedness, digital cash, and resilient networking into a
-> distinct digital lock box architecture.**
+> preparedness, digital cash, and resilient networking into a distinct digital
+> lock box architecture.**
 
 This comparison is illustrative rather than exhaustive and is not a patent,
 trademark, or formal novelty search. Adjacent products will continue to evolve;
@@ -790,7 +790,7 @@ and claims.
 | Safebox is | Safebox is not |
 | --- | --- |
 | A digital lock box for high-value resources | A general-purpose cloud drive |
-| A compact home for emergency funds and critical records | An archive of every file a user owns |
+| A compact home for essential funds and records | An archive of every file a user owns |
 | A way to preserve artifacts and authority evidence | A system that decides who every community must trust |
 | A local-first component with encrypted replication | A requirement that every user become a server operator |
 | A holder-controlled interface to records and funds | A replacement for issuers, notaries, laws, or governance |
@@ -798,8 +798,8 @@ and claims.
 
 ## Product position
 
-> **Safebox is a household digital lock box for master keys, emergency funds, and
-> critical records. It enables people and communities to safeguard essential
+> **Safebox is a household digital lock box for master keys, essential funds, and
+> important records. It enables people and communities to safeguard essential
 > resources, preserve evidence of their origin and history, and maintain
 > encrypted continuity across independently operated infrastructure. Safebox
 > is powered by Acorn, its protocol-first component for user-controlled keys,

@@ -37,7 +37,7 @@ relay while retaining separate keys, namespaces, and control boundaries.
 ## The home relay is a pointer, not destiny
 
 The home relay is Acorn's default read and write location. It can still become
-slow, unreliable, unaffordable, censored, hostile, or permanently unavailable.
+slow, unreliable, unsuitable, policy-constrained, too costly, or unavailable.
 
 Acorn's resilience model is inspired by an operator-friendly storage posture:
 
@@ -108,10 +108,10 @@ providers can operate suitable relays. Users can choose the degree of
 independence and support that fits their needs while encrypted state remains
 portable.
 
-This is useful during ordinary provider changes and during physical disruption.
-Wildfires, floods, earthquakes, storms, extended power outages, or regional
-network failures can make a home, office, device, or data centre unreachable.
-Copies in independently operated locations provide additional recovery paths.
+This is useful during ordinary provider changes, site moves, regional service
+interruptions, and physical disruption. A home, office, resort, community
+facility, device, or data centre can become temporarily unreachable. Copies in
+independently operated locations provide additional recovery paths.
 
 ## Limits of the model
 
@@ -136,8 +136,8 @@ write policies, continuous replication, and safer promotion workflows.
 
 The operator-facing question should become:
 
-> Is this encrypted tenant available from enough independent places to survive
-> the failure that matters to its user?
+> Is this encrypted tenant available from enough independent places to keep
+> working through the interruption that matters to its user?
 
 [Explore deployment and trust](deployment-and-trust.md){ .md-button .md-button--primary }
 [Return to recovery and continuity](recovery-and-continuity.md){ .md-button }
