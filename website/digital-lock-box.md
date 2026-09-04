@@ -320,13 +320,15 @@ The same Acorn could hold a community-issued record relevant to the exchange:
 for example, an entitlement, referral, authorization, membership, care
 instruction, or proof that a resource was issued. The recipient could present
 the selected record at the terminal, while the relying organization uses the
-[OpenETR](https://trbouma.github.io/openetr/) protocol to inspect its origin,
-integrity, and associated control events.
+[OpenETR](https://trbouma.github.io/openetr/) protocol to identify the exact
+Digital Artifact, inspect its signed DCR evidence, and derive consequential
+state under defined rules.
 
 OpenETR verification does not make the terminal the authority. It lets the
-terminal evaluate whether the artifact matches what was issued, which keys
-signed the relevant events, how control or status changed, and whether the
-relying community recognizes those keys and rules. During limited connectivity,
+terminal evaluate whether the artifact matches its digest, which keys signed
+the relevant records, what consequential state follows under the selected
+rules, and whether the relying community recognizes those actors and results.
+During limited connectivity,
 this verification is limited to the record history and recognition material
 already available through local relays or synchronized Safeboxes; new or
 missing state can be reconciled when connectivity returns.
@@ -544,7 +546,7 @@ layers:
 
 ```text
 critical record
-├── original record
+├── Record File
 │   └── encrypted PDF, image, or structured document
 ├── record metadata
 │   ├── document type
@@ -692,13 +694,15 @@ controls them. A copy is not enough; the signed event history must support a
 valid chain of control.
 
 This is the connection to
-[OpenETR](https://trbouma.github.io/openetr/), an open scheme for electronic
-transferable records built around three primitives:
+[OpenETR](https://trbouma.github.io/openetr/), an open protocol for deriving
+consequential state from end-verifiable evidence concerning durable electronic
+records:
 
 ```text
-object     -> the record being controlled
-controller -> the key or actor able to exercise control
-event      -> the signed action changing control or status
+Digital Artifact            -> exact content identified by digest
+Digital Controllable Record -> signed evidence concerning the artifact
+Consequential State         -> state derived from that evidence under defined rules
+Recognition                 -> external decision about meaning and effect
 ```
 
 Acorn and OpenETR address complementary responsibilities beneath the Safebox
@@ -706,14 +710,15 @@ product experience:
 
 | Acorn | OpenETR |
 | --- | --- |
-| Safekeeping of keys, funds, and private records | Durable control and event history for transferable records |
-| Encrypted availability and recovery | Transfer, endorsement, and enforcement semantics |
-| Holder-controlled presentation | Independent validation of the control chain |
-| Digital lock box and appliance model | Portable record-control layer |
+| Safekeeping of keys, funds, and private records | Portable DCR evidence concerning Digital Artifacts |
+| Encrypted availability and recovery | Consequential-state derivation under defined rules |
+| Holder-controlled presentation | Independent evidence and state verification |
+| Digital lock box and appliance model | Open protocol with an explicit recognition boundary |
 
 Safebox can use Acorn to safeguard the artifact and its related evidence. The
-OpenETR model can describe the control layer when transfer and current control
-are essential to the record's meaning.
+OpenETR model can describe the evidence and derived state when transfer and
+current control are essential to the record's meaning. The relying community or
+institution still determines recognition and effect.
 
 ## Community infrastructure without isolation
 

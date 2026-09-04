@@ -156,10 +156,11 @@ ecash case, the mint provides anti-double-spend validation and proof refresh.
 
 Transferability is not just movement of data. It is movement of control.
 
-This is the point shared with the control-layer work being developed in
-[OpenETR](https://github.com/trbouma/openetr). OpenETR applies the control
-model to electronic transferable records and digital trade documentation. Acorn
-applies the same general pattern to funds and private wallet records.
+This is the point shared with the consequential-state work being developed in
+[OpenETR](https://github.com/trbouma/openetr). OpenETR preserves end-verifiable
+evidence concerning Digital Artifacts and derives consequential state under
+defined rules. Acorn applies a related pattern to funds and private wallet
+records.
 
 In both cases, the central question is:
 
@@ -176,16 +177,15 @@ For Acorn ecash, control is concrete and mechanical:
 - acceptance refreshes control into the recipient's wallet state;
 - the durable proof state is then stored as kind `7375`.
 
-For OpenETR-style transferable records, the control layer generalizes this
-pattern beyond funds. The record may represent a trade document or other
-electronic transferable record rather than sats, but the model still requires a
-clear control chain:
+For OpenETR transferable records, the model generalizes this pattern beyond
+funds. The record may represent a trade document or another durable electronic
+record rather than sats. OpenETR keeps the relevant layers distinct:
 
-- an issuer or originator creates the record;
-- a controller has the authority to act with respect to the record;
-- transfer changes the controller according to protocol and legal rules;
-- verifiers can inspect evidence of current control without depending on a
-  single proprietary platform.
+- a digest identifies the exact Digital Artifact;
+- signed Anchor, control, and linked-evidence records form a candidate DCR;
+- defined protocol rules derive consequential state from valid evidence; and
+- external recognition determines whether an actor, state, or transition has
+  operational, institutional, commercial, or legal effect.
 
 Acorn should not absorb the full OpenETR control layer. Instead, Acorn should
 stay focused on the balances-and-records kernel while remaining compatible with
@@ -193,8 +193,8 @@ the broader control-layer model:
 
 - Acorn ecash demonstrates transferable control over value records.
 - Acorn private issued records demonstrate encrypted holder-controlled records.
-- OpenETR develops the domain-specific control model for electronic
-  transferable records and trade documentation.
+- OpenETR develops portable DCR evidence, state-transition rules, and
+  consequential-state derivation for electronic records.
 
 The shared architectural lesson is that records become more useful when control
 is explicit, portable, recoverable, and verifiable.

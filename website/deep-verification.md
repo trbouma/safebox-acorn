@@ -7,13 +7,13 @@ description: Acorn's role in layered verification for exact records, digests, an
 
 Deep verification is a layered way to verify digital records.
 
-Acorn's role is to preserve the user's keys, encrypted records, exact Original
-Record bytes, and plaintext digests. Other layers can then add control
-evidence, recognition, and verifier policy without forcing Acorn to become the
-schema owner for every kind of record.
+Acorn's role is to preserve the user's keys, encrypted records, exact Record
+File bytes, and plaintext digests. Other layers can then add signed evidence,
+consequential state, recognition, and verifier policy without forcing Acorn to
+become the schema owner for every kind of record.
 
 ```text
-Original Record bytes
+Record File bytes
     -> Acorn digest
     -> external control evidence
     -> recognition
@@ -22,11 +22,11 @@ Original Record bytes
 
 ## Exact bytes first
 
-An Original Record may be a PDF, image, Wallet pass, credential, ticket, bill of
+An exact Record File may be a PDF, image, Wallet pass, credential, ticket, bill of
 lading, or another artifact. Acorn should preserve the exact bytes and record a
 plaintext digest before encryption.
 
-That digest is the Original Record's **Uniform Digest Anchor (UDA)**. It
+That digest is the Record File's **Uniform Digest Anchor (UDA)**. It
 answers:
 
 ```text
@@ -38,7 +38,7 @@ not truth, legal effect, issuer identity, or current validity.
 
 The term is uniform because the same exact-byte anchoring mechanism works for
 every artifact format. Native verification, third-party attestations,
-notarization, provenance, and control history can all refer to the anchor while
+attestations, provenance, and control history can all refer to the anchor while
 remaining independent evidence layers.
 
 ## Effective MIME is a rendering hint
@@ -58,8 +58,10 @@ digest identifies the artifact.
 
 ## Control evidence belongs above storage
 
-OpenETR-style evidence can bind origin, control, transfer, presentation, or
-termination events to the Original Record digest.
+OpenETR can identify the exact content as a Digital Artifact and bind Anchor,
+control, and linked-evidence records to its digest. Those signed records form a
+candidate Digital Controllable Record from which defined rules can derive
+consequential state.
 
 Acorn does not need to implement that control graph directly. Its job is to
 make sure applications can reliably retrieve, authenticate, decrypt, hash, and
@@ -76,7 +78,7 @@ Deep verification keeps concerns from collapsing into each other:
 | Acorn | keys, encrypted records, exact bytes, plaintext digest, effective MIME |
 | Blossom | opaque encrypted blob availability |
 | Application | user workflow and bounded previews |
-| Control layer | signed origin and lifecycle evidence |
+| OpenETR layer | signed DCR evidence and consequential-state derivation |
 | Recognition layer | whether keys and organizations are known to a verifier |
 | Policy layer | the final conclusion for a context |
 

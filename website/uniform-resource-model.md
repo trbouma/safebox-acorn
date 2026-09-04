@@ -145,16 +145,16 @@ native signature scheme.
 
 Uniform does not mean that different renditions share a digest. The anchor
 identifies one exact byte sequence. A resource with several representations may
-therefore have several scoped anchors. For an immutable Original Record, its
+therefore have several scoped anchors. For an immutable Record File, its
 plaintext `origsha256` can be the canonical artifact anchor; the encrypted
 Blossom digest still identifies different bytes with a different storage
 scope.
 
 A matching anchor proves byte equality, not truth, authority, ownership,
 control, or legal effect. Anyone may sign an attestation about an anchor, but a
-verifier decides whether that signer and statement are recognized. A
-notarization scheme is therefore a URM attestation profile with explicit signer,
-statement, time, and policy rules rather than a built-in declaration of truth.
+verifier decides whether that signer and statement are recognized. An
+attestation profile therefore needs explicit signer, statement, time, and
+policy rules rather than a built-in declaration of truth.
 
 Public anchors can correlate holders of the same artifact. Sensitive profiles
 may require private attestations, access-controlled evidence, or salted
@@ -169,9 +169,11 @@ held, recovered, and presented without being transferable.
 
 ### Transferable electronic records
 
-Titles, negotiable documents, tickets, and controlled originals need an
-observable chain showing who has operative control now. OpenETR explores this
-non-fungible control model.
+Titles, negotiable documents, tickets, and other consequential records need
+portable evidence from which current state can be derived. OpenETR models the
+exact content as a Digital Artifact, the signed evidence as a Digital
+Controllable Record, and the derived result as consequential state. Recognition
+and effect remain external.
 
 ### Cash and Clear
 
@@ -203,7 +205,7 @@ program but cannot necessarily move to another holder.
 | **Acorn** | keys, control state, encrypted records, transfer, and recovery |
 | **Safebox Web** | human workflows, presentation, and confirmation |
 | **Clear** | organization-issued transferable units represented as CMUs |
-| **OpenETR** | provenance and non-fungible control history |
+| **OpenETR** | DCR evidence and consequential-state derivation for Digital Artifacts |
 | **Grove** | content-addressed representations |
 | **Spurline** | signed event availability and synchronization |
 | **Mainstay** | unified application across resource profiles |
