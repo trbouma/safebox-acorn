@@ -13,6 +13,7 @@ from acorn.acorn import (
     Acorn,
     CLEAR_HISTORY_KIND,
     CLEAR_PROOF_KIND,
+    CLEAR_TRANSFER_KIND,
     _exception_detail,
 )
 from acorn.models import ClearProofState, Proof, TokenV3, TokenV3Token
@@ -619,6 +620,66 @@ async def test_accept_pending_clear_receipt_refreshes_into_separate_state():
     assert "token" not in written[0][0]
     assert acorn.balance == 999
     assert acorn.proofs == cash_proofs
+
+
+@pytest.mark.asyncio
+async def test_stage_pasted_clear_token_creates_deterministic_pending_receipt():
+    acorn = wallet()
+    incoming = proof(25, "incoming-keyset", "71")
+    token = TokenV3(
+        token=[TokenV3Token(mint="https://clear.example", proofs=[incoming])],
+        memo="community supplies",
+        unit="cmu-example",
+    ).serialize()
+    acorn._store_clear_receipt = AsyncMock(
+        return_value={
+            "event_id": "placeholder",
+            "status": "pending",
+            "amount": 25,
+            "mint": "https://clear.example",
+            "unit": "cmu-example",
+        }
+    )
+
+    await acorn.stage_pasted_clear_token(
+        token,
+        allowed_mints=["https://clear.example/"],
+    )
+    first_call = acorn._store_clear_receipt.await_args.kwargs
+    await acorn.stage_pasted_clear_token(
+        token,
+        allowed_mints=["https://clear.example"],
+    )
+    second_call = acorn._store_clear_receipt.await_args.kwargs
+
+    assert first_call["event_id"] == second_call["event_id"]
+    assert len(first_call["event_id"]) == 64
+    assert first_call["token"] == token
+    assert first_call["payload"]["amount"] == 25
+    assert first_call["payload"]["unit"] == "cmu-example"
+    assert first_call["payload"]["comment"] == "community supplies"
+    assert first_call["sender_pubkey"] == ""
+    assert first_call["outer_kind"] == 0
+    assert first_call["inner_kind"] == CLEAR_TRANSFER_KIND
+
+
+@pytest.mark.asyncio
+async def test_stage_pasted_clear_token_rejects_unconfigured_mint_before_storage():
+    acorn = wallet()
+    incoming = proof(25, "incoming-keyset", "72")
+    token = TokenV3(
+        token=[TokenV3Token(mint="https://unknown.example", proofs=[incoming])],
+        unit="cmu-example",
+    ).serialize()
+    acorn._store_clear_receipt = AsyncMock()
+
+    with pytest.raises(ValueError, match="mint is not configured"):
+        await acorn.stage_pasted_clear_token(
+            token,
+            allowed_mints=["https://clear.example"],
+        )
+
+    acorn._store_clear_receipt.assert_not_awaited()
 
 
 @pytest.mark.asyncio

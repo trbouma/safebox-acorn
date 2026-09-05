@@ -9,6 +9,15 @@ __all__ = [
     "PaymentRequest",
     "PaymentRequestError",
     "PaymentRequestTransport",
+    "ContextEndpointHint",
+    "ContextEndpointsRecord",
+    "ResolutionEvidence",
+    "ServiceBinding",
+    "ServiceBindingsRecord",
+    "ServiceEndpoint",
+    "ServiceEndpointSet",
+    "ServiceEndpointsRecord",
+    "ServiceLocator",
     "broadcast_silent_payment_sweep",
     "create_silent_payment_sweep_preview",
     "derive_nostr_silent_payment_address",
@@ -109,4 +118,18 @@ def __getattr__(name):
         from acorn import payment_request
 
         return getattr(payment_request, name)
+    if name in {
+        "ContextEndpointHint",
+        "ContextEndpointsRecord",
+        "ResolutionEvidence",
+        "ServiceBinding",
+        "ServiceBindingsRecord",
+        "ServiceEndpoint",
+        "ServiceEndpointSet",
+        "ServiceEndpointsRecord",
+        "ServiceLocator",
+    }:
+        from acorn import service_resolution
+
+        return getattr(service_resolution, name)
     raise AttributeError(f"module 'acorn' has no attribute {name!r}")

@@ -106,6 +106,7 @@ implemented and reviewed.
 - [Recovery Specification](./docs/RECOVERY-SPEC.md)
 - [Relay Configuration Specification](./docs/RELAY-CONFIGURATION-SPEC.md)
 - [Mint Configuration Specification](./docs/MINT-CONFIGURATION-SPEC.md)
+- [Service Identity and Endpoint Records](./docs/SERVICE-IDENTITY-AND-ENDPOINT-RECORDS.md)
 - [CLI Contract](./docs/CLI-CONTRACT.md)
 - [Safebox App Boundary](./docs/SAFEBOX-APP-BOUNDARY.md)
 - [Stateless Web Integration](./docs/STATELESS-WEB-INTEGRATION.md)

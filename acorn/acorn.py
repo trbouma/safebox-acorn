@@ -65,6 +65,15 @@ from acorn.payment_request import (
     encode_payment_request,
     nostr_nip17_transport,
 )
+from acorn.service_resolution import (
+    CONTEXT_ENDPOINTS_LABEL,
+    SERVICE_BINDINGS_LABEL,
+    SERVICE_ENDPOINTS_LABEL,
+    SERVICE_RESOLUTION_RECORD_KIND,
+    ContextEndpointsRecord,
+    ServiceBindingsRecord,
+    ServiceEndpointsRecord,
+)
 
 
 tail = util_funcs.str_tails
@@ -303,6 +312,9 @@ INTERNAL_RECORD_LABELS: frozenset[str] = frozenset(
         "privkey",
         "profile",
         "public_relays",
+        SERVICE_BINDINGS_LABEL,
+        SERVICE_ENDPOINTS_LABEL,
+        CONTEXT_ENDPOINTS_LABEL,
         "relays",
         "trusted_mints",
         "user_records",
@@ -2136,6 +2148,129 @@ class Acorn:
                 if isinstance(configured, str):
                     return self._normalize_relays([each for each in configured.split(",") if each.strip()])
         return self._normalize_relays(self.public_relays or [])
+
+    async def _get_service_resolution_record(self, label: str, model_type):
+        raw = await self.get_wallet_info(
+            label,
+            record_kind=SERVICE_RESOLUTION_RECORD_KIND,
+        )
+        if raw is None:
+            return model_type()
+        try:
+            return model_type.model_validate_json(raw)
+        except (ValueError, TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"The relay-backed {label} record is invalid"
+            ) from exc
+
+    async def _publish_service_resolution_record(
+        self,
+        label: str,
+        record,
+        model_type,
+        *,
+        replicate_relays: List[str] | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        validated = model_type.model_validate(record)
+        payload = validated.model_dump(mode="json", exclude_none=True)
+        published = await self.set_wallet_info(
+            label,
+            json.dumps(payload, sort_keys=True, separators=(",", ":")),
+            replicate_relays=replicate_relays,
+            record_kind=SERVICE_RESOLUTION_RECORD_KIND,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+        return {
+            **payload,
+            "relay_event_id": (
+                published.get("event_id") if isinstance(published, dict) else None
+            ),
+            "verified_write": bool(verify),
+        }
+
+    async def get_service_bindings(self) -> ServiceBindingsRecord:
+        """Load keyset-to-service identity bindings from private relay state."""
+
+        return await self._get_service_resolution_record(
+            SERVICE_BINDINGS_LABEL,
+            ServiceBindingsRecord,
+        )
+
+    async def publish_service_bindings(
+        self,
+        record: ServiceBindingsRecord | dict,
+        *,
+        replicate_relays: List[str] | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        """Replace the private keyset-to-service binding record."""
+
+        return await self._publish_service_resolution_record(
+            SERVICE_BINDINGS_LABEL,
+            record,
+            ServiceBindingsRecord,
+            replicate_relays=replicate_relays,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def get_service_endpoints(self) -> ServiceEndpointsRecord:
+        """Load service descriptors and endpoint candidates from private state."""
+
+        return await self._get_service_resolution_record(
+            SERVICE_ENDPOINTS_LABEL,
+            ServiceEndpointsRecord,
+        )
+
+    async def publish_service_endpoints(
+        self,
+        record: ServiceEndpointsRecord | dict,
+        *,
+        replicate_relays: List[str] | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        """Replace the private service endpoint descriptor record."""
+
+        return await self._publish_service_resolution_record(
+            SERVICE_ENDPOINTS_LABEL,
+            record,
+            ServiceEndpointsRecord,
+            replicate_relays=replicate_relays,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
+
+    async def get_context_endpoints(self) -> ContextEndpointsRecord:
+        """Load context-qualified endpoint hints from private relay state."""
+
+        return await self._get_service_resolution_record(
+            CONTEXT_ENDPOINTS_LABEL,
+            ContextEndpointsRecord,
+        )
+
+    async def publish_context_endpoints(
+        self,
+        record: ContextEndpointsRecord | dict,
+        *,
+        replicate_relays: List[str] | None = None,
+        verify: bool = True,
+        verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+    ) -> Dict[str, Any]:
+        """Replace the private context-qualified endpoint hint record."""
+
+        return await self._publish_service_resolution_record(
+            CONTEXT_ENDPOINTS_LABEL,
+            record,
+            ContextEndpointsRecord,
+            replicate_relays=replicate_relays,
+            verify=verify,
+            verify_timeout=verify_timeout,
+        )
 
     def _normalize_relays(self, relays: List[str]) -> List[str]:
         normalized: List[str] = []
@@ -6122,6 +6257,70 @@ class Acorn:
         finally:
             if lock_acquired:
                 await self.release_lock()
+
+    async def stage_pasted_clear_token(
+        self,
+        cashu_token: str,
+        *,
+        allowed_mints: Sequence[str],
+        allowed_units: Sequence[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Validate and journal a pasted Clear token before acceptance."""
+
+        token = str(cashu_token or "").strip()
+        if not token.startswith("cashuA"):
+            raise ValueError("Clear token must use the cashuA token format")
+        if len(token) > 128 * 1024:
+            raise ValueError("Clear token is too large")
+
+        token_obj = TokenV3.deserialize(token)
+        proofs = token_obj.get_proofs()
+        if not proofs or len(proofs) > 4096:
+            raise ValueError("Clear token must contain a bounded, non-empty proof set")
+        amount = int(token_obj.get_amount())
+        if amount <= 0:
+            raise ValueError("Clear token amount must be greater than zero")
+
+        token_mints = {
+            normalize_mint_url(str(candidate))
+            for candidate in token_obj.get_mints()
+        }
+        if len(token_mints) != 1:
+            raise ValueError("Clear token must contain exactly one mint")
+        mint = next(iter(token_mints))
+        permitted_mints = {
+            normalize_mint_url(str(candidate))
+            for candidate in allowed_mints
+        }
+        if mint not in permitted_mints:
+            raise ValueError("Clear token mint is not configured for this wallet")
+
+        unit = self._normalize_clear_unit(token_obj.unit)
+        if allowed_units:
+            permitted_units = {
+                self._normalize_clear_unit(candidate) for candidate in allowed_units
+            }
+            if unit not in permitted_units:
+                raise ValueError("Clear token CMU is not configured for this wallet")
+
+        event_id = hashlib.sha256(
+            b"safebox-pasted-clear-token-v1\x00" + token.encode("utf-8")
+        ).hexdigest()
+        return await self._store_clear_receipt(
+            event_id=event_id,
+            sender_pubkey="",
+            token=token,
+            payload={
+                "type": "clear-token",
+                "amount": amount,
+                "unit": unit,
+                "keyset_ids": sorted(str(keyset) for keyset in token_obj.get_keysets()),
+                "comment": str(token_obj.memo or "Pasted Clear token"),
+            },
+            timestamp=int(time()),
+            outer_kind=0,
+            inner_kind=CLEAR_TRANSFER_KIND,
+        )
 
     def _clear_payload_from_nut18_message(
         self,
