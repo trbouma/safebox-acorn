@@ -56,11 +56,13 @@ acorn balance
 Safebox Web calls the same receiver through **Check for Clear Transfers**.
 
 `Acorn.stage_pasted_clear_token()` provides the corresponding direct-import
-boundary. It accepts only `cashuA` Clear tokens from an explicit mint allowlist,
-validates the canonical CMU and bounded proof set, and assigns a deterministic
-receipt ID before storing the token in the same pending journal. Safebox Web can
-then use the normal recoverable acceptance path without routing a Clear token
-through sat-denominated proof state.
+boundary. It validates the `cashuA` token's mint, canonical CMU, and bounded
+proof set, then assigns a deterministic receipt ID before storing the token in
+the same pending journal. The Acorn retains the mint, CMU, and keyset
+relationship in its relay-backed Clear state; a Safebox Web deployment mint
+list is not the wallet's durable source of truth. Safebox Web can then use the
+normal recoverable acceptance path without routing a Clear token through
+sat-denominated proof state.
 
 ## Implemented send path
 

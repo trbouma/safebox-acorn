@@ -641,15 +641,9 @@ async def test_stage_pasted_clear_token_creates_deterministic_pending_receipt():
         }
     )
 
-    await acorn.stage_pasted_clear_token(
-        token,
-        allowed_mints=["https://clear.example/"],
-    )
+    await acorn.stage_pasted_clear_token(token)
     first_call = acorn._store_clear_receipt.await_args.kwargs
-    await acorn.stage_pasted_clear_token(
-        token,
-        allowed_mints=["https://clear.example"],
-    )
+    await acorn.stage_pasted_clear_token(token)
     second_call = acorn._store_clear_receipt.await_args.kwargs
 
     assert first_call["event_id"] == second_call["event_id"]
@@ -664,22 +658,21 @@ async def test_stage_pasted_clear_token_creates_deterministic_pending_receipt():
 
 
 @pytest.mark.asyncio
-async def test_stage_pasted_clear_token_rejects_unconfigured_mint_before_storage():
+async def test_stage_pasted_clear_token_accepts_a_new_mint_for_acorn_state():
     acorn = wallet()
     incoming = proof(25, "incoming-keyset", "72")
     token = TokenV3(
         token=[TokenV3Token(mint="https://unknown.example", proofs=[incoming])],
         unit="cmu-example",
     ).serialize()
-    acorn._store_clear_receipt = AsyncMock()
+    acorn._store_clear_receipt = AsyncMock(return_value={"status": "pending"})
 
-    with pytest.raises(ValueError, match="mint is not configured"):
-        await acorn.stage_pasted_clear_token(
-            token,
-            allowed_mints=["https://clear.example"],
-        )
+    await acorn.stage_pasted_clear_token(token)
 
-    acorn._store_clear_receipt.assert_not_awaited()
+    assert acorn._store_clear_receipt.await_args.kwargs["payload"]["unit"] == (
+        "cmu-example"
+    )
+    assert acorn._store_clear_receipt.await_args.kwargs["token"] == token
 
 
 @pytest.mark.asyncio

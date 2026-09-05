@@ -6261,9 +6261,6 @@ class Acorn:
     async def stage_pasted_clear_token(
         self,
         cashu_token: str,
-        *,
-        allowed_mints: Sequence[str],
-        allowed_units: Sequence[str] | None = None,
     ) -> Dict[str, Any]:
         """Validate and journal a pasted Clear token before acceptance."""
 
@@ -6288,20 +6285,8 @@ class Acorn:
         if len(token_mints) != 1:
             raise ValueError("Clear token must contain exactly one mint")
         mint = next(iter(token_mints))
-        permitted_mints = {
-            normalize_mint_url(str(candidate))
-            for candidate in allowed_mints
-        }
-        if mint not in permitted_mints:
-            raise ValueError("Clear token mint is not configured for this wallet")
 
         unit = self._normalize_clear_unit(token_obj.unit)
-        if allowed_units:
-            permitted_units = {
-                self._normalize_clear_unit(candidate) for candidate in allowed_units
-            }
-            if unit not in permitted_units:
-                raise ValueError("Clear token CMU is not configured for this wallet")
 
         event_id = hashlib.sha256(
             b"safebox-pasted-clear-token-v1\x00" + token.encode("utf-8")
