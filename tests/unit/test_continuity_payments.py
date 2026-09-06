@@ -1382,7 +1382,12 @@ async def test_sweep_uses_event_id_to_resume_within_same_second(monkeypatch) -> 
 
     result = await acorn.sweep_ecash_transfers(finalize=False, limit=10)
 
-    assert observed_filters[0]["since"] == 200
+    transfer_filters = [
+        query
+        for query in observed_filters
+        if ECASH_TRANSFER_KIND in query.get("kinds", [])
+    ]
+    assert transfer_filters[0]["since"] == 200
     assert result["accepted_count"] == 1
     assert result["accepted"][0]["event_id"] == "c" * 64
     assert result["cursor_checkpoint"] == {
@@ -1423,8 +1428,13 @@ async def test_sweep_pages_with_inclusive_boundaries_and_deduplicates(monkeypatc
     ]
     assert result["queried"] == 3
     assert result["page_count"] == 3
-    assert observed_filters[1]["until"] == 102
-    assert observed_filters[2]["until"] == 101
+    transfer_filters = [
+        query
+        for query in observed_filters
+        if ECASH_TRANSFER_KIND in query.get("kinds", [])
+    ]
+    assert transfer_filters[1]["until"] == 102
+    assert transfer_filters[2]["until"] == 101
     assert result["latest_checkpoint"] == {
         "created_at": 103,
         "event_id": "c" * 64,

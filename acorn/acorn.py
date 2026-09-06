@@ -211,6 +211,7 @@ ECASH_TRANSFER_GIFT_WRAP_KIND: int = 1059
 ECASH_TRANSFER_CURSOR_LABEL: str = "ecash_transfer_latest"
 ECASH_TRANSFER_CURSOR_VERSION: int = 2
 ECASH_TRANSFER_LEGACY_EVENT_ID: str = "f" * 64
+NIP17_INBOX_RELAYS_KIND: int = 10050
 CLEAR_TRANSFER_KIND: int = 7379
 CLEAR_TRANSFER_CURSOR_LABEL: str = "clear_transfer_latest"
 CLEAR_RECEIPTS_LABEL: str = "clear_receipts"
@@ -245,6 +246,7 @@ class MalformedIncomingTransfer(ValueError):
 BURN_DEFAULT_KINDS: List[int] = [
     0,
     5,
+    NIP17_INBOX_RELAYS_KIND,
     37375,
     37376,
     7375,
@@ -563,10 +565,136 @@ class Acorn:
 
     def _build_discovery_relays(self) -> List[str]:
         relay_pool: List[str] = []
-        for each in [self.home_relay] + list(self.relays or []) + list(self.public_relays or []):
+        for each in (
+            [self.home_relay]
+            + list(getattr(self, "relays", None) or [])
+            + list(getattr(self, "public_relays", None) or [])
+        ):
             if each and each not in relay_pool:
                 relay_pool.append(each)
         return relay_pool
+
+    async def resolve_inbox_relays(
+        self,
+        recipient_pubkey: str,
+        lookup_relays: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Resolve a recipient's signed NIP-17 kind 10050 inbox relay list."""
+
+        pubkey = str(recipient_pubkey or "").strip().lower()
+        if len(pubkey) != 64 or any(
+            character not in string.hexdigits for character in pubkey
+        ):
+            raise ValueError("recipient_pubkey must be 64-character hex")
+        relay_pool = self._normalize_relays(
+            lookup_relays or self._build_discovery_relays()
+        )
+        if not relay_pool:
+            return {
+                "recipient_pubkey": pubkey,
+                "lookup_relays": [],
+                "relays": [],
+                "found": False,
+                "reason": "no_lookup_relays",
+            }
+
+        query_filter = [{
+            "limit": 16,
+            "authors": [pubkey],
+            "kinds": [NIP17_INBOX_RELAYS_KIND],
+        }]
+        async with ClientPool(relay_pool) as client:
+            events: List[Event] = await client.query(query_filter)
+
+        candidates: List[Event] = []
+        for event in events:
+            if int(event.kind) != NIP17_INBOX_RELAYS_KIND:
+                continue
+            if str(event.pub_key or "").lower() != pubkey:
+                continue
+            try:
+                if not event.is_valid():
+                    continue
+            except Exception:
+                continue
+            candidates.append(event)
+        if not candidates:
+            return {
+                "recipient_pubkey": pubkey,
+                "lookup_relays": relay_pool,
+                "relays": [],
+                "found": False,
+                "reason": "kind10050_not_found",
+            }
+
+        latest_timestamp = max(self._event_timestamp(event) for event in candidates)
+        latest = min(
+            (
+                event
+                for event in candidates
+                if self._event_timestamp(event) == latest_timestamp
+            ),
+            key=lambda event: str(event.id or "").lower(),
+        )
+        inbox_relays = self._normalize_relays([
+            str(tag[1])
+            for tag in latest.tags
+            if len(tag) >= 2 and tag[0] == "relay"
+        ])
+        if not inbox_relays:
+            return {
+                "recipient_pubkey": pubkey,
+                "lookup_relays": relay_pool,
+                "event_id": str(latest.id),
+                "relays": [],
+                "found": False,
+                "reason": "kind10050_has_no_relays",
+            }
+        return {
+            "recipient_pubkey": pubkey,
+            "lookup_relays": relay_pool,
+            "event_id": str(latest.id),
+            "created_at": self._event_timestamp(latest),
+            "relays": inbox_relays,
+            "found": True,
+            "reason": None,
+        }
+
+    async def publish_inbox_relays(
+        self,
+        inbox_relays: List[str],
+        publish_relays: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Publish this wallet's replaceable NIP-17 inbox relay list."""
+
+        normalized_inbox_relays = self._normalize_relays(inbox_relays)
+        if not normalized_inbox_relays:
+            raise ValueError("at least one inbox relay is required")
+        destinations = self._normalize_relays(
+            publish_relays
+            or (self._build_discovery_relays() + normalized_inbox_relays)
+        )
+        if not destinations:
+            raise ValueError("at least one publication relay is required")
+
+        event = Event(
+            kind=NIP17_INBOX_RELAYS_KIND,
+            content="",
+            pub_key=self.pubkey_hex,
+            tags=[["relay", relay] for relay in normalized_inbox_relays],
+        )
+        event.sign(self.privkey_hex)
+        async with ClientPool(destinations) as client:
+            client.publish(event)
+            await asyncio.sleep(0.2)
+        return {
+            "status": "OK",
+            "kind": NIP17_INBOX_RELAYS_KIND,
+            "event_id": str(event.id),
+            "pubkey": self.pubkey_hex,
+            "relays": normalized_inbox_relays,
+            "published_to": destinations,
+        }
 
     def _build_zap_request_relays(self) -> List[str]:
         relay_pool: List[str] = []
@@ -599,6 +727,7 @@ class Acorn:
         event_kinds = kinds or [
             0,
             5,
+            NIP17_INBOX_RELAYS_KIND,
             17375,
             37375,
             37376,
@@ -3571,6 +3700,7 @@ class Acorn:
         relay: str | None = None,
         comment: str = "Clear transfer",
         expiration: int | None = None,
+        relay_hints: List[str] | None = None,
     ) -> Dict[str, Any]:
         """Send one exact Clear balance transfer using a NIP-59 gift wrap."""
 
@@ -3578,9 +3708,23 @@ class Acorn:
             expiration = int(expiration)
             if expiration <= int(time()):
                 raise ValueError("expiration must be a future Unix timestamp")
-        recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(recipient)
-        relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
-        transfer_relays = self._normalize_relays(relay_candidates)
+        if relay:
+            recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(
+                recipient
+            )
+            transfer_relays = self._normalize_relays([relay])
+            relay_source = "explicit"
+            inbox_resolution = None
+        else:
+            destination = await self._resolve_transfer_destination(
+                recipient,
+                relay_hints=relay_hints,
+            )
+            recipient_pubkey = destination["recipient_pubkey"]
+            recipient_relays = destination["relays"]
+            transfer_relays = destination["relays"]
+            relay_source = destination["relay_source"]
+            inbox_resolution = destination.get("inbox_resolution")
         if not transfer_relays:
             raise ValueError("No relay available for Clear transfer")
 
@@ -3644,6 +3788,10 @@ class Acorn:
             "recipient_pubkey": recipient_pubkey,
             "relays": transfer_relays,
             "recipient_relays": recipient_relays,
+            "relay_source": relay_source,
+            "inbox_event_id": (
+                inbox_resolution.get("event_id") if inbox_resolution else None
+            ),
             "mode": "gift-wrapped",
             "transient_pubkey": transient_key.public_key_hex(),
             "expiration": expiration,
@@ -5382,6 +5530,60 @@ class Acorn:
             "verified": True,
         }
 
+    async def _resolve_receive_relay_pool(
+        self,
+        receive_pubkey: str,
+        *,
+        transient_receive_key: bool = False,
+    ) -> tuple[List[str], Dict[str, Any]]:
+        """Combine the local home relay with a wallet's external inbox routes."""
+
+        lookup_relays = self._normalize_relays(self._build_discovery_relays())
+        try:
+            inbox_resolution = await self.resolve_inbox_relays(
+                receive_pubkey,
+                lookup_relays=lookup_relays,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=resolve_receive_relays status=inbox_lookup_failed "
+                "recipient=%s error=%s",
+                receive_pubkey,
+                exc,
+            )
+            inbox_resolution = {
+                "recipient_pubkey": receive_pubkey,
+                "lookup_relays": lookup_relays,
+                "relays": [],
+                "found": False,
+                "reason": f"kind10050_lookup_failed: {type(exc).__name__}",
+            }
+
+        discovered_relays = self._normalize_relays(
+            inbox_resolution.get("relays") or []
+        )
+        relay_source = "nip17-inbox" if discovered_relays else "home-relay"
+        nip05_resolution = None
+        if not discovered_relays and transient_receive_key:
+            nip05_resolution = await self._resolve_receive_relays_from_kind0(
+                receive_pubkey,
+                lookup_relays=lookup_relays,
+            )
+            discovered_relays = self._normalize_relays(
+                nip05_resolution.get("relays") or []
+            )
+            if discovered_relays:
+                relay_source = "nip05-hint"
+
+        relay_pool = self._normalize_relays(
+            [self.home_relay] + discovered_relays
+        )
+        return relay_pool, {
+            "source": relay_source,
+            "inbox": inbox_resolution,
+            "nip05": nip05_resolution,
+        }
+
     async def send_ecash_transfer(
         self,
         amount: int,
@@ -5394,6 +5596,7 @@ class Acorn:
         payment_mode: str = "confirmed",
         tendered_amount: float | None = None,
         tendered_currency: str = "SAT",
+        relay_hints: List[str] | None = None,
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted relay event.
 
@@ -5409,9 +5612,23 @@ class Acorn:
             if expiration <= int(time()):
                 raise ValueError("expiration must be a future Unix timestamp")
 
-        recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(recipient)
-        transfer_relay_candidates = [relay] if relay else (recipient_relays or [self.home_relay])
-        transfer_relays = self._normalize_relays(transfer_relay_candidates)
+        if relay:
+            recipient_pubkey, recipient_relays = self._resolve_pubkey_and_relays(
+                recipient
+            )
+            transfer_relays = self._normalize_relays([relay])
+            relay_source = "explicit"
+            inbox_resolution = None
+        else:
+            destination = await self._resolve_transfer_destination(
+                recipient,
+                relay_hints=relay_hints,
+            )
+            recipient_pubkey = destination["recipient_pubkey"]
+            recipient_relays = destination["relays"]
+            transfer_relays = destination["relays"]
+            relay_source = destination["relay_source"]
+            inbox_resolution = destination.get("inbox_resolution")
         if not transfer_relays:
             raise ValueError("No relay available for funds transfer")
         nonce = nonce or secrets.token_hex(16)
@@ -5505,6 +5722,10 @@ class Acorn:
             "recipient_pubkey": recipient_pubkey,
             "relays": transfer_relays,
             "recipient_relays": recipient_relays,
+            "relay_source": relay_source,
+            "inbox_event_id": (
+                inbox_resolution.get("event_id") if inbox_resolution else None
+            ),
             "mode": "direct" if direct else "gift-wrapped",
             "transient_pubkey": transient_pubkey,
             "deletable_by_sender": bool(direct),
@@ -6737,13 +6958,14 @@ class Acorn:
             target_event_id = target_event_id.lower()
             if len(target_event_id) != 64 or not all(ch in string.hexdigits for ch in target_event_id):
                 raise ValueError("event_id must be note1... or 64-char hex")
+        relay_discovery: Dict[str, Any] | None = None
         if relays:
             relay_pool = self._normalize_relays(relays)
-        elif receive_nsec:
-            relay_discovery = await self._resolve_receive_relays_from_kind0(receive_pubkey)
-            relay_pool = relay_discovery.get("relays") or self._normalize_relays([self.home_relay])
         else:
-            relay_pool = self._normalize_relays([self.home_relay])
+            relay_pool, relay_discovery = await self._resolve_receive_relay_pool(
+                receive_pubkey,
+                transient_receive_key=bool(receive_nsec),
+            )
 
         cursor_label = (
             CLEAR_TRANSFER_CURSOR_LABEL
@@ -6957,6 +7179,7 @@ class Acorn:
             "kind": CLEAR_TRANSFER_KIND,
             "gift_wrap_kind": ECASH_TRANSFER_GIFT_WRAP_KIND,
             "relays": relay_pool,
+            "relay_discovery": relay_discovery,
             "cursor_label": cursor_label,
             "query_filter": query_filter,
             "query_pages": query_pages,
@@ -7016,11 +7239,11 @@ class Acorn:
         relay_discovery: Dict[str, Any] | None = None
         if relays:
             relay_pool = self._normalize_relays(relays)
-        elif receive_nsec:
-            relay_discovery = await self._resolve_receive_relays_from_kind0(receive_pubkey)
-            relay_pool = relay_discovery.get("relays") or self._normalize_relays([self.home_relay])
         else:
-            relay_pool = self._normalize_relays([self.home_relay])
+            relay_pool, relay_discovery = await self._resolve_receive_relay_pool(
+                receive_pubkey,
+                transient_receive_key=bool(receive_nsec),
+            )
         cursor_label = (
             ECASH_TRANSFER_CURSOR_LABEL
             if receive_pubkey == self.pubkey_hex
@@ -15797,6 +16020,60 @@ class Acorn:
         if len(value) == 64 and all(ch in string.hexdigits for ch in value):
             return value.lower(), []
         raise ValueError("Identifier must be nip05, npub, or 64-char pubhex")
+
+    async def _resolve_transfer_destination(
+        self,
+        identifier: str,
+        relay_hints: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Resolve stable recipient identity separately from mutable inbox routes."""
+
+        pubkey, nip05_relays = self._resolve_pubkey_and_relays(identifier)
+        provided_relays = self._normalize_relays(relay_hints or [])
+        lookup_relays = self._normalize_relays(
+            provided_relays + list(nip05_relays) + self._build_discovery_relays()
+        )
+        try:
+            inbox_resolution = await self.resolve_inbox_relays(
+                pubkey,
+                lookup_relays=lookup_relays,
+            )
+        except Exception as exc:
+            self.logger.warning(
+                "op=resolve_transfer_destination status=inbox_lookup_failed "
+                "recipient=%s error=%s",
+                pubkey,
+                exc,
+            )
+            inbox_resolution = {
+                "recipient_pubkey": pubkey,
+                "lookup_relays": lookup_relays,
+                "relays": [],
+                "found": False,
+                "reason": f"kind10050_lookup_failed: {type(exc).__name__}",
+            }
+
+        if inbox_resolution.get("relays"):
+            relays = self._normalize_relays(inbox_resolution["relays"])
+            relay_source = "nip17-inbox"
+        elif provided_relays:
+            relays = provided_relays
+            relay_source = "recipient-hint"
+        elif nip05_relays:
+            relays = self._normalize_relays(nip05_relays)
+            relay_source = "nip05-hint"
+        else:
+            # Compatibility fallback while existing wallets publish kind 10050.
+            relays = self._normalize_relays([self.home_relay])
+            relay_source = "sender-home-fallback"
+        return {
+            "recipient_pubkey": pubkey,
+            "relays": relays,
+            "relay_source": relay_source,
+            "provided_relay_hints": provided_relays,
+            "nip05_relays": self._normalize_relays(nip05_relays),
+            "inbox_resolution": inbox_resolution,
+        }
 
     async def _get_latest_contacts_event(self, relays: List[str] | None = None) -> Event | None:
         relay_pool = relays if relays else self._build_discovery_relays()

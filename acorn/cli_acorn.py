@@ -2512,6 +2512,67 @@ def delete_ecash_transfers(relay, recipient, since, until, limit, yes, json_outp
     else:
         click.echo("No delete request published.")
 
+@click.command(
+    "inbox-relays",
+    help="Show or publish external NIP-17 inbox relays for token delivery",
+)
+@click.argument("inbox_relays", nargs=-1)
+@click.option(
+    "--publish-relay",
+    multiple=True,
+    help="Relay on which to publish or discover the kind 10050 record.",
+)
+@click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
+def inbox_relays(inbox_relays, publish_relay, json_output):
+    acorn_obj = Acorn(
+        nsec=NSEC,
+        relays=RELAYS,
+        public_relays=PUBLIC_RELAYS,
+        home_relay=HOME_RELAY,
+        mints=MINTS,
+        logging_level=LOGGING_LEVEL,
+    )
+    lookup_relays = (
+        [_normalize_relay(relay) for relay in publish_relay]
+        if publish_relay
+        else None
+    )
+    try:
+        if inbox_relays:
+            result = asyncio.run(
+                acorn_obj.publish_inbox_relays(
+                    [_normalize_relay(relay) for relay in inbox_relays],
+                    publish_relays=lookup_relays,
+                )
+            )
+        else:
+            result = asyncio.run(
+                acorn_obj.resolve_inbox_relays(
+                    acorn_obj.pubkey_hex,
+                    lookup_relays=lookup_relays,
+                )
+            )
+    except Exception as exc:
+        if json_output:
+            _emit_json({"status": "ERROR", "error": str(exc)})
+            return
+        raise click.ClickException(f"Inbox relay operation failed: {exc}") from exc
+
+    if json_output:
+        _emit_json(result)
+        return
+    if inbox_relays:
+        click.echo(f"Published kind {result['kind']} inbox relay record.")
+        click.echo(f"Event: {result['event_id']}")
+        click.echo(f"Inbox relays: {', '.join(result['relays'])}")
+        click.echo(f"Published to: {', '.join(result['published_to'])}")
+    elif result.get("found"):
+        click.echo(f"Inbox relays: {', '.join(result['relays'])}")
+        click.echo(f"Event: {result['event_id']}")
+    else:
+        click.echo("No signed NIP-17 inbox relay record was found.")
+
+
 @click.command("ecash-transfer", help="Send funds to another Acorn")
 @click.argument('amount', type=int)
 @click.argument('recipient')
@@ -2552,8 +2613,8 @@ def ecash_transfer(amount: int, recipient: str, relay: str | None, comment: str,
     click.echo(f"Mode: {result['mode']}")
     click.echo(f"Event: {result['event_id']}")
     click.echo(f"Relays: {', '.join(result['relays'])}")
-    if result.get("recipient_relays") and not transfer_relay:
-        click.echo("Relay source: recipient NIP-05")
+    if not transfer_relay:
+        click.echo(f"Relay source: {result['relay_source']}")
     click.echo(f"Recipient: {result['recipient_pubkey']}")
     click.echo(f"Amount: {result['amount']} {result['unit']}")
     if result.get("expiration"):
@@ -3100,6 +3161,7 @@ cli.add_command(burn)
 cli.add_command(get_user_records)
 cli.add_command(balance)
 cli.add_command(clear_wallet)
+cli.add_command(inbox_relays)
 cli.add_command(ecash_transfer)
 cli.add_command(receive_ecash)
 cli.add_command(receive_clear)

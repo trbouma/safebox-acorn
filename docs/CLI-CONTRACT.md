@@ -434,6 +434,12 @@ The `--direct` option is for debugging and legacy compatibility. It publishes a
 sender-authored direct kind `7378` event instead of a default NIP-59 kind `1059`
 gift wrap.
 
+`acorn inbox-relays [RELAY]...` publishes the wallet's signed NIP-17 kind
+`10050` external inbox relay list. With no relay arguments, it resolves and
+shows the current record. `--publish-relay` may be repeated to control the
+relays used to publish or discover that record. Internal Mainstay relay
+addresses are not suitable values for a publicly discoverable inbox list.
+
 `--expires-in <seconds>` adds an optional NIP-40 `expiration` tag to the
 relay-visible event. The value is converted to an absolute Unix timestamp
 before the event is signed. Supporting relays should stop serving expired

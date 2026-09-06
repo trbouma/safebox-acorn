@@ -56,6 +56,17 @@ acorn zap 21 <event-id> -c "from acorn"
 If `--relays/-r` is not supplied, zap discovery uses stored public relays when
 available.
 
+### Token inbox relays
+
+NIP-17 kind `10050` advertises the externally reachable relays where a wallet
+receives gift-wrapped ecash and Clear transfers. These are mutable delivery
+routes for the wallet `npub`; they are not wallet or mint identities.
+
+The receive path monitors the home relay and the signed kind `10050` inbox
+relays. Mainstay-internal relay addresses must remain context-local and must not
+be included in the publicly discoverable inbox record. See
+[Token Delivery Relay Routing](TOKEN-DELIVERY-RELAY-ROUTING.md).
+
 ## Local config
 
 The local config should remain intentionally small:

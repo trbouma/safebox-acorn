@@ -77,10 +77,16 @@ identity of the recipient or permanent control of the name. For material
 transfers, callers should verify the resolved `npub` through an independent
 channel or use an already trusted raw public key.
 
-If the sender does not provide an explicit `--relay`, those NIP-05 relay hints
-should be used as the transfer publication relays. If the recipient is an
-`npub` or hex key, or if NIP-05 does not provide relay hints, Acorn falls back
-to the sender's configured home relay unless a relay is explicitly supplied.
+If the sender does not provide an explicit `--relay`, Acorn first uses the
+recipient's valid, signed NIP-17 kind `10050` inbox relay list. NIP-05 relay
+hints are the compatibility fallback when no inbox record is found. If the
+recipient is an `npub` or hex key and no inbox record is found, Acorn currently
+falls back to the sender's configured home relay during migration. That final
+fallback does not establish recipient reachability and should eventually
+become a clear routing error.
+
+See [Token Delivery Relay Routing](TOKEN-DELIVERY-RELAY-ROUTING.md) for the
+cross-Mainstay routing model and operator commands.
 
 The resolved public key is the receiving key. This is a critical boundary:
 receipt requires control of the private key corresponding to the NIP-05,
