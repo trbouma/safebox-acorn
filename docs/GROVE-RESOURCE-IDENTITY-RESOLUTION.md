@@ -34,14 +34,16 @@ New `SafeboxRecord` documents use version 2 and add:
 {
   "version": 2,
   "blobsha256": "<ciphertext-sha256>",
-  "blob_service_npubs": ["npub1grove..."],
-  "blobref": "https://legacy.example/<ciphertext-sha256>"
+  "blob_service_npubs": ["npub1grove..."]
 }
 ```
 
 `blob_service_npubs` is ordered, deduplicated, and validated as NIP-19 public
-keys. `blobref` remains an advisory migration hint. Version 1 records continue
-to load with an empty provider list.
+keys. New identity-aware records omit `blobref`; the provider `npub`, resolved
+base endpoint, and `blobsha256` reconstruct the standard Blossom request.
+`blobref` is stored only when the upload server does not report a valid service
+identity, and remains an advisory migration hint on older records. Version 1
+records continue to load with an empty provider list.
 
 ## Endpoint Resolution
 
@@ -130,9 +132,10 @@ content integrity remain separate checks.
 
 On upload, Acorn asks the configured Blossom server for JSON service metadata.
 When it reports a valid `service_identity` of type `blossom`, Acorn stores the
-derived Grove `npub` with the attachment. Failure to discover an identity does
-not break older or third-party Blossom servers; the record remains on the
-legacy compatibility path.
+derived Grove `npub` with the attachment and omits the returned upload URL.
+Failure to discover an identity does not break older or third-party Blossom
+servers; Acorn stores their returned URL in `blobref` and the record remains on
+the legacy compatibility path.
 
 Reads, explicit deletion, and replacement cleanup resolve provider identities
 before using the advisory URL or configured server list. If a fallback server

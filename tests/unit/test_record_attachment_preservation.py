@@ -74,13 +74,13 @@ async def test_put_record_preserves_existing_encrypted_attachment_metadata():
 
     stored = json.loads(wallet.set_wallet_info.await_args.args[1])
     assert stored["payload"] == "updated text"
-    assert stored["blobref"] == "https://blossom.example/encrypted"
+    assert "blobref" not in stored
     assert stored["blobtype"] == "application/pdf"
     assert stored["blobsha256"] == "cipher-sha"
     assert stored["blob_service_npubs"] == [GROVE_NPUB]
     assert stored["origsha256"] == "plain-sha"
     assert stored["encryptparms"]["alg"] == "AES-256-GCM"
-    assert result["blobref"] == "https://blossom.example/encrypted"
+    assert result["blobref"] is None
     assert result["blobsha256"] == "cipher-sha"
     wallet.update_tags.assert_not_awaited()
     wallet.set_wallet_config.assert_not_awaited()
@@ -116,7 +116,7 @@ async def test_put_record_replaces_attachment_after_verified_record_publish(monk
     )
 
     stored = json.loads(wallet.set_wallet_info.await_args.args[1])
-    assert stored["blobref"] == "https://blossom.example/new-cipher-sha"
+    assert "blobref" not in stored
     assert stored["blobsha256"] == "new-cipher-sha"
     assert stored["blob_service_npubs"] == [GROVE_NPUB]
     assert stored["origsha256"] != "plain-sha"
@@ -161,5 +161,39 @@ async def test_put_record_preserves_declared_pkpass_effective_mime(monkeypatch):
     assert stored["effective_mime_source"] == "declared"
     assert stored["detected_mime"] == "application/zip"
     assert stored["blob_service_npubs"] == [GROVE_NPUB]
+    assert "blobref" not in stored
     assert result["effective_mime"] == PKPASS_MIME
     assert uploaded["data"] != PKPASS_FIXTURE.read_bytes()
+
+
+@pytest.mark.asyncio
+async def test_put_record_retains_blobref_for_unidentified_blossom(monkeypatch):
+    wallet = wallet_with_existing_attachment()
+    wallet.get_record_safebox = AsyncMock(side_effect=ValueError("No event found"))
+    wallet.discover_blossom_service_identity = AsyncMock(return_value=None)
+
+    class FakeBlossomClient:
+        def __init__(self, **kwargs):
+            pass
+
+        def upload_blob(self, server, data, mime_type=None, description=None):
+            return {
+                "sha256": "legacy-cipher-sha",
+                "url": f"{server}/legacy-cipher-sha",
+            }
+
+    monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
+
+    result = await wallet.put_record(
+        "Legacy Attachment",
+        "content",
+        blob_data=b"attachment",
+        return_result=True,
+    )
+
+    stored = json.loads(wallet.set_wallet_info.await_args.args[1])
+    assert stored["blob_service_npubs"] == []
+    assert stored["blobref"] == (
+        "https://blossom.example/legacy-cipher-sha"
+    )
+    assert result["blobref"] == stored["blobref"]

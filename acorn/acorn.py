@@ -8183,10 +8183,13 @@ class Acorn:
                 description='Blob to server',
             )
             sha256 = upload_result['sha256']
-            blob_ref = upload_result.get('url', f"{blossom_server}/{sha256}")
+            uploaded_blob_ref = upload_result.get(
+                'url', f"{blossom_server}/{sha256}"
+            )
             blob_service_npub = await self.discover_blossom_service_identity(
                 blossom_server
             )
+            blob_ref = None if blob_service_npub else uploaded_blob_ref
 
             self.logger.debug("op=transfer_blob status=uploaded sha256=%s", sha256)
             updated_safebox_record = SafeboxRecord(
@@ -8205,7 +8208,9 @@ class Acorn:
                 origsha256=blobxfer_obj.origsha256,
                 encryptparms=encrypt_parms,
             )
-            record_json_str = updated_safebox_record.model_dump_json()
+            record_json_str = updated_safebox_record.model_dump_json(
+                exclude={"blobref"} if blob_service_npub else None
+            )
 
             await self.set_wallet_info(record_name, record_json_str, record_kind=record_kind)
             if int(record_kind) == 37375:
@@ -8597,7 +8602,7 @@ class Acorn:
                 description="Blob to server",
             )
             sha256 = upload_result["sha256"]
-            blob_ref = upload_result.get(
+            uploaded_blob_ref = upload_result.get(
                 "url",
                 f"{blossom_server}/{sha256}",
             )
@@ -8606,6 +8611,9 @@ class Acorn:
             )
             if blob_service_npub:
                 blob_service_npubs = [blob_service_npub]
+                blob_ref = None
+            else:
+                blob_ref = uploaded_blob_ref
             self.logger.debug(
                 "op=put_record status=blob_uploaded sha256=%s",
                 sha256,
@@ -8614,13 +8622,15 @@ class Acorn:
             # Updating a record's payload must not silently detach its existing
             # encrypted attachment. The relay record remains authoritative for
             # the attachment metadata and decryption material.
-            blob_ref = existing_blob.blobref
             mime_type_guess = _record_effective_mime(existing_blob)
             effective_mime_source = getattr(existing_blob, "effective_mime_source", None)
             detected_mime = getattr(existing_blob, "detected_mime", None)
             sha256 = existing_blob.blobsha256
             blob_service_npubs = list(
                 getattr(existing_blob, "blob_service_npubs", []) or []
+            )
+            blob_ref = (
+                None if blob_service_npubs else existing_blob.blobref
             )
             origsha256 = existing_blob.origsha256
             encrypt_parms = existing_blob.encryptparms
@@ -8639,7 +8649,9 @@ class Acorn:
             origsha256=origsha256,
             encryptparms=encrypt_parms,
         )
-        record_json_str = record_obj.model_dump_json()
+        record_json_str = record_obj.model_dump_json(
+            exclude={"blobref"} if blob_service_npubs else None
+        )
         write_relays = self._record_relay_pool(relays)
 
         try:
