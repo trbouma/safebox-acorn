@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from time import monotonic
@@ -334,6 +335,63 @@ async def test_get_record_blobdata_returns_none_for_record_without_blob(monkeypa
 
     assert blob_type is None
     assert blob_data is None
+
+
+@pytest.mark.asyncio
+async def test_get_record_blobdata_uses_identity_resolved_grove_server(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    blob_data = b"identity-resolved blob"
+    blob_sha256 = hashlib.sha256(blob_data).hexdigest()
+    service_npub = Keys(priv_k="22" * 32).public_key_bech32()
+    event = record_event(
+        event_id="a" * 64,
+        created_at=20,
+        content=json.dumps(
+            {
+                "version": 2,
+                "tag": ["field-notes"],
+                "type": "generic",
+                "payload": "attachment",
+                "blobsha256": blob_sha256,
+                "blob_service_npubs": [service_npub],
+            }
+        ),
+    )
+    requested = []
+
+    class PlaintextNip44:
+        def __init__(self, keys):
+            pass
+
+        def decrypt(self, content, pubkey):
+            return content
+
+    class Blob:
+        def get_bytes(self):
+            return blob_data
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["default_servers"] == ["http://grove:8000"]
+
+        def get_blob(self, server, sha256):
+            requested.append((server, sha256))
+            return Blob()
+
+    monkeypatch.setattr(acorn_module, "NIP44Encrypt", PlaintextNip44)
+    monkeypatch.setattr(acorn_module, "BlossomClient", Client)
+    wallet._async_get_wallet_info = AsyncMock(return_value=event)
+    wallet.resolve_blob_servers = AsyncMock(return_value=["http://grove:8000"])
+
+    blob_type, restored = await wallet.get_record_blobdata("field-notes")
+
+    assert restored == blob_data
+    assert blob_type == "application/octet-stream"
+    assert requested == [("http://grove:8000", blob_sha256)]
+    resolved_record = wallet.resolve_blob_servers.await_args.args[0]
+    assert resolved_record.blob_service_npubs == [service_npub]
 
 
 @pytest.mark.asyncio

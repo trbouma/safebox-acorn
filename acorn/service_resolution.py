@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from time import time
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
@@ -12,6 +13,11 @@ SERVICE_BINDINGS_LABEL = "service_bindings"
 SERVICE_ENDPOINTS_LABEL = "service_endpoints"
 CONTEXT_ENDPOINTS_LABEL = "context_endpoints"
 SERVICE_RESOLUTION_RECORD_KIND = 37375
+BLOSSOM_CAPABILITIES = (
+    "blossom.delete",
+    "blossom.read",
+    "blossom.write",
+)
 
 
 def _validated_npub(value: str) -> str:
@@ -265,3 +271,111 @@ class ContextEndpointsRecord(ResolutionRecordModel):
         if len(identities) != len(set(identities)):
             raise ValueError("context endpoints contain a duplicate endpoint hint")
         return self
+
+
+def resolve_service_urls(
+    *,
+    service_npubs: list[str],
+    capability: str,
+    service_endpoints: ServiceEndpointsRecord,
+    context_endpoints: ContextEndpointsRecord | None = None,
+    context_npub: str | None = None,
+    now: int | None = None,
+) -> list[str]:
+    """Select HTTP endpoints for stable service identities.
+
+    Global service descriptors may supply only external HTTPS routes. Internal
+    and local routes must be qualified by the active context identity.
+    """
+
+    if not service_npubs:
+        return []
+    requested = {_validated_npub(value) for value in service_npubs}
+    current_time = int(time()) if now is None else int(now)
+    candidates: list[tuple[int, int, int, str]] = []
+
+    for service in service_endpoints.services:
+        if (
+            service.service_npub not in requested
+            or service.service_type not in {"blossom", "grove"}
+            or service.state == "revoked"
+            or (service.expires_at is not None and service.expires_at <= current_time)
+        ):
+            continue
+        for endpoint in service.endpoints:
+            if endpoint.scope != "external" or endpoint.transport != "https":
+                continue
+            if not _endpoint_supports(service, endpoint, capability):
+                continue
+            candidates.append(
+                (
+                    0 if service.state == "verified" else 1,
+                    2,
+                    endpoint.priority,
+                    str(endpoint.locator.url),
+                )
+            )
+
+    if context_npub and context_endpoints is not None:
+        active_context = _validated_npub(context_npub)
+        for hint in context_endpoints.hints:
+            endpoint = hint.endpoint
+            if (
+                hint.context_npub != active_context
+                or hint.service_npub not in requested
+                or hint.state == "rejected"
+                or (
+                    hint.expires_at is not None
+                    and hint.expires_at <= current_time
+                )
+                or endpoint.transport not in {"http", "https"}
+                or capability not in endpoint.capabilities
+            ):
+                continue
+            candidates.append(
+                (
+                    0 if hint.state == "verified" else 1,
+                    {"internal": 0, "local": 1, "external": 2}[endpoint.scope],
+                    endpoint.priority,
+                    str(endpoint.locator.url),
+                )
+            )
+
+    urls: list[str] = []
+    for _, _, _, url in sorted(candidates):
+        normalized = url.rstrip("/")
+        if normalized not in urls:
+            urls.append(normalized)
+    return urls
+
+
+def blossom_server_from_blobref(blobref: str | None, blobsha256: str | None) -> str | None:
+    """Recover a legacy Blossom base URL when the reference names the blob."""
+
+    if not blobref or not blobsha256:
+        return None
+    parsed = urlsplit(blobref)
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+    ):
+        return None
+    path = parsed.path.rstrip("/")
+    if not path or path.rsplit("/", 1)[-1].lower() != blobsha256.lower():
+        return None
+    base_path = path.rsplit("/", 1)[0]
+    return parsed._replace(path=base_path, query="", fragment="").geturl().rstrip("/")
+
+
+def _endpoint_supports(
+    service: ServiceEndpointSet,
+    endpoint: ServiceEndpoint,
+    capability: str,
+) -> bool:
+    return capability in endpoint.capabilities or (
+        not endpoint.capabilities and capability in service.capabilities
+    )

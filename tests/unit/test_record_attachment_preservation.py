@@ -16,6 +16,7 @@ from acorn.models import EncryptionParms
 
 PKPASS_MIME = "application/vnd.apple.pkpass"
 PKPASS_FIXTURE = Path(__file__).resolve().parents[1] / "fixtures" / "Example.pkpass"
+GROVE_NPUB = Keys(priv_k="22" * 32).public_key_bech32()
 
 
 def wallet_with_existing_attachment() -> Acorn:
@@ -34,6 +35,7 @@ def wallet_with_existing_attachment() -> Acorn:
             blobref="https://blossom.example/encrypted",
             blobtype="application/pdf",
             blobsha256="cipher-sha",
+            blob_service_npubs=[GROVE_NPUB],
             origsha256="plain-sha",
             encryptparms=EncryptionParms(
                 alg="AES-256-GCM",
@@ -52,6 +54,10 @@ def wallet_with_existing_attachment() -> Acorn:
     )
     wallet.update_tags = AsyncMock()
     wallet.set_wallet_config = AsyncMock()
+    wallet.discover_blossom_service_identity = AsyncMock(return_value=GROVE_NPUB)
+    wallet.resolve_blob_servers = AsyncMock(
+        return_value=[wallet.blossom_home_server]
+    )
     return wallet
 
 
@@ -71,6 +77,7 @@ async def test_put_record_preserves_existing_encrypted_attachment_metadata():
     assert stored["blobref"] == "https://blossom.example/encrypted"
     assert stored["blobtype"] == "application/pdf"
     assert stored["blobsha256"] == "cipher-sha"
+    assert stored["blob_service_npubs"] == [GROVE_NPUB]
     assert stored["origsha256"] == "plain-sha"
     assert stored["encryptparms"]["alg"] == "AES-256-GCM"
     assert result["blobref"] == "https://blossom.example/encrypted"
@@ -111,6 +118,7 @@ async def test_put_record_replaces_attachment_after_verified_record_publish(monk
     stored = json.loads(wallet.set_wallet_info.await_args.args[1])
     assert stored["blobref"] == "https://blossom.example/new-cipher-sha"
     assert stored["blobsha256"] == "new-cipher-sha"
+    assert stored["blob_service_npubs"] == [GROVE_NPUB]
     assert stored["origsha256"] != "plain-sha"
     assert deleted == [("https://blossom.example", "cipher-sha")]
     assert result["replaced_blob_cleanup"]["deleted"] is True
@@ -152,5 +160,6 @@ async def test_put_record_preserves_declared_pkpass_effective_mime(monkeypatch):
     assert stored["effective_mime"] == PKPASS_MIME
     assert stored["effective_mime_source"] == "declared"
     assert stored["detected_mime"] == "application/zip"
+    assert stored["blob_service_npubs"] == [GROVE_NPUB]
     assert result["effective_mime"] == PKPASS_MIME
     assert uploaded["data"] != PKPASS_FIXTURE.read_bytes()

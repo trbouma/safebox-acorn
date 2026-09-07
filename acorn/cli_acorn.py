@@ -244,14 +244,20 @@ def _format_record(record: SafeboxRecord, kind: int) -> str:
         "",
         record.payload or "",
     ]
-    if record.blobref:
+    if record.blobsha256:
         lines.extend(
             [
                 "",
-                f"Blob: {record.blobref}",
+                f"Blob SHA-256: {record.blobsha256}",
                 f"Blob type: {record.blobtype or 'unknown'}",
             ]
         )
+        if record.blob_service_npubs:
+            lines.append(
+                "Grove services: " + ", ".join(record.blob_service_npubs)
+            )
+        if record.blobref:
+            lines.append(f"Legacy blob URL: {record.blobref}")
     return "\n".join(lines).rstrip()
 
 

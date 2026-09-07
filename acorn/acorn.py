@@ -66,6 +66,7 @@ from acorn.payment_request import (
     nostr_nip17_transport,
 )
 from acorn.service_resolution import (
+    BLOSSOM_CAPABILITIES,
     CONTEXT_ENDPOINTS_LABEL,
     SERVICE_BINDINGS_LABEL,
     SERVICE_ENDPOINTS_LABEL,
@@ -73,6 +74,8 @@ from acorn.service_resolution import (
     ContextEndpointsRecord,
     ServiceBindingsRecord,
     ServiceEndpointsRecord,
+    blossom_server_from_blobref,
+    resolve_service_urls,
 )
 
 
@@ -445,6 +448,98 @@ class Acorn:
     def _default_blossom_xfer_server(self) -> str:
         return self.blossom_xfer_server
 
+    async def discover_blossom_service_identity(self, server: str) -> str | None:
+        """Return the Grove service npub advertised by a Blossom endpoint."""
+
+        normalized = str(server).strip().rstrip("/")
+        cache = getattr(self, "_blossom_service_identity_cache", None)
+        if cache is None:
+            cache = {}
+            self._blossom_service_identity_cache = cache
+        if normalized in cache:
+            return cache[normalized]
+
+        discovered: str | None = None
+        try:
+            async with httpx.AsyncClient(
+                timeout=3.0,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client:
+                response = await client.get(
+                    normalized,
+                    headers={"Accept": "application/json"},
+                )
+                response.raise_for_status()
+            report = response.json()
+            identity = report.get("service_identity") if isinstance(report, dict) else None
+            candidate = identity.get("npub") if isinstance(identity, dict) else None
+            service_type = identity.get("type") if isinstance(identity, dict) else None
+            if service_type == "blossom" and isinstance(candidate, str):
+                discovered = Keys(pub_k=candidate.strip()).public_key_bech32()
+        except (httpx.HTTPError, TypeError, ValueError, json.JSONDecodeError):
+            discovered = None
+
+        cache[normalized] = discovered
+        return discovered
+
+    async def resolve_blob_servers(
+        self,
+        record: SafeboxRecord,
+        *,
+        capability: str = "blossom.read",
+    ) -> List[str]:
+        """Resolve stable Grove identities to usable Blossom base URLs."""
+
+        if capability not in BLOSSOM_CAPABILITIES:
+            raise ValueError(f"unsupported Blossom capability: {capability}")
+
+        resolved: List[str] = []
+        service_npubs = list(getattr(record, "blob_service_npubs", []) or [])
+        if service_npubs:
+            try:
+                endpoint_record = await self.get_service_endpoints()
+                context_record = await self.get_context_endpoints()
+                resolved.extend(
+                    resolve_service_urls(
+                        service_npubs=service_npubs,
+                        capability=capability,
+                        service_endpoints=endpoint_record,
+                        context_endpoints=context_record,
+                        context_npub=getattr(self, "service_context_npub", None),
+                    )
+                )
+            except RuntimeError as exc:
+                if "record is invalid" in str(exc):
+                    raise
+                self.logger.warning(
+                    "op=resolve_blob_servers status=records_unavailable error=%s",
+                    exc,
+                )
+            except Exception as exc:
+                self.logger.warning(
+                    "op=resolve_blob_servers status=records_unavailable error=%s",
+                    exc,
+                )
+
+        legacy_server = blossom_server_from_blobref(
+            getattr(record, "blobref", None),
+            getattr(record, "blobsha256", None),
+        )
+        fallback_servers = [legacy_server, *getattr(self, "blossom_servers", [])]
+        for server in fallback_servers:
+            if not server:
+                continue
+            normalized = str(server).rstrip("/")
+            if normalized in resolved:
+                continue
+            if service_npubs:
+                discovered = await self.discover_blossom_service_identity(normalized)
+                if discovered not in service_npubs:
+                    continue
+            resolved.append(normalized)
+        return resolved
+
     @staticmethod
     def _is_cashu_token(token: str) -> bool:
         return isinstance(token, str) and (token.startswith("cashuA") or token.startswith("cashuB"))
@@ -465,13 +560,20 @@ class Acorn:
                     blossom_home_server: str | None = None,
                     blossom_xfer_server: str | None = None,
                     blossom_servers: List[str] | None = None,
-                    record_limit: int | None = None) -> None:
+                    record_limit: int | None = None,
+                    service_context_npub: str | None = None) -> None:
         
         self.max_proof_event_size = max_proof_event_size
         self.record_limit = _positive_limit(
             RECORD_LIMIT if record_limit is None else record_limit,
             name="record_limit",
         )
+        self.service_context_npub = (
+            Keys(pub_k=service_context_npub).public_key_bech32()
+            if service_context_npub
+            else None
+        )
+        self._blossom_service_identity_cache: dict[str, str | None] = {}
         self.logger = logging.getLogger(self.__class__.__name__)
         self.logger.setLevel(logging_level)  
         # Configure the logger's handler and format
@@ -4723,6 +4825,10 @@ class Acorn:
                     relays=delete_relays,
                 )
                 if record.blobsha256:
+                    blob_servers = await self.resolve_blob_servers(
+                        record,
+                        capability="blossom.delete",
+                    )
                     blob_cleanup = {
                         "requested": True,
                         "sha256": record.blobsha256,
@@ -4731,9 +4837,9 @@ class Acorn:
                     }
                     client = BlossomClient(
                         nsec=self.privkey_bech32,
-                        default_servers=self.blossom_servers,
+                        default_servers=blob_servers,
                     )
-                    for server in self.blossom_servers:
+                    for server in blob_servers:
                         try:
                             client.delete_blob(
                                 server=server,
@@ -5164,7 +5270,7 @@ class Acorn:
             self.logger.debug(
                 "op=get_record_safebox status=ok kind=%s has_blob=%s",
                 record_kind,
-                bool(safebox_record.blobref),
+                bool(safebox_record.blobsha256),
             )
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
             self.logger.warning("op=get_record_safebox status=parse_failed kind=%s error=%s", record_kind, exc)
@@ -5271,10 +5377,6 @@ class Acorn:
         blob_type:  str = None
         my_enc = NIP44Encrypt(self.k)
 
-        blossom_servers = self.blossom_servers
-        client = BlossomClient(nsec=None, default_servers=blossom_servers)
-
-        
         if record_origin:
             record_name = ':'.join([record_origin,record_name])
 
@@ -5320,6 +5422,11 @@ class Acorn:
             blob_sha256 = safebox_record.blobsha256
             if not blob_sha256:
                 return None, None
+            blossom_servers = await self.resolve_blob_servers(
+                safebox_record,
+                capability="blossom.read",
+            )
+            client = BlossomClient(nsec=None, default_servers=blossom_servers)
             blob_type = _record_effective_mime(safebox_record)
             blob_retrieve: BlossomBlob | None = None
             last_blob_error: Exception | None = None
@@ -7998,6 +8105,9 @@ class Acorn:
             )
             sha256 = upload_result['sha256']
             blob_ref = upload_result.get('url', f"{blossom_server}/{sha256}")
+            blob_service_npub = await self.discover_blossom_service_identity(
+                blossom_server
+            )
 
             self.logger.debug("op=transfer_blob status=uploaded sha256=%s", sha256)
             updated_safebox_record = SafeboxRecord(
@@ -8010,6 +8120,9 @@ class Acorn:
                 effective_mime_source=effective_mime_source,
                 detected_mime=detected_mime,
                 blobsha256=sha256,
+                blob_service_npubs=(
+                    [blob_service_npub] if blob_service_npub else []
+                ),
                 origsha256=blobxfer_obj.origsha256,
                 encryptparms=encrypt_parms,
             )
@@ -8106,7 +8219,7 @@ class Acorn:
         record = await self.get_record_safebox(record_name=record_name)
         blob_type = None
         blob_data = None
-        if record.blobref:
+        if getattr(record, "blobsha256", None) or getattr(record, "blobref", None):
             blob_type, blob_data = await self.get_record_blobdata(record_name=record_name)
             if blob_data is None:
                 raise RuntimeError("Original Record could not be loaded for sharing")
@@ -8359,6 +8472,7 @@ class Acorn:
         origsha256 = None
         encrypt_parms = None
         blob_ref = None
+        blob_service_npubs: List[str] = []
         sha256 = None
         existing_blob = None
         if preserve_existing_blob:
@@ -8372,7 +8486,7 @@ class Acorn:
                 if "No event found" not in str(exc):
                     raise
             else:
-                if candidate.blobref:
+                if candidate.blobsha256:
                     existing_blob = candidate
 
         if blob_data:
@@ -8408,6 +8522,11 @@ class Acorn:
                 "url",
                 f"{blossom_server}/{sha256}",
             )
+            blob_service_npub = await self.discover_blossom_service_identity(
+                blossom_server
+            )
+            if blob_service_npub:
+                blob_service_npubs = [blob_service_npub]
             self.logger.debug(
                 "op=put_record status=blob_uploaded sha256=%s",
                 sha256,
@@ -8421,6 +8540,9 @@ class Acorn:
             effective_mime_source = getattr(existing_blob, "effective_mime_source", None)
             detected_mime = getattr(existing_blob, "detected_mime", None)
             sha256 = existing_blob.blobsha256
+            blob_service_npubs = list(
+                getattr(existing_blob, "blob_service_npubs", []) or []
+            )
             origsha256 = existing_blob.origsha256
             encrypt_parms = existing_blob.encryptparms
 
@@ -8434,6 +8556,7 @@ class Acorn:
             effective_mime_source=effective_mime_source,
             detected_mime=detected_mime,
             blobsha256=sha256,
+            blob_service_npubs=blob_service_npubs,
             origsha256=origsha256,
             encryptparms=encrypt_parms,
         )
@@ -8481,11 +8604,15 @@ class Acorn:
                 "deleted": False,
                 "servers": [],
             }
+            cleanup_servers = await self.resolve_blob_servers(
+                existing_blob,
+                capability="blossom.delete",
+            )
             client = BlossomClient(
                 nsec=self.privkey_bech32,
-                default_servers=self.blossom_servers,
+                default_servers=cleanup_servers,
             )
-            for server in self.blossom_servers:
+            for server in cleanup_servers:
                 try:
                     client.delete_blob(server=server, sha256=existing_blob.blobsha256)
                     replaced_blob_cleanup["servers"].append(
@@ -8508,6 +8635,7 @@ class Acorn:
                 "blobref": blob_ref,
                 "effective_mime": mime_type_guess,
                 "blobsha256": sha256,
+                "blob_service_npubs": blob_service_npubs,
                 "replaced_blob_cleanup": replaced_blob_cleanup,
             }
         return record_name

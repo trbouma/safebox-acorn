@@ -8,8 +8,10 @@ import pytest
 from monstr.encrypt import Keys
 from pydantic import ValidationError
 
+from acorn import acorn as acorn_module
 from acorn.acorn import Acorn
 from acorn.service_resolution import (
+    BLOSSOM_CAPABILITIES,
     CONTEXT_ENDPOINTS_LABEL,
     SERVICE_BINDINGS_LABEL,
     SERVICE_ENDPOINTS_LABEL,
@@ -23,7 +25,10 @@ from acorn.service_resolution import (
     ServiceEndpointSet,
     ServiceEndpointsRecord,
     ServiceLocator,
+    blossom_server_from_blobref,
+    resolve_service_urls,
 )
+from acorn.models import SafeboxRecord
 
 
 def npub(secret: str) -> str:
@@ -58,6 +63,23 @@ def internal_endpoint() -> ServiceEndpoint:
         locator=ServiceLocator(url="http://clear:3339/"),
         capabilities=["clear.mint"],
         priority=10,
+    )
+
+
+def blossom_endpoint(
+    endpoint_id: str,
+    scope: str,
+    transport: str,
+    url: str,
+    priority: int,
+) -> ServiceEndpoint:
+    return ServiceEndpoint(
+        endpoint_id=endpoint_id,
+        scope=scope,
+        transport=transport,
+        locator=ServiceLocator(url=url),
+        capabilities=list(BLOSSOM_CAPABILITIES),
+        priority=priority,
     )
 
 
@@ -228,6 +250,252 @@ def test_endpoint_locators_are_transport_specific_and_do_not_allow_credentials()
 
     assert fips.locator.url is None
     assert fips.locator.node_npub == SERVICE_NPUB
+
+
+def test_grove_resolver_prefers_matching_context_then_external_https() -> None:
+    services = ServiceEndpointsRecord(
+        services=[
+            ServiceEndpointSet(
+                service_npub=SERVICE_NPUB,
+                service_type="blossom",
+                capabilities=list(BLOSSOM_CAPABILITIES),
+                issued_at=100,
+                endpoints=[
+                    blossom_endpoint(
+                        "grove-external",
+                        "external",
+                        "https",
+                        "https://grove.example",
+                        30,
+                    ),
+                    blossom_endpoint(
+                        "unqualified-internal",
+                        "internal",
+                        "http",
+                        "http://wrong-context:8000",
+                        1,
+                    ),
+                ],
+            )
+        ]
+    )
+    contexts = ContextEndpointsRecord(
+        hints=[
+            ContextEndpointHint(
+                context_npub=CONTEXT_NPUB,
+                service_npub=SERVICE_NPUB,
+                endpoint=blossom_endpoint(
+                    "grove-internal",
+                    "internal",
+                    "http",
+                    "http://grove:8000",
+                    10,
+                ),
+                source="mainstay",
+                updated_at=100,
+            ),
+            ContextEndpointHint(
+                context_npub=npub("44"),
+                service_npub=SERVICE_NPUB,
+                endpoint=blossom_endpoint(
+                    "other-context",
+                    "internal",
+                    "http",
+                    "http://other-grove:8000",
+                    1,
+                ),
+                source="mainstay",
+                updated_at=100,
+            ),
+        ]
+    )
+
+    assert resolve_service_urls(
+        service_npubs=[SERVICE_NPUB],
+        capability="blossom.read",
+        service_endpoints=services,
+        context_endpoints=contexts,
+        context_npub=CONTEXT_NPUB,
+        now=200,
+    ) == ["http://grove:8000", "https://grove.example"]
+
+
+def test_legacy_blob_reference_is_advisory_and_hash_qualified() -> None:
+    assert blossom_server_from_blobref(
+        "https://grove.example/blobs/" + "ab" * 32,
+        "ab" * 32,
+    ) == "https://grove.example/blobs"
+    assert blossom_server_from_blobref(
+        "https://grove.example/not-the-hash",
+        "ab" * 32,
+    ) is None
+
+
+def test_safebox_record_accepts_v1_and_adds_provider_identities() -> None:
+    legacy = SafeboxRecord.model_validate(
+        {
+            "version": 1,
+            "tag": ["document"],
+            "type": "generic",
+            "payload": {},
+            "blobref": "https://grove.example/" + "ab" * 32,
+            "blobsha256": "ab" * 32,
+        }
+    )
+    current = SafeboxRecord(
+        tag=["document"],
+        type="generic",
+        payload={},
+        blobsha256="ab" * 32,
+        blob_service_npubs=[SERVICE_NPUB, SERVICE_NPUB],
+    )
+
+    assert legacy.version == 1
+    assert legacy.blob_service_npubs == []
+    assert current.version == 2
+    assert current.blob_service_npubs == [SERVICE_NPUB]
+
+
+@pytest.mark.asyncio
+async def test_acorn_resolves_identity_routes_before_legacy_blobref() -> None:
+    acorn = wallet()
+    acorn.service_context_npub = CONTEXT_NPUB
+    acorn.blossom_servers = ["https://fallback.example"]
+    acorn.get_service_endpoints = AsyncMock(
+        return_value=ServiceEndpointsRecord(
+            services=[
+                ServiceEndpointSet(
+                    service_npub=SERVICE_NPUB,
+                    service_type="blossom",
+                    capabilities=list(BLOSSOM_CAPABILITIES),
+                    issued_at=100,
+                    endpoints=[
+                        blossom_endpoint(
+                            "grove-external",
+                            "external",
+                            "https",
+                            "https://grove.example",
+                            30,
+                        )
+                    ],
+                )
+            ]
+        )
+    )
+    acorn.get_context_endpoints = AsyncMock(
+        return_value=ContextEndpointsRecord(
+            hints=[
+                ContextEndpointHint(
+                    context_npub=CONTEXT_NPUB,
+                    service_npub=SERVICE_NPUB,
+                    endpoint=blossom_endpoint(
+                        "grove-internal",
+                        "internal",
+                        "http",
+                        "http://grove:8000",
+                        10,
+                    ),
+                    source="mainstay",
+                    updated_at=100,
+                )
+            ]
+        )
+    )
+    acorn.discover_blossom_service_identity = AsyncMock(return_value=SERVICE_NPUB)
+    record = SafeboxRecord(
+        tag=["document"],
+        type="generic",
+        payload={},
+        blobref="https://legacy.example/" + "ab" * 32,
+        blobsha256="ab" * 32,
+        blob_service_npubs=[SERVICE_NPUB],
+    )
+
+    assert await acorn.resolve_blob_servers(record) == [
+        "http://grove:8000",
+        "https://grove.example",
+        "https://legacy.example",
+        "https://fallback.example",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_identity_record_rejects_unidentified_fallback_servers() -> None:
+    acorn = wallet()
+    acorn.blossom_servers = ["https://fallback.example"]
+    acorn.get_service_endpoints = AsyncMock(return_value=ServiceEndpointsRecord())
+    acorn.get_context_endpoints = AsyncMock(return_value=ContextEndpointsRecord())
+    acorn.discover_blossom_service_identity = AsyncMock(return_value=None)
+    record = SafeboxRecord(
+        tag=["document"],
+        type="generic",
+        payload={},
+        blobref="https://legacy.example/" + "ab" * 32,
+        blobsha256="ab" * 32,
+        blob_service_npubs=[SERVICE_NPUB],
+    )
+
+    assert await acorn.resolve_blob_servers(record) == []
+
+
+@pytest.mark.asyncio
+async def test_blob_resolver_fails_closed_for_invalid_endpoint_record() -> None:
+    acorn = wallet()
+    acorn.blossom_servers = ["https://fallback.example"]
+    acorn.get_service_endpoints = AsyncMock(
+        side_effect=RuntimeError(
+            "The relay-backed service_endpoints record is invalid"
+        )
+    )
+    record = SafeboxRecord(
+        tag=["document"],
+        type="generic",
+        payload={},
+        blobsha256="ab" * 32,
+        blob_service_npubs=[SERVICE_NPUB],
+    )
+
+    with pytest.raises(RuntimeError, match="record is invalid"):
+        await acorn.resolve_blob_servers(record)
+
+
+@pytest.mark.asyncio
+async def test_grove_identity_discovery_validates_service_metadata(monkeypatch) -> None:
+    class Response:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "service_identity": {
+                    "npub": SERVICE_NPUB,
+                    "type": "blossom",
+                    "nsec": "must-not-be-read",
+                }
+            }
+
+    class Client:
+        def __init__(self, **kwargs):
+            assert kwargs["follow_redirects"] is False
+            assert kwargs["trust_env"] is False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        async def get(self, url, headers):
+            assert url == "https://grove.example"
+            assert headers == {"Accept": "application/json"}
+            return Response()
+
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", Client)
+    acorn = wallet()
+
+    assert await acorn.discover_blossom_service_identity(
+        "https://grove.example/"
+    ) == SERVICE_NPUB
 
 
 @pytest.mark.asyncio

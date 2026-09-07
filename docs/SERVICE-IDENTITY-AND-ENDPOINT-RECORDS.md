@@ -1,6 +1,6 @@
 # Service Identity and Endpoint Records
 
-Status: Implemented schema foundation
+Status: Implemented schema foundation; Grove resource resolver integrated
 
 ## Purpose
 
@@ -240,10 +240,11 @@ new relay event ID.
 
 ## Update and Resolution Boundary
 
-This implementation establishes record formats and storage only. It does not
-yet:
+The Grove resource resolver now selects capability-bearing external HTTPS
+routes and active-context HTTP or HTTPS routes for attachment reads and
+deletes. Clear mint routing remains outside this generic resolver. The broader
+implementation does not yet:
 
-- select an endpoint;
 - compare a proposed sequence with the currently stored sequence;
 - verify a signed service descriptor or root binding;
 - probe a candidate endpoint;

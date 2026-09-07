@@ -1,4 +1,4 @@
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Literal, Union, List, Optional
 from typing import Any, Dict
 import hashlib
@@ -6,6 +6,7 @@ from binascii import hexlify
 from enum import Enum
 from datetime import datetime
 import json, base64
+from monstr.encrypt import Keys
 from monstr.event.event import Event
 import cbor2
 
@@ -350,7 +351,7 @@ class EncryptionResult(BaseModel):
     aad: Optional[bytes] = None
 
 class SafeboxRecord(BaseModel):
-    version: int = 1
+    version: int = 2
     tag: list[str]                     # e.g. ["my_record"]
     type: str                          # e.g. "offer"
     payload: Any                       # can hold any JSON-serializable value
@@ -361,8 +362,25 @@ class SafeboxRecord(BaseModel):
     detected_mime: str|None = None
     # blobdata: bytes|None = None
     blobsha256: str|None = None
+    blob_service_npubs: list[str] = Field(default_factory=list)
     origsha256: str|None = None
     encryptparms: EncryptionParms|None=None
+
+    @field_validator("blob_service_npubs")
+    @classmethod
+    def validate_blob_service_npubs(cls, values: list[str]) -> list[str]:
+        normalized: list[str] = []
+        for value in values:
+            npub = str(value).strip()
+            if not npub.startswith("npub1"):
+                raise ValueError("blob service identities must use npub encoding")
+            try:
+                canonical = Keys(pub_k=npub).public_key_bech32()
+            except (TypeError, ValueError) as exc:
+                raise ValueError("invalid blob service npub") from exc
+            if canonical not in normalized:
+                normalized.append(canonical)
+        return normalized
 
 class OriginalRecordTransfer(BaseModel):
     origsha256: str
