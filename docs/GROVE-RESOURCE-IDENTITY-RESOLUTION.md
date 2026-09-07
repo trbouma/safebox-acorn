@@ -86,8 +86,11 @@ eligible routes without changing the blob hash or Grove service identity.
 
 ## Next Steps
 
-1. Pass the active Mainstay context `npub` into Acorn construction.
-2. Publish Mainstay's internal Grove hint into `context_endpoints`.
-3. Add signed Grove endpoint descriptors and promote verified external routes.
-4. Add explicit replica registration and removal without changing blob hashes.
-5. Add a FIPS transport adapter for Blossom operations.
+1. Add signed Grove endpoint descriptors and promote verified external routes.
+2. Add explicit replica registration and removal without changing blob hashes.
+3. Add a FIPS transport adapter for Blossom operations.
+
+The Mainstay integration now supplies the first two former steps: Mainstay
+publishes a read-only context manifest, Safebox Web consumes it, and Acorn
+idempotently stores the internal Grove hint in the wallet's private
+`context_endpoints` record.

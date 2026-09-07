@@ -420,6 +420,43 @@ async def test_acorn_resolves_identity_routes_before_legacy_blobref() -> None:
 
 
 @pytest.mark.asyncio
+async def test_acorn_installs_context_endpoint_idempotently() -> None:
+    acorn = wallet()
+    acorn.get_context_endpoints = AsyncMock(return_value=ContextEndpointsRecord())
+    acorn.publish_context_endpoints = AsyncMock(return_value={"status": "OK"})
+    endpoint = blossom_endpoint(
+        "mainstay-grove-internal",
+        "internal",
+        "http",
+        "http://grove:8000",
+        10,
+    )
+
+    changed = await acorn.ensure_context_service_endpoint(
+        context_npub=CONTEXT_NPUB,
+        service_npub=SERVICE_NPUB,
+        endpoint=endpoint,
+    )
+
+    assert changed is True
+    assert acorn.service_context_npub == CONTEXT_NPUB
+    published = acorn.publish_context_endpoints.await_args.args[0]
+    assert published.hints[0].context_npub == CONTEXT_NPUB
+    assert published.hints[0].service_npub == SERVICE_NPUB
+    assert published.hints[0].endpoint == endpoint
+    assert published.hints[0].source == "mainstay"
+    assert published.hints[0].source_npub == CONTEXT_NPUB
+
+    acorn.get_context_endpoints.return_value = published
+    assert await acorn.ensure_context_service_endpoint(
+        context_npub=CONTEXT_NPUB,
+        service_npub=SERVICE_NPUB,
+        endpoint=endpoint,
+    ) is False
+    acorn.publish_context_endpoints.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_identity_record_rejects_unidentified_fallback_servers() -> None:
     acorn = wallet()
     acorn.blossom_servers = ["https://fallback.example"]

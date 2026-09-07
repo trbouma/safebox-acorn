@@ -71,7 +71,9 @@ from acorn.service_resolution import (
     SERVICE_BINDINGS_LABEL,
     SERVICE_ENDPOINTS_LABEL,
     SERVICE_RESOLUTION_RECORD_KIND,
+    ContextEndpointHint,
     ContextEndpointsRecord,
+    ServiceEndpoint,
     ServiceBindingsRecord,
     ServiceEndpointsRecord,
     blossom_server_from_blobref,
@@ -2502,6 +2504,83 @@ class Acorn:
             verify=verify,
             verify_timeout=verify_timeout,
         )
+
+    async def ensure_context_service_endpoint(
+        self,
+        *,
+        context_npub: str,
+        service_npub: str,
+        endpoint: ServiceEndpoint | dict,
+        source: str = "mainstay",
+        source_npub: str | None = None,
+    ) -> bool:
+        """Install or refresh one context-qualified endpoint hint.
+
+        Existing unrelated hints are preserved, and an unchanged hint is not
+        republished. The return value reports whether the record changed.
+        """
+
+        normalized_context = Keys(pub_k=context_npub).public_key_bech32()
+        normalized_service = Keys(pub_k=service_npub).public_key_bech32()
+        normalized_source = (
+            Keys(pub_k=source_npub).public_key_bech32()
+            if source_npub
+            else normalized_context
+        )
+        normalized_endpoint = ServiceEndpoint.model_validate(endpoint)
+        current = await self.get_context_endpoints()
+        key = (
+            normalized_context,
+            normalized_service,
+            normalized_endpoint.endpoint_id,
+        )
+        existing = next(
+            (
+                hint
+                for hint in current.hints
+                if (
+                    hint.context_npub,
+                    hint.service_npub,
+                    hint.endpoint.endpoint_id,
+                )
+                == key
+            ),
+            None,
+        )
+        if (
+            existing is not None
+            and existing.endpoint == normalized_endpoint
+            and existing.source == source
+            and existing.source_npub == normalized_source
+            and existing.state != "rejected"
+        ):
+            self.service_context_npub = normalized_context
+            return False
+
+        replacement = ContextEndpointHint(
+            context_npub=normalized_context,
+            service_npub=normalized_service,
+            endpoint=normalized_endpoint,
+            source=source,
+            source_npub=normalized_source,
+            state="candidate",
+            sequence=(existing.sequence + 1 if existing is not None else 0),
+            updated_at=int(time()),
+        )
+        hints = [
+            hint
+            for hint in current.hints
+            if (
+                hint.context_npub,
+                hint.service_npub,
+                hint.endpoint.endpoint_id,
+            )
+            != key
+        ]
+        hints.append(replacement)
+        await self.publish_context_endpoints(ContextEndpointsRecord(hints=hints))
+        self.service_context_npub = normalized_context
+        return True
 
     def _normalize_relays(self, relays: List[str]) -> List[str]:
         normalized: List[str] = []
