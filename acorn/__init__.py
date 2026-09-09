@@ -32,6 +32,7 @@ __all__ = [
     "RECORD_TRANSFER_PREFIX",
     "RECORD_PRESENTATION_PREFIX",
     "RetryablePreSwapError",
+    "TransferRelayUnavailable",
     "RecordTransferDescriptor",
     "RecordTransferEnvelope",
     "RecordTransferError",
@@ -57,6 +58,7 @@ def __getattr__(name):
         "AmbiguousSwapError",
         "PaymentFees",
         "RetryablePreSwapError",
+        "TransferRelayUnavailable",
     }:
         from acorn import acorn
 

@@ -78,6 +78,14 @@ Hints seed kind `10050` discovery and are used as a compatibility fallback;
 they do not override a valid signed inbox record. Transfer results identify
 this fallback as `recipient-hint`.
 
+Inbox discovery and relay connection attempts are bounded by
+`ACORN_TRANSFER_RELAY_TIMEOUT_SECONDS`, which defaults to five seconds. Before
+exporting Cash or Clear bearer value, Acorn opens each selected relay and keeps
+only routes that successfully connect. If none connect, it raises a recipient
+relay availability error that explicitly confirms no value was sent. A failure
+after export or publication begins remains unresolved and must not be presented
+as a safe retry.
+
 NIP-05 remains useful for discovering an `npub` and locating the initial signed
 inbox record. It is not the durable recipient identity, and its relay hints do
 not override a valid kind `10050` event.

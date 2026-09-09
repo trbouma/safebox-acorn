@@ -242,10 +242,18 @@ BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS", "5"),
     name="ACORN_BALANCE_SNAPSHOT_REFRESH_TIMEOUT_SECONDS",
 )
+TRANSFER_RELAY_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_TRANSFER_RELAY_TIMEOUT_SECONDS", "5"),
+    name="ACORN_TRANSFER_RELAY_TIMEOUT_SECONDS",
+)
 
 
 class MalformedIncomingTransfer(ValueError):
     """An incoming transfer is structurally invalid and safe to skip."""
+
+
+class TransferRelayUnavailable(ConnectionError):
+    """No selected recipient relay was reachable before value export."""
 
 
 BURN_DEFAULT_KINDS: List[int] = [
@@ -3908,6 +3916,9 @@ class Acorn:
             inbox_resolution = destination.get("inbox_resolution")
         if not transfer_relays:
             raise ValueError("No relay available for Clear transfer")
+        transfer_relays = await self._require_reachable_transfer_relays(
+            transfer_relays
+        )
 
         exported = await self.export_clear_token(
             mint=mint,
@@ -5817,6 +5828,9 @@ class Acorn:
             inbox_resolution = destination.get("inbox_resolution")
         if not transfer_relays:
             raise ValueError("No relay available for funds transfer")
+        transfer_relays = await self._require_reachable_transfer_relays(
+            transfer_relays
+        )
         nonce = nonce or secrets.token_hex(16)
 
         payment_mode = str(payment_mode).strip().lower()
@@ -16253,9 +16267,12 @@ class Acorn:
             provided_relays + list(nip05_relays) + self._build_discovery_relays()
         )
         try:
-            inbox_resolution = await self.resolve_inbox_relays(
-                pubkey,
-                lookup_relays=lookup_relays,
+            inbox_resolution = await asyncio.wait_for(
+                self.resolve_inbox_relays(
+                    pubkey,
+                    lookup_relays=lookup_relays,
+                ),
+                timeout=TRANSFER_RELAY_TIMEOUT_SECONDS,
             )
         except Exception as exc:
             self.logger.warning(
@@ -16293,6 +16310,53 @@ class Acorn:
             "nip05_relays": self._normalize_relays(nip05_relays),
             "inbox_resolution": inbox_resolution,
         }
+
+    async def _require_reachable_transfer_relays(
+        self,
+        relays: List[str],
+    ) -> List[str]:
+        """Return connectable transfer relays before bearer value is exported."""
+
+        candidates = self._normalize_relays(relays)
+
+        async def probe(relay: str) -> str | None:
+            client = ClientPool([relay])
+            try:
+                async with asyncio.timeout(TRANSFER_RELAY_TIMEOUT_SECONDS):
+                    async with client:
+                        return relay
+            except TimeoutError:
+                self.logger.warning(
+                    "op=transfer_relay_preflight status=timeout relay=%s timeout=%s",
+                    relay,
+                    TRANSFER_RELAY_TIMEOUT_SECONDS,
+                )
+                return None
+            except Exception as exc:
+                self.logger.warning(
+                    "op=transfer_relay_preflight status=failed relay=%s error_type=%s",
+                    relay,
+                    type(exc).__name__,
+                )
+                return None
+            finally:
+                end = getattr(client, "end", None)
+                if callable(end):
+                    end()
+
+        reachable = [
+            relay
+            for relay in await asyncio.gather(*(probe(relay) for relay in candidates))
+            if relay is not None
+        ]
+        if reachable:
+            return reachable
+        rendered_relays = ", ".join(candidates) or "none"
+        raise TransferRelayUnavailable(
+            "Recipient relay unavailable: no selected relay connected within "
+            f"{TRANSFER_RELAY_TIMEOUT_SECONDS:g} seconds ({rendered_relays}). "
+            "No value was sent."
+        )
 
     async def _get_latest_contacts_event(self, relays: List[str] | None = None) -> Event | None:
         relay_pool = relays if relays else self._build_discovery_relays()

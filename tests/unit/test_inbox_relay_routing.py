@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock
 
@@ -8,7 +9,11 @@ from monstr.encrypt import Keys
 from monstr.event.event import Event
 
 from acorn import acorn as acorn_module
-from acorn.acorn import Acorn, NIP17_INBOX_RELAYS_KIND
+from acorn.acorn import (
+    Acorn,
+    NIP17_INBOX_RELAYS_KIND,
+    TransferRelayUnavailable,
+)
 
 
 class MemoryPool:
@@ -171,6 +176,103 @@ async def test_transfer_destination_uses_caller_hints_for_discovery_and_fallback
             "wss://discovery.example",
         ],
     )
+
+
+@pytest.mark.asyncio
+async def test_transfer_destination_bounds_inbox_discovery(monkeypatch) -> None:
+    acorn = wallet()
+    recipient = Keys(priv_k="22" * 32).public_key_hex()
+    monkeypatch.setattr(acorn_module, "TRANSFER_RELAY_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(
+        acorn,
+        "_resolve_pubkey_and_relays",
+        lambda _identifier: (recipient, []),
+    )
+
+    async def stalled_resolution(*_args, **_kwargs):
+        await asyncio.Event().wait()
+
+    acorn.resolve_inbox_relays = stalled_resolution
+
+    result = await acorn._resolve_transfer_destination(
+        recipient,
+        relay_hints=["wss://recipient.example"],
+    )
+
+    assert result["relays"] == ["wss://recipient.example"]
+    assert result["relay_source"] == "recipient-hint"
+    assert result["inbox_resolution"]["reason"] == (
+        "kind10050_lookup_failed: TimeoutError"
+    )
+
+
+@pytest.mark.asyncio
+async def test_relay_preflight_reports_unavailable_without_hanging(monkeypatch) -> None:
+    acorn = wallet()
+    ended = False
+
+    class HangingPool:
+        def __init__(self, relays):
+            self.relays = relays
+
+        async def __aenter__(self):
+            await asyncio.Event().wait()
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def end(self):
+            nonlocal ended
+            ended = True
+
+    monkeypatch.setattr(acorn_module, "ClientPool", HangingPool)
+    monkeypatch.setattr(acorn_module, "TRANSFER_RELAY_TIMEOUT_SECONDS", 0.01)
+
+    with pytest.raises(
+        TransferRelayUnavailable,
+        match=r"Recipient relay unavailable.*No value was sent",
+    ):
+        await acorn._require_reachable_transfer_relays(
+            ["wss://unavailable.example"]
+        )
+
+    assert ended is True
+
+
+@pytest.mark.asyncio
+async def test_cash_and_clear_do_not_export_before_relay_preflight() -> None:
+    acorn = wallet()
+    recipient = Keys(priv_k="22" * 32).public_key_hex()
+    destination = {
+        "recipient_pubkey": recipient,
+        "relays": ["wss://unavailable.example"],
+        "relay_source": "recipient-hint",
+        "inbox_resolution": None,
+    }
+    acorn._resolve_transfer_destination = AsyncMock(return_value=destination)
+    acorn._require_reachable_transfer_relays = AsyncMock(
+        side_effect=TransferRelayUnavailable("No value was sent")
+    )
+    acorn.issue_token = AsyncMock()
+    acorn.export_clear_token = AsyncMock()
+
+    with pytest.raises(TransferRelayUnavailable, match="No value was sent"):
+        await acorn.send_ecash_transfer(
+            amount=1,
+            recipient=recipient,
+            relay_hints=["wss://unavailable.example"],
+        )
+    with pytest.raises(TransferRelayUnavailable, match="No value was sent"):
+        await acorn.send_clear_transfer(
+            amount=1,
+            recipient=recipient,
+            mint="https://clear.example",
+            unit="cmu-example",
+            relay_hints=["wss://unavailable.example"],
+        )
+
+    acorn.issue_token.assert_not_awaited()
+    acorn.export_clear_token.assert_not_awaited()
 
 
 @pytest.mark.asyncio
