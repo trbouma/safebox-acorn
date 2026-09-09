@@ -199,6 +199,36 @@ When an Acorn moves context, the later resolver must ignore internal and local
 hints belonging to another context. External service descriptors can remain
 usable when their validity and evidence still hold.
 
+## Grove Resource References
+
+A new identity-aware attachment record separates the immutable resource from
+its current retrieval route:
+
+```json
+{
+  "blobsha256": "<ciphertext SHA-256>",
+  "blob_service_npubs": ["npub1grove..."]
+}
+```
+
+`blobsha256` identifies the exact encrypted bytes and supplies the
+content-addressed Blossom path. `blob_service_npubs` identifies the Grove
+service or services expected to retain those bytes. Neither field is a network
+location. At read or delete time, Acorn resolves each service `npub` through
+the active context and service endpoint records, selects an eligible route,
+and combines that route with the digest-addressed Blossom operation.
+
+When Grove reports a service identity during upload, Acorn omits `blobref` from
+the newly written private record. A complete URL would duplicate mutable
+reachability and would become stale when the same Grove service moves between
+Docker, LAN, external HTTPS, or FIPS transport. Records created through a
+Blossom server that does not report a service identity retain `blobref` as a
+legacy compatibility and discovery hint.
+
+Consumers must therefore determine attachment presence from `blobsha256`, not
+from `blobref`. A missing URL means that resolution is required; it does not
+mean that the record has no attachment.
+
 ## Evidence
 
 All three records use the same evidence envelope:
