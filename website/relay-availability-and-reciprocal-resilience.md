@@ -110,7 +110,7 @@ portable.
 
 This is useful during ordinary provider changes, site moves, regional service
 interruptions, and maintenance windows. A home, office, resort, community
-facility, device, or data centre can become temporarily unreachable. Copies in
+facility, device, or data centre can become temporarily unavailable. Copies in
 independently operated locations provide additional recovery paths.
 
 ## Limits of the model

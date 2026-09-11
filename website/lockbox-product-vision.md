@@ -9,7 +9,7 @@ description: How Mainstay and Lockbox bring Acorn, Safebox Web, Grove, Spurline,
 
 A community, resort, campus, or co-working facility may still have people,
 staff, devices, local power, and a local network even when outside services are
-slow or unavailable. A payment provider may be unreachable. A booking or access
+slow or unavailable. A payment provider may be unavailable. A booking or access
 system may be offline. A registry, health-record system, or cloud application
 may be temporarily inaccessible. The community still needs to coordinate the
 work in front of it.
@@ -167,8 +167,8 @@ Lockbox gives the user app four plain operating modes:
 | **Community Mode** | Nearby Lockboxes or participating devices exchange signed events, encrypted records, replicas, and provisional payment messages locally. |
 
 The current Safebox Web app can start by showing **Connected Mode**. Later
-versions can determine mode from service reachability, local pairing, bridge
-state, and community mesh participation.
+versions can determine mode from service availability, including eligible
+network paths, local pairing, bridge state, and community mesh participation.
 
 ## Local credits and vouchers with Clear
 
@@ -209,9 +209,9 @@ Ordinary money can fund the program and settle with providers, while Clear
 coordinates the purpose-specific allocation in between with cash-like
 possession, direct transfer, voluntary recognition, and privacy.
 
-A locally reachable Clear mint also provides a stronger form of local payment
+A locally available Clear mint also provides a stronger form of local payment
 continuity. It can validate, swap, issue, and retire its own currency entirely
-inside the local network. By contrast, proofs from an unreachable external
+inside the local network. By contrast, proofs from an unavailable external
 mint remain provisional until that mint returns. Mainstay should show this
 difference clearly: local Clear finality is not the same state as a pending
 Continuity Payment.
@@ -226,7 +226,7 @@ Continuity Payments are a future Lockbox capability for local commerce when
 normal payment infrastructure is unavailable.
 
 If a mint, Lightning path, hosted service, or upstream internet connection is
-temporarily unreachable, nearby Acorns should still be able to transfer
+temporarily unavailable, nearby Acorns should still be able to transfer
 previously issued ecash to one another. The receiving Acorn can hold that value
 as provisional local payment material, and refresh or swap the proofs with the
 mint when connectivity returns.
@@ -238,7 +238,7 @@ with clear settlement boundaries:
 
 - local transfer can happen now;
 - mint finality is pending;
-- reconciliation happens when the mint is reachable again.
+- reconciliation happens when the mint is available again.
 
 A practical example is a cruise ship, remote community, resort, or shared
 facility that normally uses a mint connected to external payment services. If

@@ -160,7 +160,7 @@ Repository Pages settings must use **GitHub Actions** as the source.
 From another project:
 
 ```sh
-pip install "safebox-acorn @ git+https://github.com/trbouma/safebox-acorn.git"
+pip install "safebox-acorn @ git+https://github.com/trbouma/safebox-acorn.git@<tag-or-commit>"
 ```
 
 For local development:
@@ -175,7 +175,7 @@ The ordinary installation does not require Open Quantum Safe. Experimental
 post-quantum event support can be installed explicitly:
 
 ```sh
-pip install "safebox-acorn[post-quantum] @ git+https://github.com/trbouma/safebox-acorn.git"
+pip install "safebox-acorn[post-quantum] @ git+https://github.com/trbouma/safebox-acorn.git@<tag-or-commit>"
 ```
 
 For local development:
@@ -209,6 +209,15 @@ To install both optional capability profiles:
 ```sh
 poetry install -E post-quantum -E bitcoin
 ```
+
+## Updating Acorn in an application
+
+Acorn is an embedded component, not an independently deployed service. Pin a
+tested tag or commit in the consuming application's dependency declaration and
+lock file. To update it, change that pin, regenerate the lock, run Acorn's test
+suite, and run the consuming application's integration tests before deploying
+the application. Acorn does not have a separate service identity, container
+lifecycle, or refresh command.
 
 The Bitcoin implementation has no runtime dependency on OpenETR. OpenETR was
 the experimental origin of the NSP derivation, but Acorn is now the canonical

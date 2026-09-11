@@ -134,6 +134,17 @@ limited-connectivity periods, nearby Acorns should be able to transfer
 previously issued ecash locally, mark the result as provisional, and reconcile
 with the issuing mint when connectivity returns.
 
+## Part of the Mainstay product family
+
+Acorn is the embedded records-and-value component used by Safebox applications
+and Mainstay deployments. It supplies a portable protocol boundary while the
+consuming application supplies the experience, service identity, configuration,
+and operating lifecycle.
+
+Deployments pin a tested Acorn version as an application dependency. Acorn is
+updated with that application rather than installed or operated as a separate
+service.
+
 ## Reciprocal resilience
 
 Acorn is designed for continuity that people and communities can help provide

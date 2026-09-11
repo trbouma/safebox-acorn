@@ -440,7 +440,7 @@ connectivity:
 - replicas can be preserved across participating devices without exposing
   their plaintext contents;
 - ecash can potentially be transferred while offline, but the recipient cannot
-  conclusively verify or refresh it until the issuing mint becomes reachable;
+  conclusively verify or refresh it until the issuing mint becomes available;
 - Lightning payments require a working route to Lightning infrastructure; and
 - conflicting, delayed, expired, or deleted state may require reconciliation
   after connectivity returns.
@@ -463,7 +463,7 @@ Safebox and its Acorn component, not the final boundary of their continuity.
 Recovery depends on two things remaining separate from the appliance:
 
 1. recovery material that reconstructs the Acorn's authority; and
-2. at least one reachable replica of its encrypted protocol state.
+2. at least one available replica of its encrypted protocol state.
 
 A complete recovery package may include:
 
