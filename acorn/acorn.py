@@ -2602,6 +2602,32 @@ class Acorn:
                 normalized.append(relay)
         return normalized
 
+    def _scoped_transfer_cursor_label(
+        self,
+        base_label: str,
+        *,
+        receive_pubkey: str,
+        relays: List[str],
+    ) -> str:
+        """Return a stable cursor label scoped to its receiver and relay set.
+
+        A wallet-wide timestamp can hide older transfers when a wallet changes
+        relays. Scoping the relay-backed checkpoint makes a newly selected
+        relay set start with a safe historical scan. Receipt event IDs keep
+        that scan idempotent.
+        """
+
+        receiver_scope = (
+            "wallet"
+            if receive_pubkey == self.pubkey_hex
+            else hashlib.sha256(receive_pubkey.encode("utf-8")).hexdigest()[:16]
+        )
+        normalized_relays = sorted(self._normalize_relays(relays))
+        relay_scope = hashlib.sha256(
+            "\n".join(normalized_relays).encode("utf-8")
+        ).hexdigest()[:16]
+        return f"{base_label}:{receiver_scope}:{relay_scope}"
+
 
     async def _async_query_client_profile(self, filter: List[dict]): 
     # does a one off query to relay prints the events and exits
@@ -6295,7 +6321,25 @@ class Acorn:
         event_id = str(receipt.get("event_id") or "")
         amount = int(receipt.get("amount") or 0)
         marker = f"cashu-receipt-error:{event_id}"
+        success_marker = f"cashu-receipt:{event_id}"
         history = await self.get_tx_history()
+        if any(
+            str(entry.get("description_hash") or "") == success_marker
+            for entry in history
+            if isinstance(entry, dict)
+        ):
+            await self._update_continuity_receipt(
+                event_id,
+                status="mint-confirmed",
+                token=None,
+                last_error=None,
+            )
+            return {
+                "event_id": event_id,
+                "amount": amount,
+                "reason": "transfer was already credited",
+                "status": "already-confirmed",
+            }
         if not any(
             str(entry.get("description_hash") or "") == marker
             for entry in history
@@ -6376,6 +6420,7 @@ class Acorn:
         confirmed: List[Dict[str, Any]] = []
         pending: List[Dict[str, Any]] = []
         terminal_errors: List[Dict[str, Any]] = []
+        already_confirmed: List[Dict[str, Any]] = []
         processed_event_ids: set[str] = set()
 
         # Gateway transfers normally arrive as several independently journaled
@@ -6563,13 +6608,21 @@ class Acorn:
                             "reason": journal_reason,
                         })
                     else:
-                        self.logger.error(
-                            "op=reconcile_continuity_receipt status=terminal_error "
-                            "event_id=%s amount=%s reason=token_already_spent",
-                            event_id,
-                            terminal_error["amount"],
-                        )
-                        terminal_errors.append(terminal_error)
+                        if terminal_error.get("status") == "already-confirmed":
+                            already_confirmed.append(terminal_error)
+                            self.logger.info(
+                                "op=reconcile_continuity_receipt "
+                                "status=already_confirmed event_id=%s",
+                                event_id,
+                            )
+                        else:
+                            self.logger.error(
+                                "op=reconcile_continuity_receipt status=terminal_error "
+                                "event_id=%s amount=%s reason=token_already_spent",
+                                event_id,
+                                terminal_error["amount"],
+                            )
+                            terminal_errors.append(terminal_error)
                     continue
                 self.logger.warning(
                     "op=reconcile_continuity_receipt status=pending event_id=%s error=%s",
@@ -6588,6 +6641,8 @@ class Acorn:
             "confirmed": confirmed,
             "confirmed_count": len(confirmed),
             "confirmed_amount": sum(item["amount"] for item in confirmed),
+            "already_confirmed": already_confirmed,
+            "already_confirmed_count": len(already_confirmed),
             "pending": pending,
             "pending_count": len(pending),
             "pending_amount": sum(item["amount"] for item in pending),
@@ -7167,10 +7222,10 @@ class Acorn:
                 transient_receive_key=bool(receive_nsec),
             )
 
-        cursor_label = (
-            CLEAR_TRANSFER_CURSOR_LABEL
-            if receive_pubkey == self.pubkey_hex
-            else f"{CLEAR_TRANSFER_CURSOR_LABEL}:{receive_pubkey}"
+        cursor_label = self._scoped_transfer_cursor_label(
+            CLEAR_TRANSFER_CURSOR_LABEL,
+            receive_pubkey=receive_pubkey,
+            relays=relay_pool,
         )
         cursor_from_record = False
         cursor_checkpoint = self._parse_ecash_transfer_checkpoint(since or 0)
@@ -7444,10 +7499,10 @@ class Acorn:
                 receive_pubkey,
                 transient_receive_key=bool(receive_nsec),
             )
-        cursor_label = (
-            ECASH_TRANSFER_CURSOR_LABEL
-            if receive_pubkey == self.pubkey_hex
-            else f"{ECASH_TRANSFER_CURSOR_LABEL}:{receive_pubkey}"
+        cursor_label = self._scoped_transfer_cursor_label(
+            ECASH_TRANSFER_CURSOR_LABEL,
+            receive_pubkey=receive_pubkey,
+            relays=relay_pool,
         )
         cursor_from_record = False
         cursor_checkpoint = self._parse_ecash_transfer_checkpoint(since or 0)
@@ -7558,6 +7613,7 @@ class Acorn:
         previewed: List[Dict[str, Any]] = []
         skipped: List[Dict[str, Any]] = []
         failed: List[Dict[str, Any]] = []
+        terminal_errors: List[Dict[str, Any]] = []
         latest_checkpoint = cursor_checkpoint
 
         for each_event in events_sorted:
@@ -7675,6 +7731,23 @@ class Acorn:
                     timestamp=event_ts,
                 )
                 token_amount = int(receipt["amount"])
+                receipt_status = str(receipt.get("status") or "provisional")
+                if receipt_status == "mint-confirmed":
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": "already_finalized",
+                        "timestamp": event_ts,
+                    })
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                    continue
+                if receipt_status in {"terminal-error", "deleted"}:
+                    skipped.append({
+                        "event_id": each_event.id,
+                        "reason": f"receipt_{receipt_status}",
+                        "timestamp": event_ts,
+                    })
+                    latest_checkpoint = max(latest_checkpoint, event_checkpoint)
+                    continue
                 provisional = True
                 if payment_mode == "continuity" or not finalize:
                     msg_out = (
@@ -7699,6 +7772,24 @@ class Acorn:
                         )
                         provisional = False
                     except Exception as exc:
+                        if self._token_already_spent_error(exc):
+                            terminal = await self._record_terminal_continuity_error(
+                                receipt,
+                                str(exc),
+                            )
+                            if terminal.get("status") == "already-confirmed":
+                                skipped.append({
+                                    "event_id": each_event.id,
+                                    "reason": "already_finalized",
+                                    "timestamp": event_ts,
+                                })
+                            else:
+                                terminal_errors.append(terminal)
+                            latest_checkpoint = max(
+                                latest_checkpoint,
+                                event_checkpoint,
+                            )
+                            continue
                         msg_out = (
                             f"Stored a pending payment of {token_amount} sats; "
                             "mint finalization is pending."
@@ -7829,6 +7920,7 @@ class Acorn:
             "previewed_amount": sum(each["amount"] for each in previewed),
             "skipped": skipped,
             "failed": failed,
+            "terminal_errors": terminal_errors,
             "accepted_count": len(accepted),
             "confirmed_count": sum(
                 1 for each in accepted if not each.get("provisional")

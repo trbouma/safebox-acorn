@@ -157,6 +157,105 @@ def install_filtering_transfer_pool(monkeypatch, events: list[Event]) -> list[di
     return observed_filters
 
 
+def test_transfer_cursor_scope_is_stable_and_changes_with_relay_set() -> None:
+    acorn = wallet()
+
+    first = acorn._scoped_transfer_cursor_label(
+        ECASH_TRANSFER_CURSOR_LABEL,
+        receive_pubkey=acorn.pubkey_hex,
+        relays=["wss://relay.one.example", "wss://relay.two.example"],
+    )
+    reordered = acorn._scoped_transfer_cursor_label(
+        ECASH_TRANSFER_CURSOR_LABEL,
+        receive_pubkey=acorn.pubkey_hex,
+        relays=["wss://relay.two.example", "wss://relay.one.example"],
+    )
+    changed = acorn._scoped_transfer_cursor_label(
+        ECASH_TRANSFER_CURSOR_LABEL,
+        receive_pubkey=acorn.pubkey_hex,
+        relays=["wss://relay.three.example"],
+    )
+
+    assert first == reordered
+    assert first.startswith(f"{ECASH_TRANSFER_CURSOR_LABEL}:wallet:")
+    assert changed != first
+
+
+@pytest.mark.asyncio
+async def test_sweep_retires_mint_confirmed_spent_replay(monkeypatch) -> None:
+    acorn = wallet()
+    event = incoming_transfer_event(
+        acorn,
+        event_id="9" * 64,
+        created_at=123,
+        amount=5,
+    )
+    install_filtering_transfer_pool(monkeypatch, [event])
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={
+            "event_id": event.id,
+            "amount": 5,
+            "status": "provisional",
+            "token": serialized_token([proof(5, "9")]),
+        }
+    )
+    acorn.accept_token = AsyncMock(
+        side_effect=RuntimeError(
+            'swap failed: {"detail":"proofs already spent","code":11001}'
+        )
+    )
+    acorn._record_terminal_continuity_error = AsyncMock(
+        return_value={
+            "event_id": event.id,
+            "amount": 5,
+            "reason": "proofs already spent",
+            "status": "terminal-error",
+        }
+    )
+
+    result = await acorn.sweep_ecash_transfers()
+
+    assert result["accepted_count"] == 0
+    assert result["provisional_count"] == 0
+    assert result["terminal_errors"] == [
+        {
+            "event_id": event.id,
+            "amount": 5,
+            "reason": "proofs already spent",
+            "status": "terminal-error",
+        }
+    ]
+    acorn._record_terminal_continuity_error.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_sweep_skips_receipt_already_confirmed_by_event_id(monkeypatch) -> None:
+    acorn = wallet()
+    event = incoming_transfer_event(
+        acorn,
+        event_id="8" * 64,
+        created_at=123,
+        amount=5,
+    )
+    install_filtering_transfer_pool(monkeypatch, [event])
+    acorn._store_continuity_receipt = AsyncMock(
+        return_value={
+            "event_id": event.id,
+            "amount": 5,
+            "status": "mint-confirmed",
+            "token": None,
+        }
+    )
+    acorn.accept_token = AsyncMock()
+
+    result = await acorn.sweep_ecash_transfers()
+
+    assert result["accepted_count"] == 0
+    assert result["provisional_count"] == 0
+    assert result["skipped"][0]["reason"] == "already_finalized"
+    acorn.accept_token.assert_not_awaited()
+
+
 def test_exact_proof_subset_is_exact_and_deterministic() -> None:
     proofs = [proof(1, "1"), proof(2, "2"), proof(4, "4"), proof(8, "8")]
 
@@ -637,6 +736,36 @@ async def test_reconcile_spent_token_does_not_duplicate_existing_error_history()
 
 
 @pytest.mark.asyncio
+async def test_reconcile_spent_replay_restores_confirmed_status_from_history() -> None:
+    acorn = wallet()
+    receipt = {
+        "event_id": "event-confirmed",
+        "amount": 21,
+        "unit": "sat",
+        "status": "provisional",
+        "token": "cashuB-spent",
+    }
+    acorn.get_continuity_receipts = AsyncMock(return_value=[receipt])
+    acorn.accept_token = AsyncMock(side_effect=RuntimeError("Token already spent"))
+    acorn.get_tx_history = AsyncMock(
+        return_value=[{"description_hash": "cashu-receipt:event-confirmed"}]
+    )
+    acorn.add_tx_history = AsyncMock()
+    acorn._update_continuity_receipt = AsyncMock(return_value={})
+
+    result = await acorn.reconcile_continuity_receipts()
+
+    assert result["status"] == "OK"
+    assert result["terminal_error_count"] == 0
+    assert result["already_confirmed_count"] == 1
+    acorn.add_tx_history.assert_not_awaited()
+    update = acorn._update_continuity_receipt.await_args
+    assert update.args == ("event-confirmed",)
+    assert update.kwargs["status"] == "mint-confirmed"
+    assert update.kwargs["token"] is None
+
+
+@pytest.mark.asyncio
 async def test_reconcile_standard_receipt_keeps_unavailable_mint_pending() -> None:
     acorn = wallet()
     acorn.get_continuity_receipts = AsyncMock(
@@ -753,7 +882,8 @@ async def test_sweep_persists_standard_payment_before_unavailable_mint(
     assert stored_receipts[0]["payment_mode"] == "confirmed"
     assert stored_receipts[0]["token"] == token
     assert operations[1] == ("mint",)
-    assert operations[2][0:2] == ("store", ECASH_TRANSFER_CURSOR_LABEL)
+    assert operations[2][0] == "store"
+    assert operations[2][1].startswith(f"{ECASH_TRANSFER_CURSOR_LABEL}:wallet:")
     assert json.loads(operations[2][2]) == {
         "version": 2,
         "created_at": 123,
@@ -1165,7 +1295,7 @@ async def test_sweep_clear_transfers_stores_pending_without_ecash_accept(
     assert result["stored"][0]["unit"] == "cmu-test"
     assert result["stored"][0]["keyset_ids"] == [KEYSET]
     assert operations[0][0] == CLEAR_RECEIPTS_LABEL
-    assert operations[1][0] == CLEAR_TRANSFER_CURSOR_LABEL
+    assert operations[1][0].startswith(f"{CLEAR_TRANSFER_CURSOR_LABEL}:wallet:")
     acorn.accept_token.assert_not_awaited()
     acorn._store_continuity_receipt.assert_not_awaited()
 
@@ -1245,7 +1375,7 @@ async def test_sweep_clear_transfers_accepts_nut18_nip17_payment_payload(
     assert result["stored"][0]["payment_request_id"] == "request-1234"
     assert result["stored"][0]["protocol"] == "cashu-nut18-nip17"
     assert operations[0][0] == CLEAR_RECEIPTS_LABEL
-    assert operations[1][0] == CLEAR_TRANSFER_CURSOR_LABEL
+    assert operations[1][0].startswith(f"{CLEAR_TRANSFER_CURSOR_LABEL}:wallet:")
     acorn.accept_token.assert_not_awaited()
     acorn._store_continuity_receipt.assert_not_awaited()
 
@@ -1335,7 +1465,7 @@ async def test_sweep_journals_malformed_event_and_continues_to_later_transfer(
     assert "malformed and was skipped" in history["comment"]
     acorn._store_continuity_receipt.assert_awaited_once()
     cursor_write = acorn.set_wallet_info.await_args_list[-1]
-    assert cursor_write.args[0] == ECASH_TRANSFER_CURSOR_LABEL
+    assert cursor_write.args[0].startswith(f"{ECASH_TRANSFER_CURSOR_LABEL}:wallet:")
     assert json.loads(cursor_write.args[1]) == {
         "version": 2,
         "created_at": 126,

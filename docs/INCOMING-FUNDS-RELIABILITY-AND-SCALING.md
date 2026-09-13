@@ -80,7 +80,8 @@ continue through the established individual path.
 
 ## Checkpoint representation
 
-The reserved kind `37376` record labelled `ecash_transfer_latest` contains:
+The reserved kind `37376` checkpoint record uses a label of the form
+`ecash_transfer_latest:<receiver-scope>:<relay-set-digest>` and contains:
 
 ```json
 {
@@ -90,13 +91,23 @@ The reserved kind `37376` record labelled `ecash_transfer_latest` contains:
 }
 ```
 
-The event ID resolves ties between events created during the same second.
+The receiver scope distinguishes the wallet key from an optional transient
+receive key. The relay-set digest is a stable hash of the normalized, sorted
+relay URLs; it is routing metadata, not a secret. The event ID resolves ties
+between events created during the same second.
 Earlier integer-only cursor values remain readable. A legacy value represents
 the entire recorded second as processed, matching the behavior of earlier
 releases that resumed at `timestamp + 1`.
 
-Transient receive keys use a separate label suffixed by their public key, so
-their checkpoints do not overwrite the wallet's normal receive position.
+Clear transfers use the same scheme with `clear_transfer_latest` as the base
+label. Changing the receive relay set therefore creates a fresh checkpoint and
+causes a bounded historical scan of the newly selected relays. This is
+intentional: a wallet-wide timestamp from another relay could otherwise hide
+older, still-valid transfers. Existing receipt event IDs and transaction
+markers make the rescan idempotent.
+
+All checkpoints remain encrypted relay-backed Acorn records. This design does
+not introduce a local journal or make application storage authoritative.
 
 ## Pagination
 
@@ -137,9 +148,11 @@ error transaction, credits no balance, and continues.
 ### Terminal mint failures
 
 A conclusive Cashu `11001` response means the token is already spent. Acorn
-records an error, removes the bearer token from the pending receipt, and moves
-on. The error may mean a replay, a duplicate delivery, or funds accepted through
-another wallet instance.
+first checks the event-ID transaction marker. If that event was previously
+credited, Acorn restores the receipt's confirmed status and records no error or
+second credit. Otherwise it records a terminal error, removes the bearer token
+from the pending receipt, and moves on. The unexplained case may mean a replay,
+a duplicate delivery accepted elsewhere, or reuse of spent bearer proofs.
 
 ### Retryable operational failures
 
@@ -161,15 +174,36 @@ single-page backlog risks, but they do not make every data structure unbounded:
   value exposed to an interruption between mint acceptance and final receipt
   journaling; interruption testing and durable swap recovery remain release
   requirements;
-- changing relay pools can expose older events that precede the current
-  checkpoint and therefore require an explicit replay or migration operation;
+- changing relay pools starts a relay-set-scoped historical scan; large relay
+  migrations may therefore require multiple bounded pages before catching up;
   and
 - a relay that receives a historically timestamped event only after the
   checkpoint has passed that tuple cannot make it visible to an ordinary
   forward scan; explicit replay is required.
 
 Future scaling work should introduce bounded receipt compaction, indexed
-idempotency markers, metrics for page depth and terminal failures, and explicit
-relay-migration checkpoint policy. Live testing should include large backlogs,
+idempotency markers, and metrics for page depth and terminal failures. Live testing should include large backlogs,
 page-boundary timestamps, relay duplicates, injected malformed events, and
 process interruption at each persistence boundary.
+
+## Relay migration milestone — September 2026
+
+Testing an independently deployed Safebox Web instance revealed that a public
+handle still pointed to an older home relay after its Acorn had moved. A manual
+historical scan found four older delivery events, while the ordinary receive
+scan found none because its wallet-wide checkpoint had advanced on the newer
+relay. Replaying those events then exposed a second issue: the mint correctly
+reported their proofs spent, but first-pass receipt handling classified every
+error as retryable and displayed them as pending.
+
+The resulting design changes are deliberately general:
+
+- receive checkpoints are scoped to the receiver and selected relay set;
+- a new relay selection gets a safe, idempotent historical scan;
+- receipts already confirmed by event ID are ignored during replay;
+- unexplained spent tokens are retired immediately as terminal errors; and
+- operational failures such as unavailable relays or mints remain pending.
+
+This incident did not indicate a loss of the wallet's confirmed proof balance.
+It demonstrated that delivery routing, receive position, receipt identity, and
+mint state must remain separate and explicitly reconciled.
