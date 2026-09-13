@@ -367,7 +367,7 @@ copied longer than the component requires.
 - Generate CycloneDX or SPDX SBOMs for core and post-quantum profiles.
 - Run vulnerability, license, secret, and static-analysis tools against direct
   and transitive Python and native dependencies.
-- Review `monstr`, `coincurve`, `secp256k1`, `cryptography`, Cashu-related code,
+- Review `stroma-nostr`, `coincurve`, `secp256k1`, `cryptography`, Cashu-related code,
   Blossom, CBOR, YAML, HTTP, and optional liboqs boundaries with priority given
   to native code and parsers.
 - Build wheel and source distribution from the frozen commit; inspect contents;

@@ -409,7 +409,7 @@ async def ensure_test_wallet_config(relay: str | None = None, config_suffix: str
     if not truthy_env("ACORN_TEST_CREATE_WALLET", "true"):
         pytest.skip(f"test wallet config file does not exist: {config_path}")
 
-    from monstr.encrypt import Keys
+    from stroma import Keys
 
     test_relay = normalize_relay(relay or os.getenv("ACORN_TEST_RELAY", "ws://beelink:7777"))
     test_mints = await resolve_test_mints()

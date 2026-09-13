@@ -6,7 +6,6 @@ import os
 from uuid import uuid4
 
 import pytest
-import pytest_asyncio
 
 from acorn.acorn import Acorn
 
@@ -20,32 +19,10 @@ from tests.helpers import (
 )
 
 
-async def _drain_monstr_tasks():
-    current = asyncio.current_task()
-    pending = []
-    for task in asyncio.all_tasks():
-        if task is current or task.done():
-            continue
-        qualname = getattr(task.get_coro(), "__qualname__", "")
-        if qualname.startswith(("Client.", "ClientPool.")):
-            pending.append(task)
-
-    for task in pending:
-        task.cancel()
-
-    if pending:
-        with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(
-                asyncio.gather(*pending, return_exceptions=True),
-                timeout=2,
-            )
-
-
 async def _await_or_skip(awaitable, label: str, timeout: float):
     try:
         return await asyncio.wait_for(awaitable, timeout=timeout)
     except asyncio.TimeoutError:
-        await _drain_monstr_tasks()
         live_progress("SKIPPED record lifecycle test step timed out", step=label, timeout=f"{timeout:g}s")
         pytest.skip(f"{label} timed out after {timeout:g}s")
 
@@ -67,12 +44,6 @@ async def _eventually(
             live_progress("FAILED record lifecycle eventual check", step=label, timeout=f"{timeout:g}s")
             pytest.fail(f"{label} did not become available after {timeout:g}s")
         await asyncio.sleep(interval)
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def cleanup_monstr_clients():
-    yield
-    await _drain_monstr_tasks()
 
 
 @pytest.mark.live

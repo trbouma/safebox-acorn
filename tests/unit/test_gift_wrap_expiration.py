@@ -3,11 +3,9 @@ from __future__ import annotations
 import asyncio
 
 import pytest
-from monstr.encrypt import Keys
-from monstr.event.event import Event
-from monstr.signing.signing import BasicKeySigner
+from stroma import Keys, Event, BasicKeySigner
 
-from acorn.monstrmore import KindOtherGiftWrap
+from acorn.stroma_compat import KindOtherGiftWrap
 
 
 def test_gift_wrap_adds_signed_nip40_expiration_tag() -> None:

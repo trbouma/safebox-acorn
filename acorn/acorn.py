@@ -24,19 +24,12 @@ import contextlib
 
 
 
-from monstr.encrypt import Keys
-from monstr.encrypt import NIP44Encrypt
-from monstr.client.client import Client, ClientPool
-from monstr.event.event import Event
+from stroma import Keys, NIP44Encrypt, Client, ClientPool, Event
 
 
-from monstr.signing.signing import BasicKeySigner
-from monstr.giftwrap import GiftWrap
-from monstr.util import util_funcs
-from monstr.entities import Entities
-from monstr.client.event_handlers import DeduplicateAcceptor
+from stroma import BasicKeySigner, GiftWrap, util_funcs, Entities, DeduplicateAcceptor
 
-from acorn.monstrmore import KindOtherGiftWrap, ExtendedNIP44Encrypt
+from acorn.stroma_compat import KindOtherGiftWrap, ExtendedNIP44Encrypt
 from acorn.func_utils import (
     decrypt_and_verify_record_blob,
     decrypt_bytes,
@@ -202,6 +195,46 @@ RELAY_VERIFY_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_RELAY_VERIFY_TIMEOUT_SECONDS", "60"),
     name="ACORN_RELAY_VERIFY_TIMEOUT_SECONDS",
 )
+RELAY_QUERY_TIMEOUT_SECONDS: float = _positive_timeout(
+    os.getenv("ACORN_RELAY_QUERY_TIMEOUT_SECONDS", "10"),
+    name="ACORN_RELAY_QUERY_TIMEOUT_SECONDS",
+)
+
+
+def _bounded_client_pool(relays: List[str]) -> ClientPool:
+    """Create a relay pool whose initial connection cannot wait forever."""
+
+    try:
+        return ClientPool(
+            relays,
+            timeout=RELAY_QUERY_TIMEOUT_SECONDS,
+            error_min_con_fail=True,
+        )
+    except TypeError:
+        # Keep compatibility with narrow ClientPool-compatible test and
+        # downstream adapters while the production client supports bounds.
+        return ClientPool(relays)
+
+
+async def _bounded_client_query(client: ClientPool, filters: List[dict]):
+    """Run one relay query with both client-native and outer deadlines."""
+
+    try:
+        query = client.query(filters, timeout=RELAY_QUERY_TIMEOUT_SECONDS)
+    except TypeError:
+        query = client.query(filters)
+    return await asyncio.wait_for(
+        query,
+        timeout=RELAY_QUERY_TIMEOUT_SECONDS + 1.0,
+    )
+
+
+def _end_client_pool(client: ClientPool) -> None:
+    """Stop compatibility clients explicitly, including narrow test doubles."""
+
+    end = getattr(client, "end", None)
+    if callable(end):
+        end()
 CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS: float = _positive_timeout(
     os.getenv("ACORN_CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS", "120"),
     name="ACORN_CLEAR_RECEIPT_RECOVERY_TIMEOUT_SECONDS",
@@ -1512,7 +1545,7 @@ class Acorn:
                     self.balance = int(each[1])
                     self.unit = each[2]
                 elif each[0] == "privkey":
-                    lock_pubkey = Keys(each[1]).public_key_hex()
+                    lock_pubkey = Keys(priv_k=each[1]).public_key_hex()
                 elif each[0] == "mint":
                     mints.append(each[1])
                 elif each[0] == "name":
@@ -5071,17 +5104,15 @@ class Acorn:
         query_started = monotonic()
         
         relay_pool = self._record_relay_pool(relays)
-        async with ClientPool(relay_pool) as c:
-        
-            
-            events = await c.query(filter)
-            
+        async with _bounded_client_pool(relay_pool) as c:
+            events = await _bounded_client_query(c, filter)
+
             self.logger.debug(
                 "op=get_wallet_info status=query_complete events=%s duration_ms=%s",
                 len(events),
                 int((monotonic() - query_started) * 1000),
             )
-            
+
             # print(f"_async event xoxoxo: type: {type(events[0])} data: {events[0].data()}")
 
         if not events:
@@ -10410,80 +10441,84 @@ class Acorn:
         proofs = ""
         self.proofs = []
         self.proof_event_ids = []
-        async with ClientPool([self.home_relay]) as c:
-        # async with Client(relay) as c:
-            events = await c.query(filter)
-            deletion_filter = [{
-                'limit': RECORD_LIMIT,
-                'authors': [self.pubkey_hex],
-                'kinds': [Event.KIND_DELETE],
-            }]
-            deletion_events = await c.query(deletion_filter)
+        client = _bounded_client_pool([self.home_relay])
+        try:
+            async with client as c:
+            # async with Client(relay) as c:
+                events = await _bounded_client_query(c, filter)
+                deletion_filter = [{
+                    'limit': RECORD_LIMIT,
+                    'authors': [self.pubkey_hex],
+                    'kinds': [Event.KIND_DELETE],
+                }]
+                deletion_events = await _bounded_client_query(c, deletion_filter)
+        finally:
+            _end_client_pool(client)
 
-            deleted_event_ids = {
+        deleted_event_ids = {
                 str(tag[1])
                 for deletion_event in deletion_events
                 for tag in (deletion_event.tags or [])
                 if len(tag) >= 2 and tag[0] == "e"
             }
-            events = [
-                event for event in events
-                if str(event.id) not in deleted_event_ids
-            ]
-            self.events = len(events)
-            if deleted_event_ids:
-                self.logger.debug(
-                    "op=load_proofs status=deletion_filter "
-                    "deletion_events=%s deleted_ids=%s current_events=%s",
-                    len(deletion_events),
-                    len(deleted_event_ids),
-                    len(events),
-                )
+        events = [
+            event for event in events
+            if str(event.id) not in deleted_event_ids
+        ]
+        self.events = len(events)
+        if deleted_event_ids:
+            self.logger.debug(
+                "op=load_proofs status=deletion_filter "
+                "deletion_events=%s deleted_ids=%s current_events=%s",
+                len(deletion_events),
+                len(deleted_event_ids),
+                len(events),
+            )
             
-            for each_event in events:
-                # print(type(each_event.id), each_event.id)
-                self.proof_event_ids.append(each_event.id)
-                proof_event = proofEvent(id=each_event.id)
-                try:
-                    content = my_enc.decrypt(each_event.content, self.pubkey_hex)
-                    content_json = json.loads(content)
+        for each_event in events:
+            # print(type(each_event.id), each_event.id)
+            self.proof_event_ids.append(each_event.id)
+            proof_event = proofEvent(id=each_event.id)
+            try:
+                content = my_enc.decrypt(each_event.content, self.pubkey_hex)
+                content_json = json.loads(content)
                     # print("event_id:", each_event.id)
                     
                     
                         
                     # proof = Proof(**each_content)
-                    nip60_proofs = NIP60Proofs(**content_json)
+                nip60_proofs = NIP60Proofs(**content_json)
                     # self.logger.debug(f"load nip60 proofs")
-                    self.known_mints[nip60_proofs.proofs[0]['id']]= nip60_proofs.mint
-                    for each in nip60_proofs.proofs:
-                        self.proofs.append(each)
-                        proof_event.proofs.append(each)
+                self.known_mints[nip60_proofs.proofs[0]['id']]= nip60_proofs.mint
+                for each in nip60_proofs.proofs:
+                    self.proofs.append(each)
+                    proof_event.proofs.append(each)
                         # print(proof.amount, proof.secret)
                     # self.proof_events.proof_events.append(proof_event)          
-                except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
-                    content = each.content
+            except (RuntimeError, ValueError, TypeError, KeyError, IndexError, json.JSONDecodeError, httpx.HTTPError) as exc:
+                content = each_event.content
 
                 
-                proofs += str(content) +"\n\n"
+            proofs += str(content) +"\n\n"
 
             
-            balance = 0
-            for each in self.proofs:
-                # print(each.amount, each.secret)
-                balance += each.amount
-            self.balance = balance
-            # self.logger.debug(f"balance from loaded proofs: {balance}")
-            # print("proofs:", len(self.proofs))
+        balance = 0
+        for each in self.proofs:
+            # print(each.amount, each.secret)
+            balance += each.amount
+        self.balance = balance
+        # self.logger.debug(f"balance from loaded proofs: {balance}")
+        # print("proofs:", len(self.proofs))
 
                 
-            # Relay queries can return the same proof event more than once.
-            # Pydantic Proof objects are mutable and therefore unhashable, so
-            # deduplicate on the Cashu proof identity instead of using set().
-            self.proofs = self._deduplicate_proofs(self.proofs)
-            self.balance = sum(each.amount for each in self.proofs)
+        # Relay queries can return the same proof event more than once.
+        # Pydantic Proof objects are mutable and therefore unhashable, so
+        # deduplicate on the Cashu proof identity instead of using set().
+        self.proofs = self._deduplicate_proofs(self.proofs)
+        self.balance = sum(each.amount for each in self.proofs)
            
             
-            return proofs
+        return proofs
     
 
 
@@ -16416,6 +16451,13 @@ class Acorn:
             try:
                 async with asyncio.timeout(TRANSFER_RELAY_TIMEOUT_SECONDS):
                     async with client:
+                        wait_connect = getattr(client, "wait_connect", None)
+                        if callable(wait_connect):
+                            await wait_connect(
+                                timeout=TRANSFER_RELAY_TIMEOUT_SECONDS,
+                                min_connect=1,
+                                error_min_con_fail=True,
+                            )
                         return relay
             except TimeoutError:
                 self.logger.warning(

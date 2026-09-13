@@ -3,7 +3,7 @@ import importlib
 import pytest
 
 
-def test_monstrmore_import_does_not_load_oqs(monkeypatch):
+def test_stroma_compat_import_does_not_load_oqs(monkeypatch):
     real_import_module = importlib.import_module
 
     def guarded_import(name, package=None):
@@ -12,7 +12,7 @@ def test_monstrmore_import_does_not_load_oqs(monkeypatch):
         return real_import_module(name, package)
 
     monkeypatch.setattr(importlib, "import_module", guarded_import)
-    module = importlib.reload(importlib.import_module("acorn.monstrmore"))
+    module = importlib.reload(importlib.import_module("acorn.stroma_compat"))
 
     assert module.KindOtherGiftWrap is not None
     assert module.ExtendedNIP44Encrypt is not None
@@ -36,7 +36,7 @@ def test_post_quantum_use_explains_optional_dependency(monkeypatch):
 
 
 def test_historical_pqevent_import_path_is_preserved():
-    from acorn.monstrmore import PQEvent
+    from acorn.stroma_compat import PQEvent
     from acorn.post_quantum import PQEvent as IsolatedPQEvent
 
     assert PQEvent is IsolatedPQEvent

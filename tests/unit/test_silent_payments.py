@@ -2,7 +2,7 @@ from decimal import getcontext
 
 import pytest
 import secp256k1
-from monstr.encrypt import Keys
+from stroma import Keys
 
 import acorn.silent_payments as bitcoin
 

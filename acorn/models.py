@@ -6,8 +6,7 @@ from binascii import hexlify
 from enum import Enum
 from datetime import datetime
 import json, base64
-from monstr.encrypt import Keys
-from monstr.event.event import Event
+from stroma import Keys, Event
 import cbor2
 
 class BIP329Enum(Enum):

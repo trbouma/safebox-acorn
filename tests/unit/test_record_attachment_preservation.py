@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from monstr.encrypt import Keys
+from stroma import Keys
 
 from acorn import acorn as acorn_module
 from acorn.acorn import Acorn

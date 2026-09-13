@@ -10,7 +10,7 @@ import sys
 
 import pytest
 import yaml
-from monstr.encrypt import Keys
+from stroma import Keys
 
 from acorn import config as config_storage
 

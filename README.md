@@ -125,6 +125,8 @@ implemented and reviewed.
 - [Relay Suitability Ledger](./docs/RELAY-SUITABILITY-LEDGER.md)
 - [Proof State and Relay Consistency](./docs/PROOF-STATE-RELAY-CONSISTENCY.md)
 - [Interrupted Swap Recovery Milestone](./docs/INTERRUPTED-SWAP-RECOVERY-MILESTONE-2026-08-25.md)
+- [Relay Migration and Incoming Funds Design Correction](./docs/RELAY-MIGRATION-AND-INCOMING-FUNDS-DESIGN-CORRECTION-2026-09.md)
+- [Stroma Runtime Migration Milestone](./docs/STROMA-RUNTIME-MIGRATION-MILESTONE-2026-09.md)
 - [Relay Resilience and Replication Design](./docs/RELAY-RESILIENCE-AND-REPLICATION-DESIGN.md)
 - [Roadmap to Releasability](./docs/ROADMAP-TO-RELEASABILITY.md)
 - [FreeBSD Jail Installation](./docs/FREEBSD-JAIL-INSTALL.md)

@@ -2,13 +2,9 @@ import json
 import random
 from typing import Union
 from datetime import datetime
-from monstr.signing.signing import SignerInterface, BasicKeySigner
-from monstr.encrypt import Keys
-from monstr.event.event import Event
-from monstr.util import util_funcs
-from monstr.encrypt import NIP44Encrypt
+from stroma import BasicKeySigner, Event, Keys, NIP44Encrypt, Signer, util_funcs
 
-# This was created to remove the jittered ticks
+# Historical Acorn compatibility policies implemented on Stroma primitives.
 
 class KindOtherGiftWrapException(Exception):
     pass
@@ -21,7 +17,7 @@ class KindOtherGiftWrap:
     """
     KIND_OTHER_GIFT_WRAP: int
 
-    def __init__(self, signer: SignerInterface, kind_gift_wrap: int = 1060, preserve_rumour_kind: bool = False):
+    def __init__(self, signer: Signer, kind_gift_wrap: int = 1060, preserve_rumour_kind: bool = False):
         self._signer = signer
         # jitter is upto 2 days from now
         self._jitter = 60 * 60 * 24 * 2

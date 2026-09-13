@@ -6,7 +6,7 @@ from time import time
 from typing import Any, Literal
 from urllib.parse import urlsplit
 
-from monstr.encrypt import Keys
+from stroma import Keys
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 SERVICE_BINDINGS_LABEL = "service_bindings"

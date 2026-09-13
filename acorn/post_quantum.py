@@ -9,7 +9,7 @@ import json
 from typing import Any, Union
 
 import secp256k1
-from monstr.event.event import Event
+from stroma import Event
 
 
 class PostQuantumUnavailableError(RuntimeError):

@@ -182,21 +182,6 @@ frozenlist = ">=1.1.0"
 typing-extensions = {version = ">=4.2", markers = "python_version < \"3.13\""}
 
 [[package]]
-name = "aiosqlite"
-version = "0.22.1"
-description = "asyncio bridge to the standard sqlite3 module"
-optional = false
-python-versions = ">=3.9"
-files = [
-    {file = "aiosqlite-0.22.1-py3-none-any.whl", hash = "sha256:21c002eb13823fad740196c5a2e9d8e62f6243bd9e7e4a1f87fb5e44ecb4fceb"},
-    {file = "aiosqlite-0.22.1.tar.gz", hash = "sha256:043e0bd78d32888c0a9ca90fc788b38796843360c855a7262a532813133a0650"},
-]
-
-[package.extras]
-dev = ["attribution (==1.8.0)", "black (==25.11.0)", "build (>=1.2)", "coverage[toml] (==7.10.7)", "flake8 (==7.3.0)", "flake8-bugbear (==24.12.12)", "flit (==3.12.0)", "mypy (==1.19.0)", "ufmt (==2.8.0)", "usort (==1.0.8.post1)"]
-docs = ["sphinx (==8.1.3)", "sphinx-mdinclude (==0.6.2)"]
-
-[[package]]
 name = "annotated-doc"
 version = "0.0.5"
 description = "Document parameters, class attributes, return types, and variables inline, with Annotated."
@@ -318,16 +303,16 @@ files = [
 [package.dependencies]
 cbor2 = {version = ">=5.5.0,<6.0.0", markers = "python_version >= \"3.9\""}
 coincurve = [
-    {version = ">=21.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=18.0.0", markers = "python_version == \"3.11\""},
+    {version = ">=21.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=19.0.1", markers = "python_version >= \"3.12\" and python_version < \"3.13\""},
 ]
 crcmod = ">=1.7,<2.0"
 ecdsa = ">=0.17,<1.0"
 ed25519-blake2b-fork = ">=1.4.2,<2.0.0"
 py-sr25519-bindings = [
-    {version = ">=0.2.2,<1.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=0.2.0,<1.0.0", markers = "python_version >= \"3.11\" and python_version < \"3.13\""},
+    {version = ">=0.2.2,<1.0.0", markers = "python_version >= \"3.13\""},
 ]
 pycryptodome = ">=3.15,<4.0"
 pynacl = ">=1.5,<2.0"
@@ -581,19 +566,8 @@ files = [
 
 [package.dependencies]
 cffi = [
-    {version = ">=1.17", markers = "python_version == \"3.13\""},
     {version = ">=1.6", markers = "python_version < \"3.13\""},
-]
-
-[[package]]
-name = "cachetools"
-version = "7.1.7"
-description = "Extensible memoizing collections and decorators"
-optional = false
-python-versions = ">=3.10"
-files = [
-    {file = "cachetools-7.1.7-py3-none-any.whl", hash = "sha256:ef98ef375ad188819ef2f9b3645e3987f4b8c5b7550e436ad998c2de78296df0"},
-    {file = "cachetools-7.1.7.tar.gz", hash = "sha256:a3e2a00b14d8f8a6b70c1dae7b4685e7ad3bc965c5b42124a2d6ce895da6cf50"},
+    {version = ">=1.17", markers = "python_version == \"3.13\""},
 ]
 
 [[package]]
@@ -1684,27 +1658,6 @@ files = [
     {file = "mnemonic-0.21-py3-none-any.whl", hash = "sha256:72dc9de16ec5ef47287237b9b6943da11647a03fe7cf1f139fc3d7c4a7439288"},
     {file = "mnemonic-0.21.tar.gz", hash = "sha256:1fe496356820984f45559b1540c80ff10de448368929b9c60a2b55744cc88acf"},
 ]
-
-[[package]]
-name = "monstr"
-version = "0.1.9"
-description = "Monstr: Python Nostr module. Python code for working with nostr."
-optional = false
-python-versions = "*"
-files = [
-    {file = "monstr-0.1.9-py2.py3-none-any.whl", hash = "sha256:02ea958acdd3c273e398cde898d235e7c3f9dc506698976cb913d6ea1c9f78f3"},
-    {file = "monstr-0.1.9.tar.gz", hash = "sha256:1778efe0dd53fc38c10aa6a48ee2473f28b1f6e276ce5ecb149b93b855232c84"},
-]
-
-[package.dependencies]
-aioconsole = ">=0.6.0"
-aiohttp = ">=3.8.4"
-aiosqlite = ">=0.18.0"
-bech32 = ">=1.2.0"
-cachetools = ">=5.3.0"
-cryptography = ">=39.0.1"
-pycryptodome = ">=3.20.0"
-secp256k1 = ">=0.14.0"
 
 [[package]]
 name = "multidict"
@@ -2873,6 +2826,27 @@ files = [
 ]
 
 [[package]]
+name = "stroma-nostr"
+version = "0.1.0"
+description = "Minimal Nostr wire-format interface for Safebox Acorn"
+optional = false
+python-versions = ">=3.11,<3.14"
+files = []
+develop = false
+
+[package.dependencies]
+aiohttp = ">=3.10,<4"
+bech32 = ">=1.2,<2"
+coincurve = ">=20,<22"
+pycryptodome = ">=3.20,<4"
+
+[package.source]
+type = "git"
+url = "https://github.com/trbouma/stroma.git"
+reference = "84336a9c6f73aedcafd834e6c4fd7523808fe747"
+resolved_reference = "84336a9c6f73aedcafd834e6c4fd7523808fe747"
+
+[[package]]
 name = "tibs"
 version = "0.5.7"
 description = "A sleek Python library for binary data."
@@ -3211,4 +3185,4 @@ post-quantum = ["liboqs-python"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "ff5886f9232e2a7d6856c99f040732af2338d39d9b635dc8a60fec8a13ca06da"
+content-hash = "04e9742b56754e734e5ce7c1b9115e583a373b405945d24bff627ddbeddf2d00"

@@ -9,8 +9,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from monstr.encrypt import Keys
-from monstr.event.event import Event
+from stroma import Keys, Event
 
 from acorn.acorn import Acorn, RECORD_EXACT_LOOKUP_LIMIT
 

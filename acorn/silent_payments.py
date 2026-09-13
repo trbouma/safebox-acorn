@@ -17,7 +17,7 @@ from urllib import error, parse, request
 
 import bech32
 from coincurve import PublicKey
-from monstr.encrypt import Keys
+from stroma import Keys
 import secp256k1
 
 

@@ -261,7 +261,7 @@ Applications may also import documented support modules:
 ```python
 from acorn.models import SafeboxRecord
 from acorn.func_utils import get_profile_for_pub_hex
-from acorn.monstrmore import ExtendedNIP44Encrypt
+from acorn.stroma_compat import ExtendedNIP44Encrypt
 ```
 
 Over time, these imports should be documented and narrowed so applications rely

@@ -1,5 +1,9 @@
 # Incoming Funds Reliability and Scaling
 
+The September 2026 defects that prompted the current routing, checkpoint, and
+spent-replay rules are recorded in
+[Relay Migration and Incoming Funds Design Correction](RELAY-MIGRATION-AND-INCOMING-FUNDS-DESIGN-CORRECTION-2026-09.md).
+
 ## Summary
 
 Acorn treats relay delivery, receipt persistence, mint finalization, proof

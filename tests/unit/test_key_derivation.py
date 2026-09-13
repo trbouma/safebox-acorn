@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 from mnemonic import Mnemonic
-from monstr.encrypt import Keys
+from stroma import Keys
 
 from acorn.acorn import Acorn
 from acorn.func_utils import (

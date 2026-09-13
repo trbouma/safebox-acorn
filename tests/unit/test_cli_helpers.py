@@ -11,7 +11,7 @@ import yaml
 import click
 from click.testing import CliRunner
 from mnemonic import Mnemonic
-from monstr.encrypt import Keys
+from stroma import Keys
 
 
 def _load_cli(monkeypatch, tmp_path):

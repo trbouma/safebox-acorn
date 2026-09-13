@@ -12,9 +12,7 @@ import bech32
 
 from acorn.models import NIP60Proofs, EncryptionParms, EncryptionResult
 
-from monstr.client.client import Client, ClientPool
-from monstr.event.event import Event
-from monstr.encrypt import Keys
+from stroma import Client, ClientPool, Event, Keys
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 import os

@@ -421,7 +421,7 @@ Before publishing:
 The compatibility import:
 
 ```python
-from acorn.monstrmore import PQEvent
+from acorn.stroma_compat import PQEvent
 ```
 
 may remain available, but the supported experimental location is:
