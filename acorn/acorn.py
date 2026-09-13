@@ -2811,7 +2811,7 @@ class Acorn:
          async with ClientPool([self.home_relay]+self.relays) as c:
             self.logger.debug("op=delete_dms status=start")
             n_msg = Event(kind=Event.KIND_DELETE,
-                        content=None,
+                        content="",
                         pub_key=self.pubkey_hex,
                         tags=tags)
             self.logger.debug("op=delete_dms status=prepared tags=%s", len(tags))
@@ -12799,7 +12799,7 @@ class Acorn:
             async with ClientPool([self.home_relay]) as c:
             
                 n_msg = Event(kind=Event.KIND_DELETE,
-                            content=None,
+                            content="",
                             pub_key=self.pubkey_hex,
                             tags=tags)
                 n_msg.sign(self.privkey_hex)
@@ -12838,7 +12838,7 @@ class Acorn:
             async with ClientPool([self.home_relay]) as c:
             
                 n_msg = Event(kind=Event.KIND_DELETE,
-                            content=None,
+                            content="",
                             pub_key=self.pubkey_hex,
                             tags=tags)
                 n_msg.sign(self.privkey_hex)
@@ -12867,7 +12867,7 @@ class Acorn:
         async with ClientPool([self.home_relay]) as c:
             n_msg = Event(
                 kind=Event.KIND_DELETE,
-                content=None,
+                content="",
                 pub_key=self.pubkey_hex,
                 tags=tags,
             )

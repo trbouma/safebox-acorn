@@ -814,3 +814,37 @@ async def test_default_replication_includes_clear_proof_state_and_history(monkey
     assert 7380 in result["kinds"]
     assert 7381 in result["kinds"]
     assert observed_filters[0]["kinds"] == result["kinds"]
+
+
+@pytest.mark.asyncio
+async def test_delete_event_uses_nip01_string_content(monkeypatch):
+    from acorn import acorn as acorn_module
+
+    wallet = wallet_with_key()
+    published = []
+
+    class CapturePool:
+        def __init__(self, _relays):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, traceback):
+            return False
+
+        def publish(self, event):
+            published.append(event)
+
+    monkeypatch.setattr(acorn_module, "ClientPool", CapturePool)
+    monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+
+    await wallet._async_delete_events_by_ids(
+        ["a" * 64],
+        record_kind=7375,
+        verify=False,
+    )
+
+    assert len(published) == 1
+    assert published[0].kind == Event.KIND_DELETE
+    assert published[0].content == ""

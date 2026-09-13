@@ -9,7 +9,7 @@ packages = [{ include = "acorn" }]
 
 [tool.poetry.dependencies]
 python = ">=3.11,<3.14"
-stroma-nostr = { git = "https://github.com/trbouma/stroma.git", rev = "84336a9c6f73aedcafd834e6c4fd7523808fe747" }
+stroma-nostr = { git = "https://github.com/trbouma/stroma.git", branch = "main" }
 click = "^8.1.7"
 coincurve = ">=20.0.0,<22.0.0"
 wheel = "^0.43.0"
