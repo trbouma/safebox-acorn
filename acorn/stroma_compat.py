@@ -1,5 +1,4 @@
 import json
-import random
 from typing import Union
 from datetime import datetime
 from stroma import BasicKeySigner, Event, Keys, NIP44Encrypt, Signer, util_funcs
@@ -19,14 +18,12 @@ class KindOtherGiftWrap:
 
     def __init__(self, signer: Signer, kind_gift_wrap: int = 1060, preserve_rumour_kind: bool = False):
         self._signer = signer
-        # jitter is upto 2 days from now
-        self._jitter = 60 * 60 * 24 * 2
         self.KIND_OTHER_GIFT_WRAP = kind_gift_wrap
         self._preserve_rumour_kind = preserve_rumour_kind
 
-    def get_jittered_created_ticks(self):
-        # remove jittered ticks - deactivate
-        return util_funcs.date_as_ticks(datetime.now()) 
+    def get_created_ticks(self):
+        """Return the current timestamp; Acorn gift wraps do not use jitter."""
+        return util_funcs.date_as_ticks(datetime.now())
 
     async def _make_rumour(self, evt: Event) -> Event:
         """
@@ -61,7 +58,7 @@ class KindOtherGiftWrap:
         ret = Event(kind=Event.KIND_SEAL,
                     content=await self._signer.nip44_encrypt(plain_text=json.dumps(rumour_evt.data()),
                                                              to_pub_k=to_pub_k),
-                    created_at=self.get_jittered_created_ticks(),
+                    created_at=self.get_created_ticks(),
                     pub_key=await self._signer.get_public_key(),
                     tags=[])
 
@@ -93,7 +90,7 @@ class KindOtherGiftWrap:
 
         ret = Event(kind=self.KIND_OTHER_GIFT_WRAP,
                     pub_key=rnd_k.public_key_hex(),
-                    created_at=self.get_jittered_created_ticks(),
+                    created_at=self.get_created_ticks(),
                     content=await rnd_sign.nip44_encrypt(plain_text=json.dumps(sealed_evt.data()),
                                                          to_pub_k=to_pub_k),
                     tags=outer_tags)

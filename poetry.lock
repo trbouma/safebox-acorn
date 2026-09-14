@@ -2945,7 +2945,7 @@ pycryptodome = ">=3.20,<4"
 type = "git"
 url = "https://github.com/trbouma/stroma.git"
 reference = "main"
-resolved_reference = "ffe13f10555945b32a353ade5c330989a910ac96"
+resolved_reference = "544165018f38f12d8b4f33d70b940a996acb46c3"
 
 [[package]]
 name = "tibs"
