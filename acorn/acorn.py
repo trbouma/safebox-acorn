@@ -9053,27 +9053,29 @@ class Acorn:
 
         return True
 
-    async def check_quote(self, quote:str, amount:int, mint:str = None):
-        self.logger.debug("op=check_quote status=start amount=%s mint=%s", amount, mint)
-        
-        
+    async def get_quote_state(self, quote: str, mint: str = None) -> mintQuote:
+        """Read a Lightning mint quote without issuing or writing proofs."""
 
-        success_mint = True  
-        lninvoice = None  
-          
         mint_base_url = normalize_mint_url(mint or self.home_mint)
         url = f"{mint_base_url}/v1/mint/quote/bolt11/{quote}"
+        headers = {"Content-Type": "application/json"}
+        timeout = httpx.Timeout(10.0, connect=5.0)
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            response = await client.get(url, headers=headers)
+            response.raise_for_status()
+            return mintQuote(**response.json())
+
+    async def check_quote(self, quote:str, amount:int, mint:str = None):
+        self.logger.debug("op=check_quote status=start amount=%s mint=%s", amount, mint)
+
+        success_mint = True
+        lninvoice = None
+        mint_base_url = normalize_mint_url(mint or self.home_mint)
 
         self.logger.debug("op=check_quote status=request mint=%s", mint or self.home_mint)
 
-        headers = { "Content-Type": "application/json"}
-        timeout = httpx.Timeout(10.0, connect=5.0)
-
         try:
-            async with httpx.AsyncClient(timeout=timeout) as client:
-                response = await client.get(url, headers=headers)
-                response.raise_for_status()
-                mint_quote = mintQuote(**response.json())
+            mint_quote = await self.get_quote_state(quote, mint_base_url)
         except (httpx.HTTPError, ValueError, TypeError, KeyError) as exc:
             self.logger.warning(
                 "op=check_quote status=failed amount=%s mint=%s error=%s",

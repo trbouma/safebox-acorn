@@ -144,6 +144,29 @@ def test_deposit_retries_transient_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_get_quote_state_does_not_mint_proofs(monkeypatch):
+    wallet = wallet_with_key()
+    FakeAsyncQuoteClient.requested_urls = []
+
+    async def fail_mint_proofs(*args, **kwargs):
+        raise AssertionError("read-only quote lookup attempted to mint proofs")
+
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncQuoteClient)
+    wallet._mint_proofs = fail_mint_proofs
+
+    quote = await wallet.get_quote_state(
+        "quote-id",
+        "https://mint.safebox.dev",
+    )
+
+    assert quote.state == "PAID"
+    assert quote.paid is False
+    assert FakeAsyncQuoteClient.requested_urls == [
+        "https://mint.safebox.dev/v1/mint/quote/bolt11/quote-id"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_check_quote_accepts_paid_state_response(monkeypatch):
     wallet = wallet_with_key()
     minted = {}
