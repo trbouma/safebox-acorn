@@ -744,3 +744,58 @@ async def test_accept_pending_clear_receipt_recovers_after_delayed_relay_visibil
     acorn.add_clear_transaction_history.assert_awaited_once()
     assert written[0][0]["status"] == "accepted"
     assert "token" not in written[0][0]
+
+
+@pytest.mark.asyncio
+async def test_clear_acceptance_resumes_after_journal_failure_without_double_credit():
+    acorn = wallet()
+    acorn.known_mints = {}
+    acorn.acquire_lock = AsyncMock()
+    acorn.release_lock = AsyncMock()
+    event_id = "a" * 64
+    refreshed = proof(25, "active-keyset", "42")
+    token = TokenV3(token=[TokenV3Token(mint="https://clear.example",
+        proofs=[proof(25, "incoming-keyset", "41")])], unit="cmu-example").serialize()
+    receipts = [{"event_id": event_id, "status": "pending", "token": token,
+        "mint": "https://clear.example", "unit": "cmu-example", "amount": 25}]
+    records = []
+    history = []
+    acorn.get_wallet_info = AsyncMock(side_effect=lambda *a, **kw: json.dumps(receipts))
+    acorn._load_clear_proof_state = AsyncMock(side_effect=lambda: records)
+    acorn.swap_proofs = AsyncMock(return_value=[refreshed])
+    acorn._complete_pending_swap = AsyncMock()
+
+    async def publish_proofs(**kwargs):
+        records.append({"event_id": "b" * 64, "state": ClearProofState(
+            mint=kwargs["mint"], unit=kwargs["unit"], proofs=kwargs["proofs"],
+            source_receipts=kwargs["source_receipts"])})
+        return {"event_id": "b" * 64}
+
+    async def publish_history(**kwargs):
+        item = {"event_id": "c" * 64, "source_event": kwargs["source_event"]}
+        history.append(item)
+        return item
+
+    acorn.add_clear_proof_event = AsyncMock(side_effect=publish_proofs)
+    acorn.get_clear_transaction_history = AsyncMock(side_effect=lambda **kw: history)
+    acorn.add_clear_transaction_history = AsyncMock(side_effect=publish_history)
+    acorn.set_wallet_info = AsyncMock(side_effect=RuntimeError("relay unavailable"))
+    with pytest.raises(RuntimeError, match="relay unavailable"):
+        await acorn.accept_pending_clear_receipt(event_id)
+    assert receipts[0]["status"] == "pending"
+    assert len(records) == len(history) == 1
+
+    async def save_receipts(label, value, **kwargs):
+        receipts[:] = json.loads(value)
+
+    acorn.set_wallet_info = AsyncMock(side_effect=save_receipts)
+    recovered = await acorn.accept_pending_clear_receipt(event_id)
+    duplicate = await acorn.accept_pending_clear_receipt(event_id)
+    assert recovered["accepted"] is True
+    assert duplicate["already_accepted"] is True
+    assert duplicate["amount"] == 25
+    acorn.swap_proofs.assert_awaited_once()
+    acorn.add_clear_proof_event.assert_awaited_once()
+    acorn.add_clear_transaction_history.assert_awaited_once()
+    assert "token" not in receipts[0]
+    assert acorn.release_lock.await_count == 3
