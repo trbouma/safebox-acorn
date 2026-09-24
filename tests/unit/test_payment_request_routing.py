@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from acorn.acorn import Acorn
+from acorn.acorn import Acorn, RetryablePreSwapError
 from acorn.payment_request import decode_payment_request, is_public_relay_url
 
 
@@ -14,6 +14,32 @@ def wallet():
     result.public_relays = ["wss://discovery.example.com"]
     result.logger = logging.getLogger("request-routing-test")
     return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mint,balance,error,expected", [
+    ("http://clear:3339", None, False, "mint must be accessible"),
+    ("https://clear.example.com", None, False, "no matching Clear balance"),
+    ("http://clear:3339", 1, False, "No single Clear keyset has enough credits"),
+    ("https://clear.example.com", 1, False, "No single Clear keyset has enough credits"),
+    ("http://clear:3339", 10, True, "internal mint that isn't accessible"),
+    ("https://clear.example.com", 10, True, "isn't accessible from your wallet right now"),
+])
+async def test_request_errors_distinguish_accessibility_from_balance(mint, balance, error, expected):
+    acorn = wallet()
+    acorn.known_mints = {}
+    acorn.get_clear_balances = AsyncMock(return_value=[] if balance is None else [{
+        "mint": mint, "unit": "cmu-test",
+        "keysets": [{"keyset": "test-keyset", "amount": balance}],
+    }])
+    acorn._keyset_input_fee_ppk = AsyncMock(return_value=0,
+        side_effect=RetryablePreSwapError("connection failed") if error else None)
+    request = acorn.create_payment_request(5, unit="cmu-test", mint=mint,
+        relays=["wss://inbox.example.com"])
+    with pytest.raises(ValueError, match=expected):
+        await acorn.inspect_payment_request(request)
+    if balance is None:
+        acorn._keyset_input_fee_ppk.assert_not_awaited()
 
 
 def test_internal_request_requires_explicit_operator_policy():

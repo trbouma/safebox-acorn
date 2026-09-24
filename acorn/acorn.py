@@ -54,6 +54,7 @@ from acorn.record_transfer import (
 from acorn.record_protection import validate_record_protection_key
 from acorn.payment_request import (
     is_public_relay_url,
+    is_internal_mint_url,
     PaymentRequest,
     decode_payment_request,
     encode_payment_request,
@@ -4134,7 +4135,21 @@ class Acorn:
                 if not keyset_id:
                     continue
                 self.known_mints[keyset_id] = mint
-                input_fee_ppk = await self._keyset_input_fee_ppk(keyset_id)
+                try:
+                    input_fee_ppk = await self._keyset_input_fee_ppk(keyset_id)
+                except RetryablePreSwapError as exc:
+                    if is_internal_mint_url(mint):
+                        message = (
+                            "This request uses an internal mint that isn't accessible "
+                            "from your wallet. Ask the recipient for a request using "
+                            "a publicly accessible mint."
+                        )
+                    else:
+                        message = (
+                            "The requested mint isn't accessible from your wallet right now. "
+                            "Try again later or ask the recipient to check the mint."
+                        )
+                    raise ValueError(message) from exc
                 gross_amount, receiver_input_fee = self._melt_amount_with_input_fee(
                     requested_amount,
                     input_fee_ppk,
@@ -4152,8 +4167,24 @@ class Acorn:
                         }
                     )
         if not choices:
+            if not balances:
+                if strict_mints and all(is_internal_mint_url(mint) for mint in listed_mints):
+                    raise ValueError(
+                        "This request uses an internal mint, and your wallet has no matching "
+                        "Clear balance. The mint must be accessible from your wallet's network. "
+                        "Ask the recipient for a request using a publicly accessible mint "
+                        "if you are outside that network."
+                    )
+                raise ValueError(
+                    "Your wallet has no matching Clear balance for this request. "
+                    "You need credits in the requested currency from a mint accepted "
+                    "by the request. Credits from another mint cannot be substituted "
+                    "unless the request allows it."
+                )
             raise ValueError(
-                "No single Clear keyset can satisfy this payment request after mint input fees"
+                "No single Clear keyset has enough credits to cover this request and its fees. "
+                "The amount must fit within one supported keyset, even if your total "
+                "Clear balance is higher. Try a smaller amount."
             )
         selected = min(
             choices,

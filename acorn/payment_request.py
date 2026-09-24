@@ -36,6 +36,19 @@ def is_public_relay_url(value: str) -> bool:
         return False
 
 
+def is_internal_mint_url(value: str) -> bool:
+    """Recognize local routing hints without claiming to test connectivity."""
+    host = (urlsplit(value).hostname or "").lower().rstrip(".")
+    try:
+        address = ipaddress.ip_address(host)
+        return address.is_private or address.is_loopback or address.is_link_local
+    except ValueError:
+        return bool(host) and (
+            "." not in host
+            or host.endswith((".localhost", ".local", ".internal", ".lan", ".home.arpa", ".docker"))
+        )
+
+
 class PaymentRequestError(ValueError):
     """The supplied NUT-18 request is malformed or unsupported."""
 
