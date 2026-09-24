@@ -272,7 +272,7 @@ class TokenV3Token(BaseModel):
     proofs: List[Proof]
 
     def to_dict(self, include_dleq=False):
-        return_dict = dict(proofs=[p.to_dict(include_dleq) for p in self.proofs])
+        return_dict = dict(proofs=[p.to_dict(include_dleq and p.dleq is not None) for p in self.proofs])
         if self.mint:
             return_dict.update(dict(mint=self.mint))  # type: ignore
         return return_dict
@@ -524,9 +524,9 @@ class TokenV4(BaseModel):
         for proof in proofs:
             proofs_by_id.setdefault(proof.id, []).append(proof)
 
-        cls.t = []
+        tokens = []
         for keyset_id, proofs in proofs_by_id.items():
-            cls.t.append(
+            tokens.append(
                 TokenV4Token(
                     i=bytes.fromhex(keyset_id),
                     p=[
@@ -551,21 +551,15 @@ class TokenV4(BaseModel):
             )
 
         # set memo
-        cls.d = tokenv3.memo
-        # set mint
-        cls.m = tokenv3.get_mints()[0]
-        # set unit
-        cls.u = tokenv3.unit or "sat"
-        return cls(t=cls.t, d=cls.d, m=cls.m, u=cls.u)
+        return cls(t=tokens, d=tokenv3.memo, m=tokenv3.get_mints()[0], u=tokenv3.unit or "sat")
 
     def serialize_to_dict(self, include_dleq=False):
         return_dict: Dict[str, Any] = dict(t=[t.model_dump() for t in self.t])
         # strip dleq if needed
-        if not include_dleq:
-            for token in return_dict["t"]:
-                for proof in token["p"]:
-                    if "d" in proof:
-                        del proof["d"]
+        for token in return_dict["t"]:
+            for proof in token["p"]:
+                if not include_dleq or proof.get("d") is None:
+                    proof.pop("d", None)
         # strip witness if not present
         for token in return_dict["t"]:
             for proof in token["p"]:
@@ -609,7 +603,7 @@ class TokenV4(BaseModel):
         return cls.model_validate(token)
 
     def to_tokenv3(self) -> TokenV3:
-        tokenv3 = TokenV3()
+        tokenv3 = TokenV3(token=[], memo=self.memo, unit=self.unit)
         for token in self.t:
             tokenv3.token.append(
                 TokenV3Token(

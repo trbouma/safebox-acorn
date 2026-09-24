@@ -16,6 +16,7 @@ from acorn.acorn import (
     _exception_detail,
 )
 from acorn.models import ClearProofState, Proof, TokenV3, TokenV3Token
+from acorn.token_codec import decode_cashu_token, encode_cashu_token
 from acorn.payment_request import (
     PaymentRequest,
     encode_payment_request,
@@ -284,7 +285,8 @@ async def test_clear_history_is_append_only_sorted_and_filterable():
 
 
 @pytest.mark.asyncio
-async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash():
+@pytest.mark.parametrize("new_keyset, prefix", [("keyset-new", "cashuA"), ("0011223344556677", "cashuB")])
+async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash(new_keyset, prefix):
     acorn = wallet()
     acorn.known_mints = {}
     acorn.acquire_lock = AsyncMock()
@@ -301,10 +303,10 @@ async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash(
         source_receipts=["d" * 64],
     )
     replacements = [
-        proof(4, "keyset-new", "21"),
-        proof(1, "keyset-new", "22"),
-        proof(4, "keyset-new", "23"),
-        proof(2, "keyset-new", "24"),
+        proof(4, new_keyset, "21"),
+        proof(1, new_keyset, "22"),
+        proof(4, new_keyset, "23"),
+        proof(2, new_keyset, "24"),
     ]
     acorn.swap_for_payment_multi = AsyncMock(return_value=replacements)
 
@@ -316,7 +318,8 @@ async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash(
         counterparty="recipient-pubkey",
     )
 
-    token = TokenV3.deserialize(exported["token"])
+    assert exported["token"].startswith(prefix)
+    token = decode_cashu_token(exported["token"])
     assert token.unit == "cmu-one"
     assert token.get_mints() == ["https://clear.one"]
     assert token.get_amount() == 5
@@ -341,7 +344,8 @@ async def test_export_clear_token_rolls_one_exact_balance_without_touching_cash(
 
 
 @pytest.mark.asyncio
-async def test_send_clear_transfer_uses_kind_7379_inside_gift_wrap():
+@pytest.mark.parametrize("encoding", ["auto", "cashuA"])
+async def test_send_clear_transfer_uses_kind_7379_inside_gift_wrap(encoding):
     acorn = wallet()
     acorn.known_mints = {}
     recipient = Keys(priv_k="22" * 32)
@@ -350,16 +354,16 @@ async def test_send_clear_transfer_uses_kind_7379_inside_gift_wrap():
         recipient_pubkey,
         ["ws://recipient:7777"],
     )
-    token = TokenV3(
+    token = encode_cashu_token(TokenV3(
         token=[
             TokenV3Token(
                 mint="https://clear.one",
-                proofs=[proof(2, "keyset-a", "31")],
+                proofs=[proof(2, "0011223344556677", "31")],
             )
         ],
         memo="coffee",
         unit="cmu-one",
-    ).serialize()
+    ), encoding)
     acorn.export_clear_token = AsyncMock(
         return_value={
             "status": "OK",
@@ -423,8 +427,9 @@ def test_nut18_nip17_payload_adapts_to_clear_receipt_token():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("encoding", ["auto", "cashuA"])
 async def test_send_payment_request_delivers_net_amount_as_nut18_nip17(
-    monkeypatch,
+    monkeypatch, encoding,
 ):
     acorn = wallet()
     recipient = Keys(priv_k="22" * 32)
@@ -459,20 +464,20 @@ async def test_send_payment_request_delivers_net_amount_as_nut18_nip17(
         ]
     )
     acorn._keyset_input_fee_ppk = AsyncMock(return_value=1000)
-    exported_token = TokenV3(
+    exported_token = encode_cashu_token(TokenV3(
         token=[
             TokenV3Token(
                 mint="https://clear.one",
                 proofs=[
-                    proof(16, "keyset-a", "51"),
-                    proof(8, "keyset-a", "52"),
-                    proof(4, "keyset-a", "53"),
+                    proof(16, "0011223344556677", "51"),
+                    proof(8, "0011223344556677", "52"),
+                    proof(4, "0077665544332211", "53"),
                 ],
             )
         ],
         memo="Paid from Safebox Web",
         unit="cmu-one",
-    ).serialize()
+    ), encoding)
     acorn.export_clear_token = AsyncMock(
         return_value={
             "status": "OK",
@@ -554,19 +559,20 @@ async def test_malformed_clear_proof_event_fails_without_changing_cash_state():
 
 
 @pytest.mark.asyncio
-async def test_accept_pending_clear_receipt_refreshes_into_separate_state():
+@pytest.mark.parametrize("encoding", ["auto", "cashuA"])
+async def test_accept_pending_clear_receipt_refreshes_into_separate_state(encoding):
     acorn = wallet()
     acorn.known_mints = {}
     acorn.acquire_lock = AsyncMock()
     acorn.release_lock = AsyncMock()
     event_id = "d" * 64
-    incoming = proof(25, "incoming-keyset", "7")
+    incoming = proof(25, "0011223344556677", "7")
     refreshed = proof(25, "active-keyset", "8")
-    token = TokenV3(
+    token = encode_cashu_token(TokenV3(
         token=[TokenV3Token(mint="https://clear.example", proofs=[incoming])],
         memo="guest passes",
         unit="cmu-example",
-    ).serialize()
+    ), encoding)
     receipts = [{
         "event_id": event_id,
         "sender_pubkey": "sender-pubkey",
@@ -603,7 +609,7 @@ async def test_accept_pending_clear_receipt_refreshes_into_separate_state():
     assert result["accepted"] is True
     assert result["amount"] == 25
     acorn.swap_proofs.assert_awaited_once_with(
-        [incoming],
+        decode_cashu_token(token).get_proofs(),
         mint_base="https://clear.example",
         unit="cmu-example",
     )

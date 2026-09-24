@@ -58,6 +58,7 @@ from acorn.payment_request import (
     encode_payment_request,
     nostr_nip17_transport,
 )
+from acorn.token_codec import decode_cashu_token, encode_cashu_token, normalize_cashu_token
 from acorn.service_resolution import (
     BLOSSOM_CAPABILITIES,
     CONTEXT_ENDPOINTS_LABEL,
@@ -3780,6 +3781,7 @@ class Acorn:
         memo: str = "Clear transfer",
         counterparty: str = "",
         keyset: str | None = None,
+        token_format: str = "auto",
     ) -> dict:
         """Export an exact amount from one Clear balance as a bearer token.
 
@@ -3789,6 +3791,8 @@ class Acorn:
         history event before returning bearer material to the caller.
         """
 
+        if token_format not in {"auto", "cashuA"}:
+            raise ValueError("Token format must be auto or cashuA")
         normalized_mint = normalize_mint_url(mint)
         normalized_unit = self._normalize_clear_unit(unit)
         transfer_amount = int(amount)
@@ -3898,7 +3902,7 @@ class Acorn:
                     verify=True,
                 )
 
-            token = TokenV3(
+            token = encode_cashu_token(TokenV3(
                 token=[
                     TokenV3Token(
                         mint=normalized_mint,
@@ -3907,7 +3911,7 @@ class Acorn:
                 ],
                 memo=transfer_memo,
                 unit=normalized_unit,
-            ).serialize()
+            ), token_format=token_format)
             history_result = await self.add_clear_transaction_history(
                 direction="out",
                 operation="send",
@@ -3995,7 +3999,7 @@ class Acorn:
             "amount": int(exported["amount"]),
             "keyset_ids": sorted(
                 str(keyset_id)
-                for keyset_id in TokenV3.deserialize(exported["token"]).get_keysets()
+                for keyset_id in decode_cashu_token(exported["token"]).get_keysets()
             ),
             "comment": str(comment or ""),
         }
@@ -4191,14 +4195,13 @@ class Acorn:
             counterparty=prepared["recipient_pubkey"],
             keyset=prepared["keyset"],
         )
-        token = TokenV3.deserialize(exported["token"])
-        token_entries = list(token.token)
-        if len(token_entries) != 1:
+        token = decode_cashu_token(exported["token"])
+        if len(token.get_mints()) != 1:
             raise RuntimeError("NUT-18 payment export must contain exactly one mint")
         payment_payload: Dict[str, Any] = {
             "mint": exported["mint"],
             "unit": exported["unit"],
-            "proofs": [proof.model_dump() for proof in token_entries[0].proofs],
+            "proofs": [proof.model_dump() for proof in token.get_proofs()],
         }
         if request.payment_id is not None:
             payment_payload["id"] = request.payment_id
@@ -5907,7 +5910,7 @@ class Acorn:
                 tendered_amount=tendered_amount,
                 tendered_currency=tendered_currency,
             )
-        token_mint = str(TokenV4.deserialize(token).mint)
+        token_mint = str(decode_cashu_token(token).get_mints()[0])
 
         payload = {
             "version": 1,
@@ -6006,8 +6009,10 @@ class Acorn:
     ) -> Dict[str, Any]:
         """Persist an incoming token as pending without consulting its mint."""
 
-        token_obj = TokenV4.deserialize(token)
-        token_amount = sum(int(proof.amount) for proof in token_obj.proofs)
+        token_obj = decode_cashu_token(token)
+        if (token_obj.unit or "sat") != "sat" or len(token_obj.get_mints()) != 1:
+            raise ValueError("Cash receipts require one mint and sat-denominated proofs")
+        token_amount = int(token_obj.get_amount())
         claimed_amount = int(payload.get("amount", token_amount))
         if token_amount <= 0 or claimed_amount != token_amount:
             raise ValueError("Continuity Payment amount does not match its proofs")
@@ -6035,7 +6040,7 @@ class Acorn:
                     "event_id": str(event_id),
                     "sender_pubkey": str(sender_pubkey),
                     "token": token,
-                    "mint": str(token_obj.mint),
+                    "mint": str(token_obj.get_mints()[0]),
                     "amount": token_amount,
                     "unit": "sat",
                     "comment": str(payload.get("comment") or ""),
@@ -6695,7 +6700,7 @@ class Acorn:
     ) -> Dict[str, Any]:
         """Persist an incoming Clear token separately from sats proof state."""
 
-        token_obj = TokenV3.deserialize(token)
+        token_obj = decode_cashu_token(token)
         token_amount = int(token_obj.get_amount())
         claimed_amount = int(payload.get("amount", token_amount))
         if token_amount <= 0 or claimed_amount != token_amount:
@@ -6771,13 +6776,11 @@ class Acorn:
     ) -> Dict[str, Any]:
         """Validate and journal a pasted Clear token before acceptance."""
 
-        token = str(cashu_token or "").strip()
-        if not token.startswith("cashuA"):
-            raise ValueError("Clear token must use the cashuA token format")
+        token = normalize_cashu_token(cashu_token)
         if len(token) > 128 * 1024:
             raise ValueError("Clear token is too large")
 
-        token_obj = TokenV3.deserialize(token)
+        token_obj = decode_cashu_token(token)
         proofs = token_obj.get_proofs()
         if not proofs or len(proofs) > 4096:
             raise ValueError("Clear token must contain a bounded, non-empty proof set")
@@ -6843,11 +6846,11 @@ class Acorn:
             ) from exc
         mint = normalize_mint_url(payment.get("mint"))
         unit = self._normalize_clear_unit(payment.get("unit"))
-        token = TokenV3(
+        token = encode_cashu_token(TokenV3(
             token=[TokenV3Token(mint=mint, proofs=proofs)],
             memo=str(payment.get("memo") or ""),
             unit=unit,
-        ).serialize()
+        ))
         return {
             "version": 1,
             "type": "clear-token",
@@ -7009,7 +7012,7 @@ class Acorn:
             token = str(receipt.get("token") or "")
             if not token:
                 raise RuntimeError("Pending Clear receipt has no bearer token")
-            token_obj = TokenV3.deserialize(token)
+            token_obj = decode_cashu_token(token)
             mint = normalize_mint_url(str(receipt.get("mint") or ""))
             unit = self._normalize_clear_unit(receipt.get("unit"))
             token_mints = {
@@ -7397,7 +7400,7 @@ class Acorn:
                     raise MalformedIncomingTransfer(
                         "Clear transfer payload is missing its Cashu token"
                     )
-                token_obj = TokenV3.deserialize(token)
+                token_obj = decode_cashu_token(token)
                 preview = {
                     "event_id": each_event.id,
                     "sender_pubkey": unwrapped_event.pub_key,
@@ -7720,8 +7723,8 @@ class Acorn:
                     )
 
                 try:
-                    token_obj = TokenV4.deserialize(str(token))
-                    token_amount = sum(int(proof.amount) for proof in token_obj.proofs)
+                    token_obj = decode_cashu_token(str(token))
+                    token_amount = int(token_obj.get_amount())
                     claimed_amount = int(payload.get("amount", token_amount))
                 except Exception as token_exc:
                     raise MalformedIncomingTransfer(
@@ -14605,6 +14608,7 @@ class Acorn:
         tendered_amount: float | None = None,
         tendered_currency: str = "SAT",
     ):
+        cashu_token = normalize_cashu_token(cashu_token)
         self.logger.debug("op=accept_token status=start token_bytes=%s", len(cashu_token))
         # asyncio.run(self.nip17_accept(cashu_token))
         # msg_out, token_accepted_amount = await self._async_token_accept(cashu_token)
@@ -14886,7 +14890,7 @@ class Acorn:
                 memo=comment,
                 unit="sat",
             )
-            token_serialized = TokenV4.from_tokenv3(token_v3).serialize()
+            token_serialized = encode_cashu_token(token_v3)
 
             selected_secrets = {proof.secret for proof in selected}
             self.proofs = [
@@ -15068,8 +15072,7 @@ class Acorn:
                                             proofs=spend_proofs)
             
             v3_token = TokenV3(token=[tokens], memo=comment, unit="sat")
-            v4_token = TokenV4.from_tokenv3(v3_token)
-            token_serialized = v4_token.serialize()
+            token_serialized = encode_cashu_token(v3_token)
             # print("proofs remaining:", proofs_remaining)
         except (RetryablePreSwapError, AmbiguousSwapError) as e:
             self.logger.error(

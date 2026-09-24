@@ -329,7 +329,8 @@ async def test_issue_continuity_token_leaves_wallet_unchanged_without_exact_amou
 
 
 @pytest.mark.asyncio
-async def test_store_continuity_receipt_quarantines_token_idempotently() -> None:
+@pytest.mark.parametrize("legacy", [False, True])
+async def test_store_continuity_receipt_quarantines_token_idempotently(legacy) -> None:
     acorn = wallet()
     stored = []
     async def save(_label, value, **_kwargs):
@@ -338,6 +339,8 @@ async def test_store_continuity_receipt_quarantines_token_idempotently() -> None
 
     acorn.set_wallet_info = AsyncMock(side_effect=save)
     token = serialized_token([proof(1, "1"), proof(4, "4")])
+    if legacy:
+        token = TokenV4.deserialize(token).to_tokenv3().serialize()
     payload = {"amount": 5, "comment": "market", "nonce": "abc"}
 
     receipt = await acorn._store_continuity_receipt(
@@ -892,13 +895,16 @@ async def test_sweep_persists_standard_payment_before_unavailable_mint(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("legacy", [False, True])
 async def test_sweep_can_collect_standard_payment_without_contacting_mint(
-    monkeypatch,
+    monkeypatch, legacy,
 ) -> None:
     from acorn import acorn as acorn_module
 
     acorn = wallet()
     token = serialized_token([proof(1, "1")])
+    if legacy:
+        token = TokenV4.deserialize(token).to_tokenv3().serialize()
     event = Event(
         id="b" * 64,
         sig="00" * 64,
@@ -1052,7 +1058,8 @@ async def test_sweep_skips_clear_7379_gift_wrap_without_breaking_ecash(
 
 
 @pytest.mark.asyncio
-async def test_store_clear_receipt_uses_separate_journal() -> None:
+@pytest.mark.parametrize("compact", [False, True])
+async def test_store_clear_receipt_uses_separate_journal(compact) -> None:
     acorn = wallet()
     stored = []
 
@@ -1062,6 +1069,8 @@ async def test_store_clear_receipt_uses_separate_journal() -> None:
 
     acorn.set_wallet_info = AsyncMock(side_effect=save)
     token = clear_token([proof(16, "16"), proof(8, "8"), proof(1, "1")])
+    if compact:
+        token = TokenV4.from_tokenv3(TokenV3.deserialize(token)).serialize()
 
     receipt = await acorn._store_clear_receipt(
         event_id="e" * 64,
@@ -1220,13 +1229,16 @@ async def test_deleted_clear_receipt_is_not_restored_by_targeted_rescan(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("compact", [False, True])
 async def test_sweep_clear_transfers_stores_pending_without_ecash_accept(
-    monkeypatch,
+    monkeypatch, compact,
 ) -> None:
     from acorn import acorn as acorn_module
 
     acorn = wallet()
     token = clear_token([proof(16, "16"), proof(8, "8"), proof(1, "1")])
+    if compact:
+        token = TokenV4.from_tokenv3(TokenV3.deserialize(token)).serialize()
     outer = Event(
         id="7" * 64,
         sig="00" * 64,
