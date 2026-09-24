@@ -53,6 +53,7 @@ from acorn.record_transfer import (
 )
 from acorn.record_protection import validate_record_protection_key
 from acorn.payment_request import (
+    is_public_relay_url,
     PaymentRequest,
     decode_payment_request,
     encode_payment_request,
@@ -4187,6 +4188,10 @@ class Acorn:
         payment_memo = str(memo or "Paid from Acorn").strip()
         if len(payment_memo) > 200:
             raise ValueError("Payment memo must be 200 characters or fewer")
+        # Check delivery before removing any value from the wallet.
+        prepared["relays"] = await self._require_reachable_transfer_relays(
+            prepared["relays"]
+        )
         exported = await self.export_clear_token(
             mint=prepared["mint"],
             unit=prepared["unit"],
@@ -15790,6 +15795,20 @@ class Acorn:
         await asyncio.sleep(1)
         self.logger.debug("op=async_task status=start")
 
+    async def get_payment_request_relays(self) -> List[str]:
+        """Advertise this wallet's public inbox, never its Docker route."""
+        resolved = await self.resolve_inbox_relays(
+            self.pubkey_hex, lookup_relays=self._build_discovery_relays()
+        )
+        candidates = resolved.get("relays") or [self.home_relay]
+        relays = [r for r in self._normalize_relays(candidates) if is_public_relay_url(r)]
+        if not relays:
+            raise ValueError(
+                "No public inbox relay is configured for this wallet. "
+                "Configure a public NIP-17 inbox before creating a Clear request."
+            )
+        return relays
+
     def create_payment_request(
         self,
         amount: int,
@@ -15797,8 +15816,10 @@ class Acorn:
         single_use: bool = True,
         description: str = "Payment",
         mint: str | None = None,
+        relays: List[str] | None = None,
+        allow_internal_relays: bool = False,
     ) -> str:
-        """Create a current NUT-18 request using this Acorn's NIP-17 inbox."""
+        """Create a NUT-18 request; internal relays require operator opt-in."""
 
         requested_amount = int(amount)
         if requested_amount <= 0:
@@ -15817,9 +15838,15 @@ class Acorn:
                 dict.fromkeys(normalize_mint_url(each) for each in self.mints)
             )
 
+        request_relays = self._normalize_relays(relays if relays is not None else [self.home_relay])
+        if not request_relays or (
+            not allow_internal_relays
+            and not all(is_public_relay_url(r) for r in request_relays)
+        ):
+            raise ValueError("Clear payment requests require public inbox relay URLs")
         nprofile = Entities.encode(
             "nprofile",
-            {"pubkey": self.pubkey_hex, "relay": [self.home_relay]},
+            {"pubkey": self.pubkey_hex, "relay": request_relays},
         )
         request = PaymentRequest(
             payment_id=secrets.token_hex(4),

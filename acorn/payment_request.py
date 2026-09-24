@@ -3,14 +3,37 @@
 from __future__ import annotations
 
 import base64
+import ipaddress
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 import cbor2
 
 
 PAYMENT_REQUEST_PREFIX = "creqA"
 MAX_PAYMENT_REQUEST_BYTES = 16_384
+
+
+def is_public_relay_url(value: str) -> bool:
+    """Reject internal route hints; DNS reachability is checked by the sender."""
+    try:
+        parsed = urlsplit(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        if (parsed.scheme not in {"ws", "wss"} or not host
+                or parsed.username is not None or parsed.password is not None
+                or parsed.fragment):
+            return False
+        if parsed.port is not None and not 0 < parsed.port < 65536:
+            return False
+        try:
+            return ipaddress.ip_address(host).is_global
+        except ValueError:
+            return "." in host and not host.endswith(
+                (".localhost", ".local", ".internal", ".test", ".invalid", ".lan", ".home", ".docker")
+            )
+    except (ValueError, TypeError):
+        return False
 
 
 class PaymentRequestError(ValueError):
