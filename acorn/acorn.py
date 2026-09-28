@@ -2852,6 +2852,10 @@ class Acorn:
                         or rumour.sig or self.pubkey_hex not in
                         [tag[1] for tag in rumour.tags if len(tag) > 1 and tag[0] == 'p']):
                     continue
+                if self._nut18_message_payload(rumour.content) is not None:
+                    # Payment-shaped messages belong to transfer processing,
+                    # even when their proofs are malformed. Never redeem here.
+                    continue
                 messages[rumour.id] = {
                     "id": rumour.id, "sender": rumour.pub_key,
                     "content": rumour.content,
@@ -6910,21 +6914,29 @@ class Acorn:
             inner_kind=CLEAR_TRANSFER_KIND,
         )
 
+    @staticmethod
+    def _nut18_message_payload(content: str) -> Dict[str, Any] | None:
+        """Recognize NUT-18 structure, without validating or accepting value.
+
+        A malformed payment must not become a chat message merely because
+        proof validation fails. Ordinary text and unrelated JSON remain DMs.
+        """
+        try:
+            payment = json.loads(content)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if isinstance(payment, dict) and {"mint", "unit", "proofs"}.issubset(payment):
+            return payment
+        return None
+
     def _clear_payload_from_nut18_message(
         self,
         content: str,
     ) -> Dict[str, Any] | None:
         """Adapt a standard NUT-18 NIP-17 payload to the Clear receipt model."""
 
-        try:
-            payment = json.loads(content)
-        except (json.JSONDecodeError, TypeError):
-            return None
-        if not isinstance(payment, dict) or not {
-            "mint",
-            "unit",
-            "proofs",
-        }.issubset(payment):
+        payment = self._nut18_message_payload(content)
+        if payment is None:
             return None
         raw_proofs = payment.get("proofs")
         if not isinstance(raw_proofs, list) or not raw_proofs or len(raw_proofs) > 4096:

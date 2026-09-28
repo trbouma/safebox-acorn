@@ -1,4 +1,5 @@
 from unittest.mock import AsyncMock
+import json
 
 import pytest
 from stroma import BasicKeySigner, Event, Keys
@@ -33,6 +34,37 @@ async def test_private_inbox_authenticated_deduplicated_and_read_only(monkeypatc
     assert result[0]["sender"] == sender.public_key_hex()
     assert result[0]["content"] == "private text"
     receiver.secure_dm.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unit", ["sat", "cmu-test"])
+@pytest.mark.parametrize("proofs", [[{"id": "test", "amount": 1, "secret": "private", "C": "invalid"}], [], None])
+async def test_inbox_filters_payment_payloads_without_acceptance(monkeypatch, unit, proofs):
+    receiver = wallet()
+    sender = Keys()
+    wrapper = KindOtherGiftWrap(BasicKeySigner(sender), kind_gift_wrap=1059)
+    contents = [
+        json.dumps({"mint": "https://mint.example", "unit": unit, "proofs": proofs}),
+        "An ordinary message about proofs",
+        json.dumps({"topic": "payment", "mint": "https://mint.example"}),
+    ]
+    events = []
+    for content in contents:
+        event, _ = await wrapper.wrap(Event(kind=14, pub_key=sender.public_key_hex(),
+            content=content, tags=[["p", receiver.pubkey_hex]]), receiver.pubkey_hex)
+        events.append(event)
+    receiver._resolve_receive_relay_pool = AsyncMock(return_value=(["ws://internal"], {}))
+    receiver._require_reachable_transfer_relays = AsyncMock(side_effect=lambda routes: routes)
+    receiver._clear_payload_from_nut18_message = AsyncMock(side_effect=AssertionError("No processing in inbox"))
+    class Pool:
+        def __init__(self, relays): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): return False
+        async def query(self, filters): return events
+    monkeypatch.setattr(module, "ClientPool", Pool)
+    messages = await receiver.get_private_messages()
+    assert {message["content"] for message in messages} == set(contents[1:])
+    receiver._clear_payload_from_nut18_message.assert_not_called()
 
 
 @pytest.mark.asyncio
