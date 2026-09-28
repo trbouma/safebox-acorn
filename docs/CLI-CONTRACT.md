@@ -440,6 +440,27 @@ shows the current record. `--publish-relay` may be repeated to control the
 relays used to publish or discover that record. Internal Mainstay relay
 addresses are not suitable values for a publicly discoverable inbox list.
 
+### Private messages
+
+```sh
+acorn dm alice@example.com "Hello"
+acorn dm alice@example.com "Hello" --relays ws://spurline:8080
+```
+
+Without `--relays`, `dm` discovers the recipient's signed inbox, falling back
+to NIP-05 relay hints. It fails if no recipient route is available. An explicit
+comma-separated list overrides discovery; `ws://` and `wss://` are preserved,
+and bare relay hosts receive the `wss://` prefix. An empty override is rejected.
+
+Success indicates acknowledged relay publication, not recipient processing.
+Uncertain delivery is not automatically retried. The command does not echo the
+message body, although shell history/process arguments can still expose it.
+The legacy listener is not updated by this change; see
+[General private messages](TOKEN-DELIVERY-RELAY-ROUTING.md#general-private-messages)
+for its side effects and the remaining receive-side work.
+
+### Transfer expiration and receipt
+
 `--expires-in <seconds>` adds an optional NIP-40 `expiration` tag to the
 relay-visible event. The value is converted to an absolute Unix timestamp
 before the event is signed. Supporting relays should stop serving expired

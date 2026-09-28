@@ -2823,40 +2823,97 @@ class Acorn:
             self.logger.debug("op=delete_dms status=published")
 
             
-    async def secure_dm(self,nrecipient:str, message: str, dm_relays: List[str]):
+    async def get_private_messages(self, limit: int = 50):
+        """Read recent authenticated NIP-17 messages without side effects.
+
+        No replies, token redemption, deletion, or plaintext persistence.
+        The bounded relay window is not a complete message archive.
+        """
+        limit = max(1, min(int(limit), 100))
+        relays, _ = await self._resolve_receive_relay_pool(self.pubkey_hex)
+        relays = await self._require_reachable_transfer_relays(relays)
+        async with ClientPool(relays) as client:
+            events = await asyncio.wait_for(client.query({
+                "kinds": [1059], "#p": [self.pubkey_hex], "limit": limit,
+            }), timeout=15)
+        wrapper = KindOtherGiftWrap(BasicKeySigner(self.k), kind_gift_wrap=1059)
+        messages = {}
+        for outer in events:
+            try:
+                if outer.kind != 1059 or not outer.is_valid():
+                    continue
+                if outer.tags.get_tag_value_pos('p') != self.pubkey_hex:
+                    continue
+                seal = await wrapper._unwrap(outer)
+                if seal.kind != 13 or not seal.is_valid():
+                    continue
+                rumour = await wrapper._unwrap(seal)
+                if (rumour.kind != 14 or rumour.pub_key != seal.pub_key
+                        or rumour.sig or self.pubkey_hex not in
+                        [tag[1] for tag in rumour.tags if len(tag) > 1 and tag[0] == 'p']):
+                    continue
+                messages[rumour.id] = {
+                    "id": rumour.id, "sender": rumour.pub_key,
+                    "content": rumour.content,
+                    "created_at": self._event_timestamp(rumour),
+                }
+            except Exception:
+                # One malformed or unrelated envelope must not hide the inbox.
+                continue
+        return sorted(messages.values(), key=lambda item: item["created_at"], reverse=True)[:limit]
+
+    async def secure_dm(
+        self, nrecipient: str, message: str, dm_relays: List[str] | None = None,
+    ):
+        """Send an encrypted DM using recipient inbox discovery or explicit routes.
+
+        Keeps the legacy success string. Success means relay acknowledgement,
+        not recipient retrieval. No automatic retry is made after publication.
+        """
+        if not isinstance(message, str) or not message.strip():
+            raise ValueError("Message must not be empty")
+        if dm_relays is not None:
+            relays = self._normalize_relays(dm_relays)
+            if not relays:
+                raise ValueError("Explicit message relays must not be empty")
+            npub_hex, _ = self._resolve_pubkey_and_relays(nrecipient)
+            source = "explicit"
+        else:
+            destination = await self._resolve_transfer_destination(nrecipient)
+            if destination["relay_source"] == "sender-home-fallback":
+                raise ValueError(
+                    "No recipient inbox relay was found. Ask the recipient to publish "
+                    "an inbox relay, or supply an explicit message relay."
+                )
+            npub_hex = destination["recipient_pubkey"]
+            relays = destination["relays"]
+            source = destination["relay_source"]
         try:
-            npub_hex = self._resolve_pubkey_identifier(nrecipient)
-        except (ValueError, TypeError) as exc:
-            raise RuntimeError(f"Could not resolve {nrecipient}") from exc
-        
-        npub = hex_to_bech32(npub_hex)
-        self.logger.debug("op=secure_dm status=resolved recipient=%s npub=%s relays=%s", nrecipient, npub, dm_relays)
+            relays = await self._require_reachable_transfer_relays(relays)
+        except TransferRelayUnavailable as exc:
+            raise RuntimeError(
+                "Recipient message relays are unavailable. No message was published."
+            ) from exc
+        self.logger.debug("op=secure_dm status=resolved recipient=%s relay_source=%s", npub_hex, source)
+        await self._async_secure_dm(npub_hex=npub_hex, message=message, dm_relays=relays)
+        return "message sent"
 
-        await self._async_secure_dm(npub_hex=npub_hex, message=message,dm_relays=dm_relays) 
-        return "message sent" 
-    
-    async def _async_secure_dm(self, npub_hex, message:str, dm_relays: List[str]):
-       
-        # my_gift = GiftWrap(BasicKeySigner(self.k))
-        
-        my_gift = KindOtherGiftWrap(BasicKeySigner(self.k), kind_gift_wrap=1059)
-        # relays = [self.home_relay]
-        relays = dm_relays
-
-        async with ClientPool(relays) as c:
-
-
-            send_evt = Event(content=message,
-                         tags=[
-                             ['p', npub_hex]
-                         ])
-           
-            self.logger.debug(f"sending dm to {npub_hex} via {dm_relays}")
-            wrapped_evt, trans_k = await my_gift.wrap(send_evt,
-                                                  to_pub_k=npub_hex)
-            # wrapped_evt.sign(self.privkey_hex)
-            c.publish(wrapped_evt)
-            await asyncio.sleep(0.2)
+    async def _async_secure_dm(self, npub_hex, message: str, dm_relays: List[str]):
+        wrapper = KindOtherGiftWrap(
+            BasicKeySigner(self.k), kind_gift_wrap=1059, preserve_rumour_kind=True,
+        )
+        inner = Event(kind=14, content=message, pub_key=self.pubkey_hex,
+                      tags=[["p", npub_hex]])
+        wrapped, _ = await wrapper.wrap(inner, to_pub_k=npub_hex)
+        try:
+            async with ClientPool(dm_relays) as client:
+                await client.publish(wrapped)
+        except Exception as exc:
+            raise RuntimeError(
+                "Message delivery could not be confirmed. It may already have reached "
+                "a relay; check with the recipient before resending."
+            ) from exc
+        self.logger.info("op=secure_dm status=published event_id=%s", wrapped.id)
                 
     async def secure_transmittal(   self,
                                     nrecipient:str, 

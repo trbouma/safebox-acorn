@@ -2,6 +2,9 @@
 
 Status: Initial implementation
 
+For cross-flow state, recovery rules, and known limitations, see
+[Transfer resilience](TRANSFER-RESILIENCE.md).
+
 ## Purpose
 
 Acorn separates the stable identities involved in a token transfer from the
@@ -112,7 +115,41 @@ gift wraps arrive through a federation or public relay. A later FIPS route can
 replace the external WebSocket transport without changing the wallet `npub`,
 mint keyset, or token format.
 
-## Current Boundary
+## General private messages
+
+`secure_dm(nrecipient, message, dm_relays=None)` accepts NIP-05 addresses, npubs,
+and hexadecimal public keys. It now reuses the payment-transfer destination
+resolver for signed kind `10050` inbox discovery and NIP-05 relay hints:
+
+1. An explicit, non-empty `dm_relays` list overrides discovery, including internal
+   `ws://` routes selected by a caller that knows the deployment network.
+2. Otherwise prefer the recipient's signed inbox relay list.
+3. If no inbox record is available, use recipient NIP-05 relay hints if supplied.
+4. If neither exists, fail with a request to configure an inbox or explicit route.
+   Unlike the legacy transfer compatibility fallback, DMs do not silently use
+   the sender's home relay.
+
+The selected relays are checked for connectivity before publication. Messages
+use an explicit kind `14` inner event and encrypted kind `1059` gift wrap.
+Publication is awaited; the existing `message sent` API return string means
+relay acknowledgement, not recipient retrieval or processing. No automatic
+resend is made after an uncertain publication outcome, and no durable DM outbox
+or exactly-once application processing guarantee is added here.
+
+The CLI defaults to discovery; `acorn dm alice@example.com "Hello" --relays
+ws://spurline:8080` explicitly selects an internal route. The CLI does not echo
+message content, but command-line arguments can still be retained by shell
+history or exposed through process inspection. Do not use this interface for
+secrets that require protection from those local surfaces.
+
+This update concerns sending. The legacy `listen_nip17()` implementation is not
+a production executive inbox: it echoes received messages, writes decrypted
+content to a local log, and can attempt token acceptance. It is unchanged here.
+A Simple Mind receiver needs a separate reviewed design for non-mutating
+retrieval, authenticated message handling, durable checkpoints, deduplication,
+retention, and explicit authorization before any task or payment action.
+
+## Transfer milestone boundary
 
 This milestone implements kind `10050` publication, signature-checked
 resolution, transfer routing precedence, and multi-relay receive discovery. It

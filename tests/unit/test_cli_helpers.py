@@ -40,6 +40,23 @@ def test_normalize_mint_adds_https(monkeypatch, tmp_path):
     assert cli._normalize_mint("testnut.cashu.space///") == "https://testnut.cashu.space"
 
 
+@pytest.mark.parametrize("args,expected", [
+    ([], None),
+    (["--relays", "ws://spurline:8080, relay.example.com"],
+     ["ws://spurline:8080", "wss://relay.example.com"]),
+])
+def test_dm_cli_discovers_by_default_and_preserves_ws(monkeypatch, tmp_path, args, expected):
+    from types import SimpleNamespace
+    cli = _load_cli(monkeypatch, tmp_path)
+    acorn = SimpleNamespace(load_data=AsyncMock(), secure_dm=AsyncMock(return_value="message sent"))
+    monkeypatch.setattr(cli, "Acorn", lambda **kwargs: acorn)
+    result = CliRunner().invoke(cli.dm_recipient, ["alice@example.com", "private-test-content", *args])
+    assert result.exit_code == 0, result.output
+    acorn.secure_dm.assert_awaited_once_with(nrecipient="alice@example.com",
+        message="private-test-content", dm_relays=expected)
+    assert "private-test-content" not in result.output
+
+
 def test_claim_deposit_uses_existing_quote_without_creating_invoice(
     monkeypatch,
     tmp_path,
