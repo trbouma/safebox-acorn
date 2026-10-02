@@ -6,7 +6,7 @@ import base64
 import ipaddress
 from dataclasses import dataclass
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import urlsplit, parse_qs
 
 import cbor2
 
@@ -122,6 +122,8 @@ def _parse_tags(raw_tags: Any) -> tuple[tuple[str, ...], ...]:
 def payment_request_from_dict(payload: dict[str, Any]) -> PaymentRequest:
     if not isinstance(payload, dict):
         raise PaymentRequestError("NUT-18 payment request must be a CBOR map")
+    if payload.get("nut10") is not None:
+        raise PaymentRequestError("NUT-10 spending conditions are not supported for payment requests")
 
     amount = payload.get("a")
     if amount is not None:
@@ -201,8 +203,18 @@ def encode_payment_request(request: PaymentRequest) -> str:
 
 def decode_payment_request(encoded: str) -> PaymentRequest:
     request = str(encoded or "").strip()
-    if not request.startswith(PAYMENT_REQUEST_PREFIX):
-        raise PaymentRequestError("NUT-18 payment request must begin with creqA")
+    if len(request) > MAX_PAYMENT_REQUEST_BYTES * 2:
+        raise PaymentRequestError("Payment request is oversized")
+    if request.lower().startswith("bitcoin:"):
+        values = parse_qs(urlsplit(request).query, keep_blank_values=True).get("creq", [])
+        if len(values) != 1:
+            raise PaymentRequestError("Bitcoin URI must contain exactly one creq parameter")
+        request = values[0]
+    if request.lower().startswith("creqb1"):
+        from .payment_request_b import decode_nut26
+        return payment_request_from_dict(decode_nut26(request))
+    if not request.lower().startswith(PAYMENT_REQUEST_PREFIX.lower()):
+        raise PaymentRequestError("Payment request must begin with creqA or creqb1")
     body = request[len(PAYMENT_REQUEST_PREFIX) :]
     if not body or len(body) > MAX_PAYMENT_REQUEST_BYTES:
         raise PaymentRequestError("NUT-18 payment request is empty or oversized")

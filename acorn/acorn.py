@@ -4128,7 +4128,7 @@ class Acorn:
                 candidate
                 for candidate in request.transports
                 if candidate.transport_type == "nostr"
-                and ("n", "17") in candidate.tags
+                and any(tag[0] == "n" and "17" in tag[1:] for tag in candidate.tags)
             ),
             None,
         )
@@ -4138,6 +4138,8 @@ class Acorn:
             target = Entities.decode(transport.target)
         except Exception as exc:
             raise ValueError("Payment request contains an invalid nprofile") from exc
+        if transport.target.startswith("npub1") and isinstance(target, str):
+            target = {"pubkey": target}
         if not isinstance(target, dict):
             raise ValueError("Payment request contains an invalid nprofile")
         pubkey = str(target.get("pubkey") or "").lower()
@@ -4153,8 +4155,6 @@ class Acorn:
         else:
             relay_values = []
         relays = self._normalize_relays(relay_values)
-        if not relays:
-            raise ValueError("Payment request nprofile does not provide a relay")
         return pubkey, relays
 
     async def inspect_payment_request(self, encoded_request: str) -> Dict[str, Any]:
@@ -4166,6 +4166,11 @@ class Acorn:
         requested_amount = int(request.amount)
         requested_unit = self._normalize_clear_unit(request.unit)
         recipient_pubkey, relays = self._nut18_nostr_destination(request)
+        if not relays:
+            resolution = await self._resolve_transfer_destination(recipient_pubkey)
+            if resolution["relay_source"] == "sender-home-fallback" or not resolution["relays"]:
+                raise ValueError("Payment request recipient has no discoverable inbox relay")
+            relays = resolution["relays"]
         listed_mints = tuple(normalize_mint_url(mint) for mint in request.mints)
         strict_mints = bool(listed_mints) and request.mint_list_preferred is not True
 
