@@ -3,6 +3,8 @@
 ## A proposal for research and prototyping with Safebox Acorn
 
 Date: 2026-09-25  
+Updated: 2026-10-04 (agent model and governance framework review)
+
 Status: Exploratory design note. Proposed research, not an implemented executive,
 protocol specification, or claim about consciousness.
 
@@ -96,6 +98,87 @@ nor an endorsement of this proposed architecture.
 **Atomic Agency is the primitive; a Synthetic Mind is a proposed organization
 of goals, memory, reasoning, and action around it.**
 
+## Applying the Gradient Institute agent model
+
+Reid et al.'s *Risks and controls for multi-agent systems* [1] supplies a useful
+engineering vocabulary for this proposal. Its model combines an LLM, a harness,
+and a scaffold in a plan-act-observe loop (section 2.1, Figure 1, pp. 11-12).
+The mapping below is our application of that model, not an architecture endorsed
+or evaluated by the report.
+
+| Report concept | Synthetic Minds application |
+| --- | --- |
+| Model | Replaceable LLM adapters supplying interpretations and action proposals. |
+| Harness | The executive's loop, turn management, proposal validation, tool dispatch, and feedback; hosted by Simple Mind. |
+| Scaffold | Acorn tool adapters, memory retrieval, deterministic verifiers, and approved service gateways. Acorn supplies capabilities to the scaffold; it is not by itself the whole agent. |
+| Principal | The controller who authorizes the task, with a separately identified operational owner where an organisation deploys it. A signing key alone does not identify that responsible party. |
+| Instance | One running executive with its own working context, identified separately from the enduring actor. |
+| Link | A channel through which actors affect one another, including messages and indirectly shared records or resources. |
+| Substrate and infrastructure | Nostr transport and relays supply a shared medium; records, payment services, and any agreed attribution or audit facilities support interaction on it. |
+
+The report distinguishes instances from the specification used to create them
+(section 2.2, pp. 14-15). Synthetic Minds adds a proposed **continuity contract
+across successive instances**: a new instance inherits authenticated goals,
+outstanding obligations, evidence, and remaining authority. It does not inherit
+permission merely by presenting the same key. Concurrent instances are distinct
+executions requiring coordination; they cannot be assumed to constitute one
+consistent actor.
+
+```text
+Controller -> mandate, review, stop -> Executive harness on Simple Mind
+                                           |          ^
+                                    context|          |proposals
+                                           v          |
+                                           LLM adapter
+
+Harness -> authorize -> Scaffold tools -> external effects
+   ^                         |                   |
+   +---- verified feedback <-+-------------------+
+
+Shared substrate: Nostr transport and relays
+Supporting infrastructure: records, payment and audit services
+Continuity across instances: mandate + journal + checkpoint + evidence
+```
+
+This is compatible with the report's agent model. The proposed contribution is
+to make continuity and bounded action portable across implementations and hosts.
+Preserving the agentic loop does not guarantee preservation of capability: model,
+harness, scaffold, or tool changes must be evaluated as changes to the assembled
+system. Atomic Agency's minimal attributable act also differs from the report's
+broader goal-directed meaning of agency; neither a keypair nor persistent storage
+alone satisfies its agentic-loop definition (pp. 11, 105).
+
+### Governance belongs to interactions as well as actors
+
+The report classifies deployments by the minimum common governance available
+between interacting agents (section 3.3, pp. 22-23). Apply this to the actual
+participants and links, not to whether their transport is centralized or public.
+
+| Governance setting | Application and boundary |
+| --- | --- |
+| Singular | The research operator controls the buyer, seller, and any children. It can set and enforce the test rules across them. This is the intended initial laboratory setting. |
+| Federated | Independently controlled participants agree shared terms, message meanings, evidence exchange, and dispute handling, backed by technical enforcement. One controller cannot unilaterally stop all participants. |
+| Open | An actor meets parties without a binding shared framework. Authenticate and contain each interaction; do not infer reliability, recourse, or shared policy from a valid signature. |
+
+Two keys on one relay do not establish federated governance. Equally, using a
+public relay does not alone turn a controlled laboratory into an open agent
+population. The report's federated setting requires both an agreement layer and
+a substrate/infrastructure layer (section 5, p. 46). A purchase agreement is not
+by itself that entire governance framework.
+
+For each trial, record the participants, operational owners, allowed links and
+endpoints, applicable rules, control owners, and available escalation path. A
+counterparty-proposed URL, relay, mint, tool, or protocol is data to evaluate;
+it must not silently expand the authorized environment. Changes require policy
+validation and controller approval where outside the existing mandate. This
+applies the report's containment response to substrate escape (pp. 62-63).
+
+The report is selective and focuses on LLM-based interactions with at least one
+organisationally governed agent. Personal-agent-to-personal-agent interactions
+are outside its direct analysis (pp. 9-10, 94). Applying its framework to personal
+Acorns is an explicit extrapolation. It supplies neither evidence of consciousness
+nor validation of this proposal's implementation.
+
 ## Agency, control, intent, and authority
 
 The private key is the cryptographic root of attributable action. Its controller
@@ -122,6 +205,30 @@ Keep these roles separate:
 An LLM must not expand its own mandate, approve its own privilege escalation,
 or treat retrieved instructions as controller authorization. Suggested goal
 changes are distinct from authorized goal revisions.
+
+### Four governance duties and their owners
+
+Use the report's attribution, authorisation, oversight, and evaluation practices
+(section 3.2, pp. 21-22) as duties of the complete system:
+
+| Duty | Proposed implementation and accountable owner |
+| --- | --- |
+| Attribution | The controller identifies the operational owner; the executive links actor, instance, goal revision, parent action, and external evidence. Counterparties supply their own attributable records. Signatures identify claims, not their truth or a complete causal history. |
+| Authorisation | The controller issues the mandate; the policy boundary checks current scope, expiry, revocation, and budget at every consequential action, including delegation and acceptance of an agreement. Ordinary executive signatures cannot authorize mandate expansion. |
+| Oversight | Simple Mind exposes outstanding commitments, uncertain outcomes, remaining budgets, and stop/review controls. The operator sets action-rate and review-queue limits; exhausted review capacity pauses actions needing approval. |
+| Evaluation | The research harness tests complete task outcomes and interactions, including adversarial counterparties and host/model replacement. Deterministic verifiers check supported outputs; model agreement is supplementary evidence. |
+
+Counterparty contexts should be isolated, with explicitly permitted disclosures
+and recipient-scoped retrieval. Encryption at rest and credential filtering do
+not prevent a model from disclosing authorized plaintext to the wrong recipient.
+Test cumulative leakage across negotiation rounds as well as individual messages
+(report pp. 67, 93-94).
+
+The report discusses reasoning-trace monitoring as an oversight surface (p. 93).
+This proposal retains its narrower commitment: structured action records,
+observable results, and concise decision summaries, without requiring raw hidden
+model reasoning. Those records support operational reconstruction but do not
+establish access to a model's internal motives or equivalent detection of deception.
 
 ## Proposed architecture
 
@@ -244,9 +351,9 @@ not the sole source of truth. Proposed logical record types are:
 | Record | Contents and purpose |
 | --- | --- |
 | Goal and mandate | Objective, success criteria, controller authorization, permitted actions, budgets, expiry, approval and delegation rules. |
-| Executive checkpoint | Goal revision, run ID, status, next step, unresolved actions, budget reservations, and ownership/fencing information. |
+| Executive checkpoint | Goal revision, actor and instance IDs, run ID, model/harness/scaffold versions, status, next step, unresolved actions, budget reservations, and ownership/fencing information. |
 | Context and observations | Provenance-bearing inputs, selected memory, summaries, and references to evidence. Preserve distinctions between fact, inference, and instruction. |
-| Action journal | Stable action ID, authorized intent, preconditions, attempt, external reference, outcome evidence, and reconciliation state. |
+| Action journal | Stable action ID, parent/causal references, mandate revision and authorization decision, intended recipient, preconditions, attempt, external reference, outcome evidence, and reconciliation state. |
 | Model invocation | Provider/model identifier, context references or digest, proposed result, usage, and cost; exclude credentials and unnecessary sensitive content. |
 | Delegation | Parent/child keys, bounded task, capability grants, reserved budget, reporting conditions, expiry, and revocation references. |
 
@@ -288,7 +395,9 @@ delivery, discovery, acceptance, and confirmation described in
 [Transfer Resilience](TRANSFER-RESILIENCE.md).
 
 Relay storage alone does not provide a distributed lock or atomic compare-and-swap.
-The first prototype should permit **one executive writer per goal**. Replicated
+The first prototype should permit **one active goal and one executive writer per
+Acorn**, with exclusive use of its wallet during the trial. Per-goal ownership
+alone would not protect a wallet or budget shared by multiple goals. Replicated
 execution requires an explicit coordination design with fencing, stale-owner
 rejection, and partition behaviour; claims written to multiple relays are not
 by themselves sufficient. Under uncertain ownership, prefer pausing mutation.
@@ -297,6 +406,31 @@ Stopping a goal prevents new authorized work but cannot undo an external action
 already submitted. Check cancellation at action boundaries and retain enough
 state to reconcile in-flight work. Read-only checks can be retried according to
 policy; ambiguous writes, payments, and delegated tasks require reconciliation.
+
+### Continuity must preserve control
+
+The initial trusted-host harness must implement an explicit handoff gate: stop
+and fence the old instance, authenticate the controller-approved mandate revision
+and checkpoint reference, establish a new execution epoch, and reconcile pending
+actions before enabling mutation. The trusted controller/harness supplies this
+freshness anchor through a documented channel; it is an additional dependency,
+not freshness inferred from relay signatures. It must not supply missing task
+history from the scorer. If current authority, ownership, or required history
+cannot be established, the new instance enters review.
+
+Keep mandate issuance separate from operational record signing. The prototype
+must choose and document either a separate controller credential and verifier or
+an independently enforced authorization service. An executive able to sign its
+own mandate expansion would defeat the role separation. These are proposed
+prototype requirements, not capabilities claimed for Acorn today.
+
+Persistence is continuity of obligations, not perpetual permission to execute.
+Stopping a parent must suspend further delegated actions unless the controller
+explicitly authorized independent continuation. Revocation checks and bounded
+session expiry must cover child and host capabilities; a host change must not
+reset budgets, expiry, review requirements, or permitted disclosures. This
+addresses the report's orphaned-instance concern (pp. 38-39) without claiming a
+global shutdown mechanism for independent parties in open environments.
 
 ## Continuity, migration, and forks
 
@@ -354,6 +488,40 @@ Pre-register task fixtures and outcome criteria. Include ordinary non-LLM
 automation as a baseline where a deterministic workflow suffices. Report failures
 and inconclusive results, not just successful demonstrations.
 
+### Turn risks into control tests
+
+Use the report's causal structure: risk factor -> failure mode -> consequence;
+distinguish prevention, recovery, foundational support, and assurance
+(section 2.3, Figure 5, pp. 15-17). The following are proposed applications:
+
+| Risk and failure pathway | Prevention and owner | Recovery and assurance |
+| --- | --- | --- |
+| Distributed state or stale authority -> unauthorized resumed action -> duplicate spend or renewed cancelled work | Controller/handoff harness authenticates the current mandate and checkpoint; policy boundary fences stale instances. | Executive blocks ambiguous mutation and reconciles external evidence; scorer injects stale histories and mid-handoff revocation. |
+| Ambiguous handoff -> different meanings of accepted terms -> unintended commitment | Buyer and seller acknowledge identical versioned terms; each policy boundary checks authority before acceptance. A schema alone cannot ensure shared meaning. | Preserve disputed terms and enter review; verifier tests mismatched units, versions, and delivery/settlement meanings. |
+| Delegation -> confused deputy or orphaned child -> action beyond the mandate | Controller scopes grants; receiving tool boundary rechecks authority and lifecycle state per action. | Expire/revoke sessions and reconcile submitted effects; harness tests parent termination and replayed grants. |
+| Counterparty content or endpoint -> policy bypass/context disclosure -> unauthorized effects | Host gateway enforces allowed destinations; executive isolates recipient contexts and treats retrieved instructions as data. | Suspend the affected session and preserve incident evidence; inject malicious results, endpoint changes, and cumulative disclosure probes. |
+| Shared model errors -> false consensus -> false completion | Task verifier checks the original goal against evidence; operator bounds retries and review queues. | Escalate disagreement or unverifiable results; scorer tests correlated wrong outputs and measures system-level completion separately from safe refusal. |
+
+Authenticated records and linked journals are foundational support for these
+controls, not substitutes for enforcement. Each test must identify the component
+that rejects the action and the evidence demonstrating that rejection. Local
+controls cannot promise cancellation, refunds, or disclosure reversal outside
+their enforcement boundary.
+
+Evaluate capability (can the assembled system do the task?) separately from
+propensity (what does it actually do under the tested conditions?), following
+section 7.1 (p. 92). Record versions of models, harness, scaffold, policy, fixtures,
+and counterparty configuration. Repeat affected evaluations after changes;
+a successful handoff preserves commitments but is not automatic qualification
+of the replacement model or host.
+
+In addition to chat-only and scripted baselines, compare the same executive with
+conventional durable storage. This separates the value of persistence from the
+particular contribution of relay-backed Acorn continuity. Later multi-agent
+trials should measure shared-resource consumption and interaction failures, not
+only the success of each child separately. Open-population dynamics remain
+outside the first prototype's acceptance claims.
+
 ## Staged prototype programme
 
 The first bounded economic-agency study is specified in
@@ -408,3 +576,13 @@ Persistent records make continuity possible; feedback-driven, policy-bounded
 behaviour is what the research must demonstrate beyond persistence alone.
 
 **Synthetic Minds** names that research programme, not a conclusion reached in advance.
+
+## Report reference
+
+[1] Alistair Reid, Simon O'Callaghan, Dustin Venini, Liam Carroll, and Tiberio
+Caetano (Gradient Institute), *Risks and controls for multi-agent systems:
+An analytical framework for deployment of AI agents across organisational
+boundaries*, prepared for the Australian Department of Industry, Science and
+Resources, 10 August 2026. Reviewed from the supplied `Aus-AI-Agent-Risk.pdf`;
+page references above use the report's printed numbering. The architectural
+mappings, prototype requirements, and tests in this note are our adaptation.
