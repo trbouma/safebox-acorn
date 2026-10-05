@@ -145,7 +145,7 @@ secrets that require protection from those local surfaces.
 This update concerns sending. The legacy `listen_nip17()` implementation is not
 a production executive inbox: it echoes received messages, writes decrypted
 content to a local log, and can attempt token acceptance. It is unchanged here.
-A Simple Mind receiver needs a separate reviewed design for non-mutating
+A Reach receiver needs a separate reviewed design for non-mutating
 retrieval, authenticated message handling, durable checkpoints, deduplication,
 retention, and explicit authorization before any task or payment action.
 

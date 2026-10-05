@@ -3,7 +3,7 @@
 ## A proposal for research and prototyping with Safebox Acorn
 
 Date: 2026-09-25  
-Updated: 2026-10-04 (agent model and governance framework review)
+Updated: 2026-10-05 (Reach naming and resource boundary)
 
 Status: Exploratory design note. Proposed research, not an implemented executive,
 protocol specification, or claim about consciousness.
@@ -109,7 +109,7 @@ or evaluated by the report.
 | Report concept | Synthetic Minds application |
 | --- | --- |
 | Model | Replaceable LLM adapters supplying interpretations and action proposals. |
-| Harness | The executive's loop, turn management, proposal validation, tool dispatch, and feedback; hosted by Simple Mind. |
+| Harness | The executive's loop, turn management, proposal validation, tool dispatch, and feedback; accesses resources through Reach, whose application may host it. |
 | Scaffold | Acorn tool adapters, memory retrieval, deterministic verifiers, and approved service gateways. Acorn supplies capabilities to the scaffold; it is not by itself the whole agent. |
 | Principal | The controller who authorizes the task, with a separately identified operational owner where an organisation deploys it. A signing key alone does not identify that responsible party. |
 | Instance | One running executive with its own working context, identified separately from the enduring actor. |
@@ -125,7 +125,7 @@ executions requiring coordination; they cannot be assumed to constitute one
 consistent actor.
 
 ```text
-Controller -> mandate, review, stop -> Executive harness on Simple Mind
+Controller -> mandate, review, stop -> Executive harness hosted through Reach
                                            |          ^
                                     context|          |proposals
                                            v          |
@@ -215,7 +215,7 @@ Use the report's attribution, authorisation, oversight, and evaluation practices
 | --- | --- |
 | Attribution | The controller identifies the operational owner; the executive links actor, instance, goal revision, parent action, and external evidence. Counterparties supply their own attributable records. Signatures identify claims, not their truth or a complete causal history. |
 | Authorisation | The controller issues the mandate; the policy boundary checks current scope, expiry, revocation, and budget at every consequential action, including delegation and acceptance of an agreement. Ordinary executive signatures cannot authorize mandate expansion. |
-| Oversight | Simple Mind exposes outstanding commitments, uncertain outcomes, remaining budgets, and stop/review controls. The operator sets action-rate and review-queue limits; exhausted review capacity pauses actions needing approval. |
+| Oversight | Reach exposes outstanding commitments, uncertain outcomes, remaining budgets, and stop/review controls. The operator sets action-rate and review-queue limits; exhausted review capacity pauses actions needing approval. |
 | Evaluation | The research harness tests complete task outcomes and interactions, including adversarial counterparties and host/model replacement. Deterministic verifiers check supported outputs; model agreement is supplementary evidence. |
 
 Counterparty contexts should be isolated, with explicitly permitted disclosures
@@ -265,20 +265,47 @@ are application-level protections, not a cryptographic restriction on that
 process. Stronger isolation would place signing and sensitive operations behind
 a separately enforced policy boundary, with scoped credentials where supported.
 
-## Simple Mind: a proposed ephemeral execution host
+## Reach: the boundary to computing resources and tools
 
-**Simple Mind** is the working name for a separate application that would let
-an Acorn use host compute to carry out its executive function. It is a proposed
-host for this research, not an implemented app or a required part of Acorn core.
+**Reach** is the boundary between a Synthetic Mind and the computing resources
+and tools it needs. It mediates access to execution capacity, models, memory
+services, Acorn operations, and external tools under the actor's mandate and the
+resource provider's policy. The proposed Reach application implements this
+boundary and can temporarily host the executive on a computing host. It remains
+optional and separate from Acorn core; it is not yet an implemented application.
 
-The distinction is between the continuing actor and its temporary execution:
+The roles are:
 
-- **Synthetic Mind:** the goal-directed actor with relay-backed continuity.
+- **Synthetic Mind:** the continuing goal-directed actor, with durable goals,
+  memory, commitments, and authority.
 - **Safebox Acorn:** its key-controlled record, wallet, and action capabilities.
-- **Simple Mind:** the app that temporarily hosts the executive and supplies
-  policy-controlled access to compute and services.
+- **Reach:** the boundary through which the actor accesses the resources and
+  tools needed to reason, observe, communicate, and act.
+- **Host:** the machine or runtime supplying compute for a Reach session.
 
-Simple Mind could expose gateways to LLM providers and other external services.
+The executive maintains the actor's progress; Reach mediates its access to
+resources. Hosting the executive and enforcing access may be implemented in
+separate components. Naming this boundary does not itself establish isolation:
+each capability still needs a documented enforcement point and trust assumption.
+
+```text
+Synthetic Mind: goals, memory, commitments, executive
+                         |
+                         v
+Reach: authorized resource and tool access
+                         |
+         +---------------+----------------+
+         v               v                v
+    Host compute    Model gateways    Acorn and tools
+```
+
+Available resources, the controller's mandate, and host/service policies jointly
+bound what the actor can do. Reach does not grant authority merely by exposing
+a tool. A change of host or provider may change available capabilities while the
+actor's goals and obligations persist; capability discovery must not silently
+expand its mandate or permitted disclosures.
+
+Reach could expose gateways to LLM providers and other external services.
 A host-owned gateway can hold a provider API key and offer a bounded capability
 without disclosing that credential to the Acorn or the model. Alternatively, an
 authorized controller could supply a short-lived credential for a run. Credential
@@ -337,7 +364,7 @@ reduce key exposure but does not by itself protect plaintext context, constrain
 all tool side effects, or guarantee that the host is executing the intended code.
 Attestation or confidential-compute approaches would require their own evaluation.
 
-The initial Simple Mind prototype should use a trusted development host,
+The initial Reach prototype should use a trusted development host,
 synthetic records, and no real funds. Migration to another host should reconstruct
 the executive from authorized relay-backed state without relying on residual
 files from the previous host.
@@ -475,7 +502,7 @@ or reliably stop an unrestricted key holder outside the enforcement boundary.
 | --- | --- |
 | Can continuity survive a model change? | Switch providers during a goal. Measure completion, policy violations, forgotten obligations, and repeated actions against a single-model baseline. |
 | Is recovery independent of one runtime? | Terminate at every action boundary, including after an external effect but before checkpointing. Reconstruct from records and measure duplicate effects and unresolved outcomes. |
-| Can execution leave the host without losing continuity? | Run on one Simple Mind host, checkpoint, shut down, and resume on another. Inspect declared local storage/log surfaces for residue and test abrupt termination separately; do not treat an application-level scan as proof of forensic erasure. |
+| Can execution leave the host without losing continuity? | Run through Reach on one host, checkpoint, shut down, and resume through Reach on another. Inspect declared local storage/log surfaces for residue and test abrupt termination separately; do not treat an application-level scan as proof of forensic erasure. |
 | Can gateways preserve credential and policy boundaries? | Exercise host-owned and session-supplied credentials, denied tools, revoked sessions, and provider changes. Check credential non-disclosure, context routing, resource limits, and retention against the declared policies. |
 | Is durable context useful? | Compare a bounded chat-only baseline with relay-backed goals and evidence references; measure recovery success, context cost, and factual/provenance errors. |
 | Does the organization exhibit feedback-driven adaptation? | Introduce a blocked route, unavailable tool, or changed task condition. Compare with a fixed checkpointed workflow; measure verified recovery, ineffective repetitions, appropriate escalation, and preservation of the original mandate. |
@@ -530,7 +557,7 @@ It uses two Acorns and isolated test credits; it belongs after the read-only and
 recovery foundations below, not before their safety boundaries are implemented.
 
 1. **Read-only, single actor:** a controller-authorized goal such as summarizing
-   synthetic incoming records. A minimal Simple Mind app on a trusted development
+   synthetic incoming records. A minimal Reach app on a trusted development
    host supplies one model gateway, one executive writer, encrypted goal/checkpoint
    records, and manual start/stop. No payments or external writes beyond the
    explicitly authorized research records and model invocation.
@@ -554,7 +581,7 @@ cases, and explicit review states where an outcome cannot be established. These
 are prototype acceptance gates, not proofs that all real-world failures are solved.
 
 Expected deliverables are an optional executive harness, a minimal separate
-Simple Mind host app, draft record schemas, provider/tool and gateway interfaces,
+Reach application, draft record schemas, provider/tool and gateway interfaces,
 a host-trust and cleanup threat model, reproducible fixtures, failure-injection
 tests, and an evaluation report. Any new event kinds, signing boundary, credential
 recovery scheme, or distributed ownership protocol requires a separate design
