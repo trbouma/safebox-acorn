@@ -1,5 +1,10 @@
 # Safebox Acorn
 
+Read the [CLI manual](website/cli/index.md), the
+[Acorn lifecycle guide](website/cli/lifecycle.md), and the
+[complete command reference](website/cli/commands.md). These are published under
+**Use Acorn → CLI Manual** in the documentation site.
+
 Acorn is a protocol-first component for safeguarding user-controlled keys,
 funds and records.
 

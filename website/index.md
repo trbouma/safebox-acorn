@@ -14,6 +14,7 @@ description: A protocol-first component for safeguarding user-controlled keys, b
 <p class="acorn-intro">Portable cryptographic authority, private records, value, recovery, and continuity across replaceable infrastructure.</p>
 
 [How Acorn works](how-acorn-works.md){ .md-button .md-button--primary }
+[CLI manual](cli/index.md){ .md-button }
 [View the source](https://github.com/trbouma/safebox-acorn){ .md-button }
 
 </section>
