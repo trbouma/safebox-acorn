@@ -56,20 +56,50 @@ def decrypt(wallet, event):
     return json.loads(NIP44Encrypt(wallet.k).decrypt(event.content, wallet.pubkey_hex))
 
 
+def verify_destination(target, events):
+    # load_data uses "wallet"; web-created Acorns need not have the separate
+    # wallet_config object written by the older CLI initializer.
+    wallet = events.get(target._record_label_hash("wallet"))
+    config = events.get(target._record_label_hash("wallet_config"))
+    if wallet is None and config is None:
+        raise ValueError("No destination Acorn configuration found on the specified relay")
+    try:
+        if wallet is not None:
+            data = decrypt(target, wallet)
+            if not isinstance(data, list) or not data:
+                raise ValueError()
+            tags = {}
+            for tag in data:
+                if (not isinstance(tag, list) or len(tag) < 2
+                        or not all(isinstance(value, str) for value in tag)
+                        or tag[0] in tags):
+                    raise ValueError()
+                tags[tag[0]] = tag[1:]
+            if (len(tags.get("balance", [])) != 2
+                    or not tags["balance"][0].isascii()
+                    or not tags["balance"][0].isdigit()
+                    or not tags["balance"][1].strip()
+                    or len(tags.get("name", [])) != 1 or not tags["name"][0].strip()
+                    or len(tags.get("mint", [])) != 1):
+                raise ValueError()
+            mint = urlsplit(tags["mint"][0])
+            if mint.scheme not in {"http", "https"} or not mint.hostname:
+                raise ValueError()
+        else:
+            data = decrypt(target, config)
+            if not isinstance(data, dict) or "kind_cashu" not in data:
+                raise ValueError()
+            WalletConfig.model_validate(data)
+    except Exception:
+        # Do not expose decrypted tags, which may include keys/recovery phrases.
+        raise ValueError("Destination configuration is invalid or unreadable") from None
+
+
 async def prepare(source, target, *, blossom=None):
     if source.pubkey_hex == target.pubkey_hex:
         raise ValueError("Source and destination are the same identity; use relay replication")
     destination = await inventory(target)
-    config = destination.get(target._record_label_hash("wallet_config"))
-    if config is None:
-        raise ValueError("No destination Acorn configuration found on the specified relay")
-    try:
-        config_data = decrypt(target, config)
-        if not isinstance(config_data, dict) or "kind_cashu" not in config_data:
-            raise ValueError()
-        WalletConfig.model_validate(config_data)
-    except Exception:
-        raise ValueError("Destination configuration is invalid or unreadable") from None
+    verify_destination(target, destination)
     origin = await inventory(source)
     reserved = {source._record_label_hash(label) for label in INTERNAL_RECORD_LABELS}
     rows = []

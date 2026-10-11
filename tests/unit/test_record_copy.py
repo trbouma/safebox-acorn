@@ -46,6 +46,56 @@ def record(label="note", **kwargs):
             "custom_provenance": {"issuer": "original"}, **kwargs}
 
 
+def wallet_tags(target):
+    return [["balance", "0", "sat"], ["privkey", Keys().private_key_hex()],
+            ["mint", "https://mint.example.com"], ["name", "wallet"],
+            ["owner", target.pubkey_bech32], ["local_currency", "CAD"]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("keep_old_config", [False, True])
+async def test_web_created_destination_can_receive_records(wallets, keep_old_config):
+    source, target, stored, add = wallets
+    if not keep_old_config:
+        stored[target.pubkey_hex] = []
+    add(target, "wallet", wallet_tags(target))
+    add(source, "note", record())
+    rows = await copy.prepare(source, target)
+    assert rows[0]["status"] == "copy"
+    target.set_wallet_info.assert_not_awaited()
+    results = await copy.execute(source, target, rows)
+    assert results[0]["status"] == "copied and verified"
+    target.load_data.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad", [[], {}, [["name", "wallet"]],
+    [["balance", "secret-content", "sat"], ["name", "wallet"], ["mint", "https://mint.example.com"]],
+    [["balance", "0", "sat"], ["name", "wallet"], ["name", "duplicate"], ["mint", "https://mint.example.com"]]])
+async def test_invalid_wallet_does_not_fall_back_to_config(wallets, bad):
+    source, target, stored, add = wallets
+    add(target, "wallet", bad)
+    with pytest.raises(ValueError, match="invalid or unreadable") as error:
+        await copy.prepare(source, target)
+    assert "secret-content" not in str(error.value)
+    target.set_wallet_info.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_destination_wallet_requires_decryptable_signed_event(wallets):
+    source, target, stored, add = wallets
+    stored[target.pubkey_hex] = []
+    event = add(target, "wallet", wallet_tags(target))
+    event.content = NIP44Encrypt(source.k).encrypt("secret-content", to_pub_k=source.pubkey_hex)
+    event.sign(target.privkey_hex)
+    with pytest.raises(ValueError, match="invalid or unreadable"):
+        await copy.prepare(source, target)
+    event.content = "unsigned tampering"
+    with pytest.raises(ValueError, match="invalid record event"):
+        await copy.prepare(source, target)
+    target.set_wallet_info.assert_not_awaited()
+
+
 def test_secret_detection():
     key = Keys()
     assert copy.destination_nsec(key.private_key_bech32()) == key.private_key_bech32()

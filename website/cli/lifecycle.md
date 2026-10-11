@@ -196,7 +196,8 @@ acorn records copy --destination-relay wss://new-relay.example.com \
 
 Enter the destination nsec, hexadecimal private key, or recovery phrase at the
 hidden prompt. The command verifies an existing signed, decryptable destination
-configuration, then shows both public identities. Repeat without `--dry-run` to
+configuration (`wallet`, or `wallet_config` when `wallet` is absent), then shows
+both public identities. Repeat without `--dry-run` to
 copy after confirmation.
 
 - Copies labeled user records in kind 37375; excludes funds, configuration,

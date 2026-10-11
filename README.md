@@ -655,7 +655,10 @@ wallet created with that legacy derivation. No additional BIP39 passphrase is
 supported by this flow. Secrets are not command-line options or saved to config.
 
 Before offering to write, the command verifies the destination's signed kind
-37375 `wallet_config` record and decrypts it using the supplied key. It displays
+37375 `wallet` record (used by Safebox Web and normal wallet loading), or the
+older CLI's `wallet_config` record when `wallet` is absent, and decrypts it using
+the supplied key. Malformed existing `wallet` data is not bypassed by falling
+back to another record. It displays
 both public identities and relays for confirmation. An unreachable relay,
 missing/unreadable destination configuration, or same-identity copy stops the
 operation. It does not call `load_data`, inspect funds, or reconcile payments.
