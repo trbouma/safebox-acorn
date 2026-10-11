@@ -57,6 +57,50 @@ def wallet() -> Acorn:
     return result
 
 
+@pytest.mark.asyncio
+async def test_abandon_receipt_preserves_other_receipts_and_recovery():
+    acorn = wallet()
+    target = {"event_id": "ab" * 32, "amount": 21, "unit": "sat", "status": "provisional", "token": "secret-token"}
+    other = {"event_id": "cd" * 32, "amount": 5, "status": "mint-confirmed", "token": "other-token"}
+    state = [target, other]
+    acorn.get_wallet_info = AsyncMock(side_effect=lambda label: json.dumps(state))
+    async def save(label, data, **kwargs):
+        assert label == CONTINUITY_RECEIPTS_LABEL
+        assert kwargs["verify"] is True
+        state[:] = json.loads(data)
+    acorn.set_wallet_info = AsyncMock(side_effect=save)
+    result = await acorn.abandon_continuity_receipt(target["event_id"], confirm_amount=21, reason="testing")
+    assert result["status"] == "abandoned" and "token" not in result
+    stored = next(r for r in state if r["event_id"] == target["event_id"])
+    assert stored["token"] is None and stored["abandonment_reason"] == "testing"
+    assert stored["abandoned_by"] == acorn.pubkey_hex
+    assert other in state
+    assert await acorn.get_continuity_receipts(status="provisional") == []
+    assert all(call.args[0] == CONTINUITY_RECEIPTS_LABEL for call in acorn.get_wallet_info.call_args_list)
+    acorn.write_proofs.assert_not_awaited()
+    acorn.add_tx_history.assert_not_awaited()
+    assert acorn.balance == 0
+    await acorn.abandon_continuity_receipt(target["event_id"], confirm_amount=21, reason="retry")
+    assert acorn.set_wallet_info.await_count == 1
+    assert acorn.release_lock.await_count == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["missing", "duplicate", "amount", "confirmed", "unreadable", "publish_failure"])
+async def test_abandon_receipt_refuses_unsafe_changes(case):
+    acorn = wallet()
+    receipt = {"event_id": "ab" * 32, "amount": 21, "status": "provisional", "token": "secret"}
+    if case == "amount": receipt["amount"] = 22
+    if case == "confirmed": receipt["status"] = "mint-confirmed"
+    rows = [] if case == "missing" else [receipt, receipt] if case == "duplicate" else [receipt]
+    acorn.get_wallet_info = AsyncMock(return_value="not-json" if case == "unreadable" else json.dumps(rows))
+    if case == "publish_failure": acorn.set_wallet_info = AsyncMock(side_effect=RuntimeError("unverified"))
+    with pytest.raises(RuntimeError):
+        await acorn.abandon_continuity_receipt("ab" * 32, confirm_amount=21, reason="testing")
+    if case != "publish_failure": acorn.set_wallet_info.assert_not_awaited()
+    acorn.release_lock.assert_awaited_once()
+
+
 def serialized_token(proofs: list[Proof]) -> str:
     return TokenV4.from_tokenv3(
         TokenV3(

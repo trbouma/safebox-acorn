@@ -22,6 +22,45 @@ def _load_cli(monkeypatch, tmp_path):
     return importlib.import_module("acorn.cli_acorn")
 
 
+def test_pending_transfers_cli_does_not_expose_tokens_or_load_wallet(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    cli = _load_cli(monkeypatch, tmp_path)
+    wallet = SimpleNamespace(pubkey_bech32="npub-test", load_data=AsyncMock(), get_continuity_receipts=AsyncMock(return_value=[{
+        "event_id": "ab" * 32, "amount": 21, "unit": "sat", "mint": "https://mint.example", "status": "provisional", "token": "bearer-secret",
+    }]))
+    monkeypatch.setattr(cli, "Acorn", lambda **kwargs: wallet)
+    result = CliRunner().invoke(cli.pending_transfers, ["--json"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["receipts"][0]["amount"] == 21
+    assert "bearer-secret" not in result.output
+    wallet.load_data.assert_not_awaited()
+    wallet.get_continuity_receipts.assert_awaited_once_with(status="provisional")
+
+
+@pytest.mark.parametrize("answer", ["y\n", "n\n", ""])
+def test_abandon_transfer_cli_requires_confirmation(monkeypatch, tmp_path, answer):
+    from types import SimpleNamespace
+    cli = _load_cli(monkeypatch, tmp_path)
+    wallet = SimpleNamespace(pubkey_bech32="npub-test", load_data=AsyncMock(),
+        get_continuity_receipts=AsyncMock(return_value=[{"event_id": "ab" * 32, "amount": 21, "unit": "sat"}]),
+        abandon_continuity_receipt=AsyncMock(return_value={"event_id": "ab" * 32}))
+    constructed = {}
+    def factory(**kwargs):
+        constructed.update(kwargs)
+        return wallet
+    monkeypatch.setattr(cli, "Acorn", factory)
+    result = CliRunner().invoke(cli.abandon_transfer, ["ab" * 32, "--reason", "test cleanup"], input=answer)
+    assert "21 sat" in result.output and "npub-test" in result.output
+    assert constructed["nsec"] == cli.NSEC and constructed["home_relay"] == cli.HOME_RELAY
+    if answer == "y\n":
+        assert result.exit_code == 0, result.output
+        wallet.abandon_continuity_receipt.assert_awaited_once_with("ab" * 32, confirm_amount=21, reason="test cleanup")
+    else:
+        assert result.exit_code != 0
+        wallet.abandon_continuity_receipt.assert_not_awaited()
+    wallet.load_data.assert_not_awaited()
+
+
 def test_normalize_relay_adds_wss(monkeypatch, tmp_path):
     cli = _load_cli(monkeypatch, tmp_path)
 

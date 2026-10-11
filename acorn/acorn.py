@@ -2,6 +2,7 @@ from typing import Any, Dict, List, Optional, Sequence, Union
 import asyncio, json, requests
 from time import sleep, time, monotonic
 import secrets
+import re
 from datetime import datetime, timedelta
 import urllib.parse
 import random
@@ -6201,6 +6202,48 @@ class Acorn:
             key=lambda item: (int(item.get("timestamp") or 0), str(item.get("event_id") or "")),
             reverse=True,
         )
+
+    async def abandon_continuity_receipt(
+        self, event_id: str, *, confirm_amount: int, reason: str,
+    ) -> Dict[str, Any]:
+        """Abandon one provisional receipt without changing proofs or swap recovery."""
+        if not re.fullmatch(r"[0-9a-f]{64}", event_id):
+            raise ValueError("A full lowercase hexadecimal event ID is required")
+        if type(confirm_amount) is not int or confirm_amount <= 0:
+            raise ValueError("Confirm the exact positive receipt amount")
+        reason = str(reason).strip()
+        if not reason or len(reason) > 500:
+            raise ValueError("An abandonment reason of 1–500 characters is required")
+        await self.acquire_lock()
+        try:
+            # Read again under the wallet lock, after the user's confirmation.
+            receipts = await self.get_continuity_receipts(include_tokens=True)
+            matches = [r for r in receipts if str(r.get("event_id")) == event_id]
+            if len(matches) != 1:
+                raise RuntimeError("Receipt is missing or duplicated; nothing changed")
+            receipt = matches[0]
+            if int(receipt.get("amount") or 0) != confirm_amount:
+                raise RuntimeError("Receipt amount changed; inspect it again")
+            status = str(receipt.get("status") or "provisional")
+            if status not in {"provisional", "abandoned"}:
+                raise RuntimeError("Only provisional incoming receipts can be abandoned")
+            if status == "provisional":
+                receipt.update(
+                    status="abandoned", token=None, abandoned_at=int(time()),
+                    abandonment_reason=reason, previous_status="provisional",
+                    abandoned_by=self.pubkey_hex,
+                    last_error="Owner abandoned receipt; no credit, delivery or refund asserted.",
+                )
+                await self.set_wallet_info(
+                    CONTINUITY_RECEIPTS_LABEL,
+                    json.dumps(receipts, separators=(",", ":")), verify=True,
+                )
+            return {key: receipt.get(key) for key in (
+                "event_id", "amount", "unit", "mint", "status",
+                "abandoned_at", "abandonment_reason", "abandoned_by",
+            )}
+        finally:
+            await self.release_lock()
 
     async def _update_continuity_receipt(
         self,

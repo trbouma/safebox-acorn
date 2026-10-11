@@ -59,6 +59,34 @@ proof is valid or spent.
 
 ## Rejected swaps and relay cleanup
 
+### Abandoning a pending incoming transfer
+
+For test receipts whose remaining value you intentionally accept losing, use the
+CLI configured to the **receiving** Acorn:
+
+```sh
+acorn pending-transfers
+acorn abandon-transfer <full-event-id> --reason "Abandoning test transfer"
+```
+
+The command displays the wallet and amount and asks for confirmation. It reads
+the receipt again under the wallet lock, verifies the acknowledged amount and
+provisional status, then publishes a verified `abandoned` journal entry with a
+timestamp and reason. The stored token is removed, but the event ID remains to
+prevent rediscovery. Other receipts, wallet proofs, balances and swap-recovery
+records are not modified. This is not a refund, payment confirmation or secure
+erasure of historical relay copies. Unresolved swap recovery may still block
+later payments and requires separate recovery or review.
+
+Pause other applications or workers using this Acorn before abandonment to avoid
+racing a reconciliation already in progress. Both commands use the usual CLI
+configuration (`--config` / `ACORN_CONFIG`); no private key needs to be re-entered.
+`acorn pending-transfers --json` emits only public receipt identifiers and amounts,
+mint/unit/status metadata, and the wallet public key—not bearer tokens. Listing
+does not contact mints or initialize the wallet through `load_data`.
+
+### Recovery-journal safeguards
+
 A mint rejection and a relay persistence failure are separate outcomes. When a
 mint definitively rejects a submitted swap, Acorn records that rejection in its
 encrypted recovery journal before retiring the prepared intent. If journal

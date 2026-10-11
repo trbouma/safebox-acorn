@@ -1,4 +1,5 @@
 import asyncio, sys, click, os, yaml, logging, stat
+import re
 from pathlib import Path
 from typing import List
 from stroma import Keys, Client, ClientPool, Event, util_funcs
@@ -1572,6 +1573,58 @@ def repair_proofs(force, refresh, confirm_refresh):
             ) from exc
         raise click.ClickException(message) from exc
     click.echo(result_out)
+
+@click.command("pending-transfers", help="List provisional incoming cash receipts without contacting mints.")
+@click.option("--json", "json_output", is_flag=True, help="Emit token-free JSON output.")
+def pending_transfers(json_output):
+    wallet = Acorn(nsec=NSEC, home_relay=HOME_RELAY, relays=RELAYS, logging_level=LOGGING_LEVEL)
+    try:
+        receipts = asyncio.run(wallet.get_continuity_receipts(status="provisional"))
+    except Exception as exc:
+        raise click.ClickException("Unable to read pending receipts; check the home relay.") from exc
+    # Whitelist fields; never print bearer tokens, proof secrets or journal contents.
+    rows = [{key: receipt.get(key) for key in ("event_id", "amount", "unit", "mint", "status")} for receipt in receipts]
+    if json_output:
+        _emit_json({"npub": wallet.pubkey_bech32, "receipts": rows})
+        return
+    click.echo(f"Wallet: {wallet.pubkey_bech32}")
+    if not rows:
+        click.echo("No provisional incoming transfers.")
+    for row in rows:
+        click.echo(f"{row['event_id']}  {row['amount']} {row['unit'] or 'sat'}  {row['mint'] or 'unknown mint'}")
+
+
+@click.command("abandon-transfer", help="Abandon one pending incoming cash receipt, accepting potential loss.")
+@click.argument("event_id")
+@click.option("--reason", default="Owner abandoned test transfer and accepted potential loss.", show_default=True)
+def abandon_transfer(event_id, reason):
+    if not re.fullmatch(r"[0-9a-f]{64}", event_id):
+        raise click.ClickException("Use the full event ID shown by pending-transfers.")
+    wallet = Acorn(nsec=NSEC, home_relay=HOME_RELAY, relays=RELAYS, logging_level=LOGGING_LEVEL)
+
+    async def run():
+        receipts = await wallet.get_continuity_receipts(status="provisional")
+        matches = [r for r in receipts if r.get("event_id") == event_id]
+        if len(matches) != 1:
+            raise click.ClickException("No unique provisional receipt with that event ID.")
+        receipt = matches[0]
+        amount = int(receipt.get("amount") or 0)
+        click.echo(f"Wallet: {wallet.pubkey_bech32}")
+        click.echo(f"Transfer: {event_id}")
+        click.echo(f"Amount: {amount} {receipt.get('unit') or 'sat'}")
+        click.echo("This removes the stored token and stops receipt reconciliation. Value may be lost.")
+        click.echo("The event ID is retained. Wallet proofs and swap-recovery records are untouched.")
+        click.confirm("Abandon this transfer?", abort=True)
+        return await wallet.abandon_continuity_receipt(event_id, confirm_amount=amount, reason=reason)
+
+    try:
+        result = asyncio.run(run())
+    except (click.Abort, click.ClickException):
+        raise
+    except Exception as exc:
+        raise click.ClickException("Abandonment could not be verified. Inspect pending-transfers before retrying; do not delete recovery state.") from exc
+    click.echo(f"Abandoned {result['event_id']}. No funds were credited or refunded.")
+
 
 @click.command("check-proofs", help="Check proof state at each mint without changing the wallet")
 @click.option("--json", "json_output", is_flag=True, help="Emit JSON output.")
@@ -3151,6 +3204,8 @@ cli.add_command(mint_transfer)
 cli.add_command(proofs)
 cli.add_command(swap)
 cli.add_command(check_proofs)
+cli.add_command(pending_transfers)
+cli.add_command(abandon_transfer)
 cli.add_command(reconcile_proofs)
 cli.add_command(discard_incompatible_proofs)
 cli.add_command(repair_proofs)
