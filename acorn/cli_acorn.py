@@ -3184,6 +3184,76 @@ def get_follow_posts(limit: int, relays: str | None):
         click.echo(each_post.get("content", ""))
         click.echo("-" * 40)
 
+@click.group("records", help="Record-only migration; does not load or transfer funds.")
+def records():
+    pass
+
+
+@records.command("copy")
+@click.option("--destination-relay", required=True, help="Existing destination wallet's home relay.")
+@click.option("--destination-blossom", default=None, help="Copy attachments to this HTTPS Blossom server.")
+@click.option("--legacy", is_flag=True, help="Use Acorn's legacy recovery-phrase derivation.")
+@click.option("--dry-run", is_flag=True, help="Verify identities and preview; write nothing.")
+def copy_records(destination_relay, destination_blossom, legacy, dry_run):
+    from acorn import record_copy
+
+    try:
+        relay = record_copy.endpoint(_normalize_relay(destination_relay), ("wss", "ws"))
+        blossom = record_copy.endpoint(destination_blossom, ("https",)) if destination_blossom else None
+    except ValueError:
+        raise click.ClickException("Invalid destination relay or Blossom URL.") from None
+    secret = _prompt_secret("Destination private key or recovery phrase")
+    try:
+        nsec = record_copy.destination_nsec(secret, legacy=legacy)
+    except Exception:
+        raise click.ClickException("Invalid destination private key or recovery phrase. Check the input and derivation mode.") from None
+    finally:
+        secret = None
+    source = Acorn(nsec=NSEC, home_relay=HOME_RELAY, logging_level=LOGGING_LEVEL)
+    target = Acorn(nsec=nsec, home_relay=relay, logging_level=LOGGING_LEVEL,
+                   blossom_home_server=blossom)
+    nsec = None
+
+    async def run_copy():
+        try:
+            rows = await record_copy.prepare(source, target, blossom=blossom)
+        except ValueError as exc:
+            raise click.ClickException(str(exc)) from None
+        except Exception:
+            raise click.ClickException("Could not inspect the source or destination relay. Nothing was written.") from None
+        click.echo(f"Source:      {source.pubkey_bech32} at {source.home_relay}")
+        click.echo(f"Destination: {target.pubkey_bech32} at {target.home_relay} (existing configuration verified)")
+        click.echo("Only user records in kind 37375 are included. Funds and operational state are excluded.")
+        for row in rows:
+            click.echo(f"{row.get('label', row['source_id'])!r}: {row['status']}")
+        eligible = sum(row["status"] == "copy" for row in rows)
+        click.echo(f"Eligible: {eligible}; other/skipped: {len(rows) - eligible}.")
+        if dry_run or not eligible:
+            click.echo("No writes performed.")
+            return
+        click.echo("Pause other writers to the destination during copying; relay writes are not atomic.")
+        if not click.confirm("Copy these records to the verified destination, leaving the source unchanged?", default=False):
+            return
+        try:
+            results = await record_copy.execute(source, target, rows, blossom=blossom)
+        except Exception:
+            raise click.ClickException("Copy interrupted. Inspect the destination and retry the preview; the source is unchanged.") from None
+        for row in results:
+            click.echo(f"{row.get('label', row['source_id'])!r}: {row['status']}")
+        copied = sum(row["status"] == "copied and verified" for row in results)
+        click.echo(f"Copied and verified: {copied}. Source records and local account configuration unchanged.")
+        if copied:
+            try:
+                await target.rebuild_record_catalog()
+            except Exception:
+                click.echo("Warning: destination record catalog could not be rebuilt; copied records remain on the relay.")
+        if any("failed" in row["status"] for row in results):
+            raise click.ClickException("Copy was partial or unverified. Review the results before retrying.")
+
+    asyncio.run(run_copy())
+
+
+cli.add_command(records)
 cli.add_command(info)
 cli.add_command(init)
 cli.add_command(set)

@@ -22,6 +22,43 @@ def _load_cli(monkeypatch, tmp_path):
     return importlib.import_module("acorn.cli_acorn")
 
 
+@pytest.mark.parametrize("dry_run,answer,writes", [(True, "", False), (False, "n\n", False), (False, "y\n", True)])
+def test_record_copy_cli_confirmation_and_no_secret_output(monkeypatch, tmp_path, dry_run, answer, writes):
+    from types import SimpleNamespace
+    from acorn import record_copy
+    cli = _load_cli(monkeypatch, tmp_path)
+    secret = Keys().private_key_bech32()
+    source = SimpleNamespace(pubkey_bech32="npub-source", home_relay="wss://source.example")
+    target = SimpleNamespace(pubkey_bech32="npub-target", home_relay="wss://target.example",
+                             rebuild_record_catalog=AsyncMock())
+    wallets = iter([source, target])
+    monkeypatch.setattr(cli, "Acorn", lambda **kwargs: next(wallets))
+    monkeypatch.setattr(cli, "_prompt_secret", lambda *args: secret)
+    rows = [{"label": "note", "source_id": "a" * 64, "status": "copy", "data": {"payload": "private-content"}}]
+    monkeypatch.setattr(record_copy, "prepare", AsyncMock(return_value=rows))
+    execute = AsyncMock(return_value=[{**rows[0], "status": "copied and verified"}])
+    monkeypatch.setattr(record_copy, "execute", execute)
+    args = ["--destination-relay", "wss://target.example"] + (["--dry-run"] if dry_run else [])
+    result = CliRunner().invoke(cli.copy_records, args, input=answer)
+    assert result.exit_code == 0, result.output
+    assert "npub-target" in result.output and "npub-source" in result.output
+    assert secret not in result.output and "private-content" not in result.output
+    assert execute.await_count == int(writes)
+
+
+def test_record_copy_cli_missing_target_cannot_write(monkeypatch, tmp_path):
+    from acorn import record_copy
+    cli = _load_cli(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "_prompt_secret", lambda *args: Keys().private_key_bech32())
+    monkeypatch.setattr(cli, "Acorn", lambda **kwargs: object())
+    monkeypatch.setattr(record_copy, "prepare", AsyncMock(side_effect=ValueError("No destination Acorn configuration found")))
+    execute = AsyncMock()
+    monkeypatch.setattr(record_copy, "execute", execute)
+    result = CliRunner().invoke(cli.copy_records, ["--destination-relay", "wss://target.example"])
+    assert result.exit_code != 0 and "No destination" in result.output
+    execute.assert_not_awaited()
+
+
 def test_pending_transfers_cli_does_not_expose_tokens_or_load_wallet(monkeypatch, tmp_path):
     from types import SimpleNamespace
     cli = _load_cli(monkeypatch, tmp_path)

@@ -633,3 +633,56 @@ wallet = Acorn(nsec="nsec...", home_relay="wss://relay.getsafebox.app")
 
 This is the first standalone packaging boundary. Safebox still contains its
 current in-tree Acorn implementation while this component package is stabilized.
+## Copy private records to a new Acorn
+
+Use the configured account as the source and an **already initialized** Acorn
+as the destination:
+
+```bash
+acorn records copy --destination-relay wss://relay.example.com --dry-run
+acorn records copy --destination-relay wss://relay.example.com \
+  --destination-blossom https://blossom.example.com
+```
+
+The hidden prompt accepts an nsec, a hexadecimal private key, or a BIP39 recovery
+phrase. Phrase derivation matches `acorn recover`; use `--legacy` only for a
+wallet created with that legacy derivation. No additional BIP39 passphrase is
+supported by this flow. Secrets are not command-line options or saved to config.
+
+Before offering to write, the command verifies the destination's signed kind
+37375 `wallet_config` record and decrypts it using the supplied key. It displays
+both public identities and relays for confirmation. An unreachable relay,
+missing/unreadable destination configuration, or same-identity copy stops the
+operation. It does not call `load_data`, inspect funds, or reconcile payments.
+
+Only labeled user records in kind 37375 are copied. Configuration, operational
+state, locks, payment recovery records, proofs, public profiles, and other event
+kinds are excluded. Unknown/unreadable legacy records are reported as skipped.
+Issuer-signed payloads and extra record metadata are preserved, not reissued;
+copying does not change a credential's holder or transfer identity authority.
+
+Records are re-encrypted and signed for the destination, with newly derived
+private lookup tags, then read back and decrypted for comparison. Conflicts are
+skipped; matching records are reported as already present, making retries safe.
+The source is never deleted or updated. Pause other destination writers during
+copying: relay publication has no atomic compare-and-swap guarantee.
+
+With `--destination-blossom`, attachments are downloaded, decrypted, and verified
+before being encrypted with a fresh random AES-256-GCM key and nonce. Plaintext
+stays in memory; it is not uploaded or written to a temporary file. The original
+plaintext digest is preserved, while the ciphertext digest, file key, and location
+change. The uploaded copy is downloaded, decrypted, and compared before the new
+record is published. Unencrypted source attachments become encrypted too.
+Encrypted sources without a valid plaintext digest or supported encryption
+parameters fail safely. Signed payloads are preserved verbatim; embedded references
+to old ciphertext digests are not rewritten. Re-encryption cannot revoke access
+to old copies. Previously copied records with old file keys remain conflicts and
+are not overwritten automatically. Repeat runs recognize fresh-key copies by
+comparing record metadata and verified plaintext at both ends. Without
+this option, records with attachments are skipped, not copied as broken links.
+An interrupted write may leave an uploaded attachment or an unverified record;
+inspect the report and rerun the preview. The destination catalog is rebuilt
+after successful copies. This is a copy/migration tool, not a standalone archive
+export, a funds transfer, or proof that a relay returned every record: queries
+are bounded to 10,000 events and fail on saturation, but relay-side omission
+cannot be ruled out. Review all skipped/failed entries before retiring a source.
