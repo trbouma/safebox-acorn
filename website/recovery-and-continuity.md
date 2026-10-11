@@ -57,6 +57,26 @@ Recovery does not prove who the human operator is. It also does not make stale
 ecash proofs spendable: the issuing mint remains authoritative about whether a
 proof is valid or spent.
 
+## Rejected swaps and relay cleanup
+
+A mint rejection and a relay persistence failure are separate outcomes. When a
+mint definitively rejects a submitted swap, Acorn records that rejection in its
+encrypted recovery journal before retiring the prepared intent. If journal
+cleanup fails, the error preserves the mint's rejection and does not claim that
+the request was never submitted. Continuity receipts stay pending: a cleanup
+failure must not trigger spent-token retirement or fresh individual swaps.
+
+A later attempt can retire an intent with a recorded rejection, including after
+a process restart. For the same input batch it reports the earlier rejection
+without resubmission; after verified cleanup, the receipt reconciler can isolate
+individual tokens through its existing spent-batch fallback.
+
+If the rejection itself could not be durably recorded, or an older intent lacks
+an outcome marker, Acorn retains the normal restore-only safety boundary. An
+empty restore response is not proof that deleting recovery information is safe.
+These cases still require recovery or operator review; upgrading does not erase
+old recovery records or establish where previously spent value went.
+
 ## Recovery across environments
 
 The same Acorn wallet can be restored into another compatible environment:

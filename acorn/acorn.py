@@ -432,6 +432,10 @@ class RetryablePreSwapError(RuntimeError):
 class AmbiguousSwapError(RuntimeError):
     """A mint swap may have completed, so repeating it is unsafe."""
 
+
+class SwapRejectedCleanupError(AmbiguousSwapError):
+    """The mint rejected a swap, but its recovery journal is not yet retired."""
+
 def powers_of_2_sum(amount):
     powers = []
     while amount > 0:
@@ -6444,6 +6448,13 @@ class Acorn:
     def _token_already_spent_error(error: object) -> bool:
         """Return whether a mint conclusively rejected a bearer token as spent."""
 
+        cause = error
+        seen = set()
+        while isinstance(cause, BaseException) and id(cause) not in seen:
+            seen.add(id(cause))
+            if isinstance(cause, SwapRejectedCleanupError):
+                return False
+            cause = cause.__cause__ or cause.__context__
         normalized = str(error or "").lower()
         return "token already spent" in normalized or (
             "11001" in normalized and "spent" in normalized
@@ -6598,7 +6609,7 @@ class Acorn:
                 )
             except Exception as exc:
                 reason = str(exc).strip()
-                if self._token_already_spent_error(reason):
+                if self._token_already_spent_error(exc):
                     self.logger.warning(
                         "op=reconcile_continuity_receipts_batch "
                         "status=fallback_individual mint=%s receipts=%s error=%s",
@@ -6723,7 +6734,7 @@ class Acorn:
                 })
             except Exception as exc:
                 reason = str(exc).strip()
-                if self._token_already_spent_error(reason):
+                if self._token_already_spent_error(exc):
                     try:
                         terminal_error = await self._record_terminal_continuity_error(
                             receipt,
@@ -13065,7 +13076,13 @@ class Acorn:
             )
         return loaded
 
-    async def _save_pending_swaps(self, entries: List[dict]) -> None:
+    async def _save_pending_swaps(self, entries: List[dict], *, before_submission: bool = True) -> None:
+        error_type = RetryablePreSwapError if before_submission else AmbiguousSwapError
+        phase_message = (
+            "before submission. The swap was not submitted."
+            if before_submission else
+            "after swap submission. Recovery journal cleanup remains unresolved; do not resubmit inputs."
+        )
         try:
             await self.set_wallet_info(
                 label=PENDING_SWAPS_LABEL,
@@ -13073,24 +13090,25 @@ class Acorn:
                 verify=True,
             )
         except Exception as exc:
-            raise RetryablePreSwapError(
+            raise error_type(
                 "Pending mint swap recovery state could not be published and "
-                "verified before submission. The swap was not submitted."
+                "verified " + phase_message
             ) from exc
         # Recovery state protects bearer value only if it survives a process
         # exit. Verify decrypted relay readback before inputs reach the mint.
+        readback_error = None
         for attempt in range(1, 6):
             try:
                 observed = await self._load_pending_swaps()
                 if observed == entries:
                     return
-            except AmbiguousSwapError:
-                pass
+            except Exception as exc:
+                readback_error = exc
             await asyncio.sleep(0.4 * attempt)
-        raise RetryablePreSwapError(
+        raise error_type(
             "Pending mint swap recovery state could not be read back from the "
-            "home relay. The swap was not submitted."
-        )
+            "home relay " + phase_message
+        ) from readback_error
 
     async def _upsert_pending_swap(self, entry: dict) -> None:
         try:
@@ -13118,7 +13136,28 @@ class Acorn:
             if str(entry.get("id") or "") != str(intent_id)
         ]
         if remaining != pending:
-            await self._save_pending_swaps(remaining)
+            await self._save_pending_swaps(remaining, before_submission=False)
+
+    async def _retire_rejected_swap(self, intent: dict, rejection: str) -> None:
+        """Persist the definitive rejection before removing its recovery intent."""
+        try:
+            if intent.get("status") != "rejected":
+                pending = await self._load_pending_swaps()
+                rejected = {**intent, "status": "rejected", "rejection": rejection}
+                pending = [entry for entry in pending if entry.get("id") != intent.get("id")]
+                pending.append(rejected)
+                await self._save_pending_swaps(pending, before_submission=False)
+            await self._remove_pending_swap(str(intent["id"]))
+        except Exception as exc:
+            self.logger.warning(
+                "op=swap_recovery status=rejection_cleanup_pending intent=%s error_type=%s",
+                intent.get("id"), type(exc).__name__,
+            )
+            raise SwapRejectedCleanupError(
+                f"{rejection}. The mint rejected the submitted swap, but recovery "
+                "journal cleanup could not be verified. Receipts remain pending; "
+                "resolve recovery state before trying other inputs."
+            ) from exc
 
     async def _complete_pending_swap(self) -> None:
         """Retire the most recently returned swap after proof persistence."""
@@ -13411,6 +13450,18 @@ class Acorn:
                 "Pending mint swap recovery state could not be checked before "
                 "submission. The swap was not submitted."
             ) from exc
+        rejected_match = None
+        for entry in pending:
+            if entry.get("status") == "rejected":
+                rejection = str(entry.get("rejection") or "Mint swap was rejected")
+                await self._retire_rejected_swap(entry, rejection)
+                if entry.get("input_fingerprint") == input_fingerprint:
+                    rejected_match = rejection
+        pending = [entry for entry in pending if entry.get("status") != "rejected"]
+        if rejected_match is not None:
+            # Report the earlier rejection without re-submitting this batch.
+            # Its now-retired journal permits the caller to isolate receipts.
+            raise RuntimeError(rejected_match)
         if pending:
             matching = next(
                 (
@@ -13577,11 +13628,12 @@ class Acorn:
             if 400 <= exc.response.status_code < 500:
                 # Client rejection is definitive: the atomic swap was not
                 # accepted, so the prepared outputs can be retired.
-                await self._remove_pending_swap(intent_id)
-                raise RuntimeError(
+                rejection = (
                     f"Problem with swap HTTP {exc.response.status_code} on "
                     f"{swap_url}: {(exc.response.text or '')[:500]}"
-                ) from exc
+                )
+                await self._retire_rejected_swap(intent, rejection)
+                raise RuntimeError(rejection) from exc
             restored = await self._restore_pending_swap(intent, timeout=timeout)
             if not restored:
                 raise AmbiguousSwapError(

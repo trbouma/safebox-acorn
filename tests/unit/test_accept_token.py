@@ -10,7 +10,7 @@ import pytest
 from stroma import Keys
 
 from acorn import acorn as acorn_module
-from acorn.acorn import Acorn, AmbiguousSwapError, RetryablePreSwapError
+from acorn.acorn import Acorn, AmbiguousSwapError, RetryablePreSwapError, SwapRejectedCleanupError
 from acorn.models import Proof
 
 
@@ -49,6 +49,102 @@ def test_relay_verify_timeout_default_and_validation():
         acorn_module._positive_timeout("0", name="timeout")
     with pytest.raises(ValueError, match="must be a positive number"):
         acorn_module._positive_timeout("invalid", name="timeout")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure_stage", ["prepare", "mark", "cleanup", None])
+async def test_rejected_swap_preserves_mint_error_and_recovers_cleanup(monkeypatch, failure_stage):
+    state = {"entries": [], "writes": 0, "failure_stage": failure_stage}
+    requests = []
+    keyset = "test-keyset"
+    incoming = Proof(amount=2, id=keyset, secret="input", C="02" + "11" * 32)
+
+    def make_wallet():
+        wallet = wallet_with_key()
+        wallet.known_mints[keyset] = "https://mint.example"
+        wallet._preflight_proof_persistence = AsyncMock()
+        wallet._swap_output_keys = AsyncMock(return_value={keyset: {"2": "02" + "11" * 32}})
+        wallet._restore_pending_swap = AsyncMock(return_value=None)
+        async def load():
+            return json.loads(json.dumps(state["entries"]))
+        async def save(**kwargs):
+            entries = json.loads(kwargs["label_info"])
+            stage = "cleanup" if not entries else "mark" if entries[0].get("status") == "rejected" else "prepare"
+            state["writes"] += 1
+            if stage == state["failure_stage"]:
+                raise RuntimeError("Relay canonical readback failed")
+            state["entries"] = entries
+        wallet._load_pending_swaps = AsyncMock(side_effect=load)
+        wallet.set_wallet_info = AsyncMock(side_effect=save)
+        wallet._upsert_pending_swap = Acorn._upsert_pending_swap.__get__(wallet, Acorn)
+        wallet._remove_pending_swap = Acorn._remove_pending_swap.__get__(wallet, Acorn)
+        return wallet
+
+    def handler(request):
+        requests.append(request.method)
+        if request.method == "GET":
+            return httpx.Response(200, json={"keysets": [{"id": keyset, "active": True, "unit": "sat", "input_fee_ppk": 0}]})
+        return httpx.Response(400, json={"detail": "proofs already spent", "code": 11001})
+    client = httpx.AsyncClient
+    monkeypatch.setattr(acorn_module.httpx, "AsyncClient", lambda **kwargs: client(transport=httpx.MockTransport(handler), **kwargs))
+    wallet = make_wallet()
+    expected = RetryablePreSwapError if failure_stage == "prepare" else SwapRejectedCleanupError if failure_stage else RuntimeError
+    with pytest.raises(expected) as caught:
+        await wallet.swap_proofs([incoming])
+    if failure_stage == "prepare":
+        assert "not submitted" in str(caught.value)
+        assert requests.count("POST") == 0
+        return
+    assert "proofs already spent" in str(caught.value)
+    assert "11001" in str(caught.value)
+    assert "not submitted" not in str(caught.value)
+    assert requests.count("POST") == 1
+    assert wallet._token_already_spent_error(caught.value) is (failure_stage is None)
+    if failure_stage is None:
+        assert state["entries"] == []
+        return
+    assert state["entries"] and state["entries"][0]["recovery"]
+    # A fresh Acorn has no process-local outcome knowledge.
+    state["failure_stage"] = None
+    resumed = make_wallet()
+    if failure_stage == "cleanup":
+        assert state["entries"][0]["status"] == "rejected"
+        with pytest.raises(RuntimeError, match="proofs already spent") as resumed_error:
+            await resumed.swap_proofs([incoming])
+        assert resumed._token_already_spent_error(resumed_error.value)
+        assert state["entries"] == []
+        resumed._restore_pending_swap.assert_not_awaited()
+    else:
+        # No durable rejection marker: never infer that a restore miss is safe.
+        with pytest.raises(AmbiguousSwapError, match="remains unresolved"):
+            await resumed.swap_proofs([incoming])
+        assert state["entries"]
+        resumed._restore_pending_swap.assert_awaited_once()
+    assert requests.count("POST") == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before_submission", [True, False])
+async def test_swap_journal_readback_failure_retains_submission_phase(monkeypatch, before_submission):
+    wallet = wallet_with_key()
+    wallet.set_wallet_info = AsyncMock(return_value={"verified": True})
+    wallet._load_pending_swaps = AsyncMock(side_effect=ConnectionError("relay read unavailable"))
+    monkeypatch.setattr(acorn_module.asyncio, "sleep", AsyncMock())
+    expected = RetryablePreSwapError if before_submission else AmbiguousSwapError
+    with pytest.raises(expected) as caught:
+        await wallet._save_pending_swaps([], before_submission=before_submission)
+    assert ("not submitted" in str(caught.value)) == before_submission
+    assert isinstance(caught.value.__cause__, ConnectionError)
+
+
+@pytest.mark.asyncio
+async def test_completed_swap_cleanup_error_is_not_a_pre_submission_error():
+    wallet = wallet_with_key()
+    wallet._remove_pending_swap = Acorn._remove_pending_swap.__get__(wallet, Acorn)
+    wallet._load_pending_swaps = AsyncMock(return_value=[{"id": "completed"}])
+    wallet.set_wallet_info = AsyncMock(side_effect=RuntimeError("relay unavailable"))
+    with pytest.raises(AmbiguousSwapError, match="after swap submission"):
+        await wallet._remove_pending_swap("completed")
 
 
 @pytest.mark.asyncio

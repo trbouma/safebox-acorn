@@ -9,6 +9,7 @@ from stroma import Keys, Event
 
 from acorn.acorn import (
     Acorn,
+    SwapRejectedCleanupError,
     CLEAR_RECEIPTS_LABEL,
     CLEAR_TRANSFER_CURSOR_LABEL,
     CLEAR_TRANSFER_KIND,
@@ -612,7 +613,8 @@ async def test_reconcile_batch_mint_outage_keeps_entire_group_pending() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reconcile_spent_batch_falls_back_to_individual_isolation() -> None:
+@pytest.mark.parametrize("cleanup_pending", [False, True])
+async def test_reconcile_spent_batch_falls_back_to_individual_isolation(cleanup_pending) -> None:
     acorn = wallet()
     receipts = [
         {
@@ -631,9 +633,10 @@ async def test_reconcile_spent_batch_falls_back_to_individual_isolation() -> Non
         },
     ]
     acorn.get_continuity_receipts = AsyncMock(return_value=receipts)
-    acorn.accept_continuity_token_batch = AsyncMock(
-        side_effect=RuntimeError("Token already spent (code 11001)")
-    )
+    failure = RuntimeError("Token already spent (code 11001)")
+    if cleanup_pending:
+        failure.__cause__ = SwapRejectedCleanupError("Token already spent (code 11001); cleanup pending")
+    acorn.accept_continuity_token_batch = AsyncMock(side_effect=failure)
     acorn.accept_token = AsyncMock(
         side_effect=[("accepted", 5), RuntimeError("Token already spent")]
     )
@@ -642,6 +645,13 @@ async def test_reconcile_spent_batch_falls_back_to_individual_isolation() -> Non
 
     result = await acorn.reconcile_continuity_receipts()
 
+    if cleanup_pending:
+        assert result["pending_count"] == 2
+        assert result["terminal_error_count"] == 0
+        assert result["confirmed_count"] == 0
+        acorn.accept_token.assert_not_awaited()
+        acorn._update_continuity_receipt.assert_not_awaited()
+        return
     assert result["confirmed_count"] == 1
     assert result["confirmed_amount"] == 5
     assert result["terminal_error_count"] == 1
