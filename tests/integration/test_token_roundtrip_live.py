@@ -9,6 +9,7 @@ from stroma import Keys
 from acorn.acorn import Acorn
 
 from tests.helpers import (
+    confirmed_transfer_amount,
     ensure_test_wallet_config,
     get_test_transfer_relay,
     is_source_wallet_environment_error,
@@ -47,7 +48,7 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
         relay=relay_scenario["relay"],
     )
     source_config = require_source_config()
-    amount = int(os.getenv("ACORN_TEST_AMOUNT", "1"))
+    amount = int(os.getenv("ACORN_TEST_AMOUNT", "10"))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
 
     configured_path = os.getenv(
@@ -140,26 +141,31 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
             "test wallet receive funding",
             timeout,
         )
-        assert received["accepted_amount"] == amount, received
+        credited = confirmed_transfer_amount(received, amount)
 
         await _await_or_skip(test_wallet.load_data(), "funded wallet reload", timeout)
         balance_before = test_wallet.get_balance()
-        assert balance_before >= amount
+        assert balance_before >= credited
+        # Keep headroom for issuance fees rather than issuing the entire funding.
+        token_amount = min(amount, balance_before // 2)
+        assert token_amount > 0, "Funding is too small after mint fees"
 
         live_progress(
             "token round-trip test: issuing token from disposable wallet",
-            amount=f"{amount} sat",
+            amount=f"{token_amount} sat",
         )
         issued_token = await _await_or_skip(
             test_wallet.issue_token(
-                amount,
+                token_amount,
                 comment="pytest disposable token issue",
             ),
             "disposable wallet token issue",
             timeout,
         )
         assert issued_token.startswith("cashuB")
-        assert test_wallet.get_balance() == balance_before - amount
+        balance_after_issue = test_wallet.get_balance()
+        issue_fee = balance_before - balance_after_issue - token_amount
+        assert issue_fee >= 0
 
         live_progress("token round-trip test: accepting issued token")
         message, accepted_amount = await _await_or_skip(
@@ -170,18 +176,19 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
             "disposable wallet token accept",
             timeout,
         )
-        assert accepted_amount == amount
-        assert str(amount) in message
+        assert 0 < accepted_amount <= token_amount
+        assert str(accepted_amount) in message
         issued_token_accepted = True
 
         await _await_or_skip(test_wallet.load_data(), "round-trip wallet reload", timeout)
-        assert test_wallet.get_balance() == balance_before
+        assert test_wallet.get_balance() == balance_after_issue + accepted_amount
+        balance_before = test_wallet.get_balance()
 
         history = await _await_or_skip(
             wait_for_tx_history_entry(
                 test_wallet,
                 lambda entry: entry.get("tx_type") == "C"
-                and entry.get("amount") == amount
+                and entry.get("amount") == accepted_amount
                 and "pytest disposable token accept" in entry.get("comment", ""),
                 timeout,
                 "disposable token acceptance credit",
@@ -191,16 +198,25 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
         )
         assert any(
             entry.get("tx_type") == "D"
-            and entry.get("amount") == amount
+            and entry.get("amount") == token_amount
+            and int(entry.get("fees") or 0) == issue_fee
             and "pytest disposable token issue" in entry.get("comment", "")
             for entry in history
         )
         assert any(
             entry.get("tx_type") == "C"
-            and entry.get("amount") == amount
+            and entry.get("amount") == accepted_amount
+            and int(entry.get("fees") or 0) == token_amount - accepted_amount
             and "pytest disposable token accept" in entry.get("comment", "")
             for entry in history
         )
+
+        relay_suitable(relay_scenario, "disposable-token-round-trip", balance=f"{balance_before} sats")
+        # The legacy per-proof refresh methods request equal-value outputs and
+        # do not budget input fees. Do not submit those swaps to fee-bearing mints.
+        for keyset in {str(proof.id) for proof in test_wallet.proofs}:
+            if await test_wallet._keyset_input_fee_ppk(keyset) > 0:
+                pytest.skip("Token round-trip passed; per-proof swap/repair tests require a zero-input-fee mint")
 
         proof_identity_before_swap = {
             (str(proof.id), str(proof.secret))
@@ -310,41 +326,46 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
                     "token round-trip issued-token recovery was not confirmed",
                     error=exc,
                 )
+        cleanup_complete = False
         try:
-            await _await_or_skip(test_wallet.load_data(), "cleanup wallet load", timeout)
+            if not issued_token_accepted:
+                raise RuntimeError("Token round-trip incomplete; retain wallet for recovery")
+            await asyncio.wait_for(test_wallet.load_data(), timeout)
+            pending = await asyncio.wait_for(test_wallet.get_continuity_receipts(status="provisional"), timeout)
+            if pending:
+                raise RuntimeError("Pending incoming funds; retain wallet for recovery")
             if test_wallet.get_balance() > 0:
-                burn_result = await _await_or_skip(
+                burn_result = await asyncio.wait_for(
                     test_wallet.burn_wallet(
                         send_to=source_recipient,
                         send_relay=transfer_relay,
                         relays=[test_relay],
                     ),
-                    "token round-trip cleanup burn",
                     timeout,
                 )
                 cleanup_sweep_event = burn_result.get("sweep", {}).get("event_id")
             else:
-                await _await_or_skip(
+                await asyncio.wait_for(
                     test_wallet.burn_wallet(
-                        allow_funded=True,
                         relays=[test_relay],
                     ),
-                    "token round-trip cleanup burn",
                     timeout,
                 )
+                cleanup_complete = True
         except Exception as exc:
             live_progress("token round-trip cleanup burn failed", error=exc)
 
         if cleanup_sweep_event:
             try:
-                await _await_or_skip(
+                received_cleanup = await asyncio.wait_for(
                     source_wallet.sweep_ecash_transfers(
                         relays=[transfer_relay],
                         event_id=cleanup_sweep_event,
                     ),
-                    "source receive token round-trip cleanup sweep",
                     timeout,
                 )
+                confirmed_transfer_amount(received_cleanup, burn_result["sweep"]["amount"])
+                cleanup_complete = True
             except Exception as exc:
                 live_progress(
                     "token round-trip cleanup sweep receive failed",
@@ -352,4 +373,8 @@ async def test_live_disposable_wallet_token_and_proof_maintenance_round_trip(
                     error=exc,
                 )
 
-        remove_test_wallet_config(test_wallet_config)
+        if cleanup_complete:
+            remove_test_wallet_config(test_wallet_config)
+        else:
+            live_progress("Cleanup incomplete: local wallet config retained for recovery",
+                          config=test_wallet_config.get("_path"))

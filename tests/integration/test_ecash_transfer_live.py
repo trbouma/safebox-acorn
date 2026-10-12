@@ -9,6 +9,7 @@ from stroma import Keys
 from acorn.acorn import Acorn
 
 from tests.helpers import (
+    confirmed_transfer_amount,
     get_test_transfer_relay,
     is_source_wallet_environment_error,
     live_progress,
@@ -37,7 +38,7 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
         relay=relay_scenario["relay"],
     )
     source_config = require_source_config()
-    amount = int(os.getenv("ACORN_TEST_AMOUNT", "1"))
+    amount = int(os.getenv("ACORN_TEST_AMOUNT", "10"))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
     source_nsec = source_config["nsec"]
     source_relay = source_config["home_relay"]
@@ -138,14 +139,14 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
     )
 
     assert receive["accepted_count"] == 1, receive
-    assert receive["accepted_amount"] == amount, receive
+    credited = confirmed_transfer_amount(receive, amount)
     assert receive["accepted"][0]["mode"] == "gift-wrapped"
     assert receive["accepted"][0]["outer_kind"] == 1059
     assert receive["accepted"][0]["inner_kind"] == 7378
 
     live_progress("ecash transfer test: reloading receiver wallet")
     await _await_or_skip(sender.load_data(), "final wallet reload", timeout)
-    assert sender.get_balance() >= receiver_before + amount
+    assert sender.get_balance() == receiver_before + credited
     tx_history = await _await_or_skip(
         sender.get_tx_history(),
         "receiver transaction history readback",
@@ -153,7 +154,8 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
     )
     assert any(
         entry.get("tx_type") == "C"
-        and entry.get("amount") == amount
+        and entry.get("amount") == credited
+        and int(entry.get("fees") or 0) == amount - credited
         and "pytest live gift-wrapped transfer" in entry.get("comment", "")
         for entry in tx_history
     )

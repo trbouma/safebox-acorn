@@ -1112,15 +1112,33 @@ class Acorn:
         payment_result: Dict[str, Any] | None = None
         if balance_before > 0:
             if send_to:
+                # Issuing an ecash token spends mint input fees in addition to
+                # its face value. Never request the gross balance as the token.
+                keyset_proofs, _ = self._proofs_by_keyset()
+                if len(keyset_proofs) != 1:
+                    raise ValueError("Ecash burn sweep requires one keyset; transfer funds separately before burning")
+                keyset, proofs = next(iter(keyset_proofs.items()))
+                gross = sum(int(proof.amount) for proof in proofs)
+                if gross != balance_before:
+                    raise RuntimeError("Burn sweep proof balance disagrees with wallet balance; reload before retrying")
+                input_fee = self._input_fee_sats(
+                    await self._keyset_input_fee_ppk(keyset), len(proofs)
+                )
+                sweep_amount = gross - input_fee
+                if sweep_amount <= 0:
+                    raise ValueError("Wallet balance cannot cover the burn sweep mint input fee; wallet was not burned")
                 sweep_result = await self.send_ecash_transfer(
-                    amount=balance_before,
+                    amount=sweep_amount,
                     recipient=send_to,
                     relay=send_relay,
                     comment="acorn wallet burn sweep",
                 )
-                # Refresh local state after issuing the sweep token.
-                with contextlib.suppress(Exception):
-                    await self.load_data()
+                sweep_result["estimated_mint_input_fee"] = input_fee
+                # A stale plan or dust can leave value behind. Failed readback
+                # must not permit deletion of uncertain wallet state.
+                await self.load_data()
+                if self.get_balance() != 0:
+                    raise RuntimeError("Burn sweep left a nonzero balance; wallet records retained. Inspect the outgoing transfer before retrying")
             elif pay_to:
                 lightning_sweep_quote: Dict[str, Any] | None = None
                 if pay_amount is None:
@@ -7947,6 +7965,7 @@ class Acorn:
                     latest_checkpoint = max(latest_checkpoint, event_checkpoint)
                     continue
                 provisional = True
+                acceptance_error_type = None
                 if payment_mode == "continuity" or not finalize:
                     msg_out = (
                         f"Stored a pending payment of {token_amount} sats; "
@@ -7970,6 +7989,7 @@ class Acorn:
                         )
                         provisional = False
                     except Exception as exc:
+                        acceptance_error_type = type(exc).__name__
                         if self._token_already_spent_error(exc):
                             terminal = await self._record_terminal_continuity_error(
                                 receipt,
@@ -8012,6 +8032,7 @@ class Acorn:
                     "payment_mode": payment_mode,
                     "settlement": payload.get("settlement") or "mint-confirmed",
                     "provisional": provisional,
+                    "acceptance_error_type": acceptance_error_type,
                 })
                 latest_checkpoint = max(latest_checkpoint, event_checkpoint)
             except MalformedIncomingTransfer as exc:

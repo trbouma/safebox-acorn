@@ -220,6 +220,12 @@ Options:
 
 Retirement operation requesting relay-data deletion and normally removing local configuration. Optional sweep/payment flags can move remaining cash first. `--allow-funded` explicitly permits potential loss and `--force` bypasses confirmations. Verify records, attachments, funds, pending operations, event kinds, and relay coverage before using it. It is not comprehensive Blossom deletion or guaranteed secure erasure.
 
+An ecash sweep with `--send-to` reserves mint input fees rather than issuing the
+gross balance. It requires a single keyset and stops before deletion if fees
+consume the balance, the sweep fails, balance readback fails, or funds remain.
+If a transfer was already published when readback fails, inspect that transfer
+and the remaining wallet state before retrying; do not assume nothing happened.
+
 ```text
 Usage: acorn burn [OPTIONS]
 

@@ -16,6 +16,19 @@ RELAY_SUITABILITY_RESULTS: dict[str, dict] = {}
 DEFAULT_TEST_MINT = "https://mint.getsafebox.app"
 
 
+def confirmed_transfer_amount(result: dict, tendered: int) -> int:
+    """Require finalized value, not merely a stored provisional receipt."""
+    assert result.get("confirmed_count") == 1, (
+        "Transfer was not finalized. Check op=sweep_ecash_transfers status=pending "
+        "logs for the matching event_id; acceptance_error_type identifies the exception class.", result
+    )
+    assert result.get("provisional_count", 0) == 0, result
+    assert not result.get("failed"), result
+    amount = int(result["accepted_amount"])
+    assert 0 < amount <= tendered, result
+    return amount
+
+
 def _relay_result(relay: str) -> dict:
     relay = normalize_relay(relay)
     result = RELAY_SUITABILITY_RESULTS.setdefault(
@@ -469,3 +482,19 @@ def remove_test_wallet_config(config: dict) -> None:
     path = Path(path_value)
     if path.exists():
         path.unlink()
+
+
+async def cleanup_empty_test_wallet(wallet, config: dict, relays: list[str], timeout: float) -> bool:
+    """Only remove a disposable wallet after confirmed empty, settled readback."""
+    try:
+        await asyncio.wait_for(wallet.load_data(), timeout)
+        receipts = await asyncio.wait_for(wallet.get_continuity_receipts(status="provisional"), timeout)
+        if wallet.get_balance() or receipts:
+            raise RuntimeError("wallet has funds or pending receipts")
+        await asyncio.wait_for(wallet.burn_wallet(relays=relays), timeout)
+    except Exception as exc:
+        live_progress("Cleanup retained wallet records and config for recovery",
+                      config=config.get("_path"), error_type=type(exc).__name__)
+        return False
+    remove_test_wallet_config(config)
+    return True

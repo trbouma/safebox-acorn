@@ -425,7 +425,7 @@ third-party relay:
 ACORN_SOURCE_CONFIG=/home/acorn/.acorn/config.yml
 ACORN_THIRD_PARTY_RELAY=wss://relay.example.com
 ACORN_RELAY_SCENARIO=third-party
-ACORN_TEST_AMOUNT=1
+ACORN_TEST_AMOUNT=10
 ACORN_TEST_TIMEOUT=60
 ```
 
@@ -439,7 +439,7 @@ pytest -m live -v -s -rs
 ```
 
 The source wallet provides test funding; disposable wallets perform most test
-operations. Begin with a small balance and `ACORN_TEST_AMOUNT=1`.
+operations. Begin with a small balance and `ACORN_TEST_AMOUNT=10`, allowing extra funds for mint fees.
 
 ## 10. Optional post-quantum support
 

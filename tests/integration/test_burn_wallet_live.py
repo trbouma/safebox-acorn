@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 
 import pytest
@@ -10,6 +9,7 @@ from stroma import Keys
 from acorn.acorn import Acorn
 
 from tests.helpers import (
+    confirmed_transfer_amount,
     ensure_test_wallet_config,
     get_test_transfer_relay,
     is_source_wallet_environment_error,
@@ -42,7 +42,7 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
         relay=relay_scenario["relay"],
     )
     source_config = require_source_config()
-    amount = int(os.getenv("ACORN_TEST_AMOUNT", "1"))
+    amount = int(os.getenv("ACORN_TEST_AMOUNT", "10"))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
 
     configured_path = os.getenv("ACORN_TEST_WALLET_CONFIG", "./.acorn-test/test-wallet.yml")
@@ -92,6 +92,7 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
         relays=[test_relay],
     )
 
+    completed = False
     try:
         live_progress("burn test: funding disposable wallet", amount=f"{amount} sat", relay=transfer_relay)
         try:
@@ -146,11 +147,11 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             "burn test wallet receive funding",
             timeout,
         )
-        assert receive["accepted_amount"] == amount
+        credited = confirmed_transfer_amount(receive, amount)
 
         live_progress("burn test: reloading funded wallet")
         await _await_or_skip(test_wallet.load_data(), "funded test wallet reload", timeout)
-        assert test_wallet.get_balance() >= receiver_before + amount
+        assert test_wallet.get_balance() == receiver_before + credited
 
         live_progress("burn test: burning wallet and sweeping funds back")
         burn_result = await _await_or_skip(
@@ -163,9 +164,9 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             timeout,
         )
 
-        assert burn_result["balance_before"] >= amount
+        assert burn_result["balance_before"] == receiver_before + credited
         assert burn_result["sweep"] is not None
-        assert burn_result["sweep"]["amount"] >= amount
+        assert 0 < burn_result["sweep"]["amount"] <= burn_result["balance_before"]
         assert burn_result["sweep"]["event_id"]
         assert burn_result["delete_event_id"]
 
@@ -178,41 +179,40 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             "source wallet receive burn sweep",
             timeout,
         )
-        if sweep_back["accepted_amount"] < amount:
+        if not sweep_back.get("queried"):
             relay_unsuitable(
                 relay=relay_scenario["relay"],
                 capability="burn-sweep-transfer",
                 reason="burn sweep transfer was published but not accepted",
                 transfer_relay=transfer_relay,
                 event=burn_result["sweep"]["event_id"][:12],
-                expected=f"{amount} sats",
+                expected="a discoverable burn sweep event",
                 accepted=f"{sweep_back['accepted_amount']} sats",
                 queried=sweep_back.get("queried"),
                 skipped=len(sweep_back.get("skipped", [])),
                 failed=len(sweep_back.get("failed", [])),
         )
-        assert sweep_back["accepted_amount"] >= amount, (
-            "relay compatibility: burn sweep transfer was published but the "
-            "source wallet did not accept the expected sats. "
+        assert sweep_back["accepted_amount"] > 0, (
+            "Burn sweep transfer was published but the source wallet did not "
+            "confirm a positive net credit. Inspect mint and relay errors. "
             f"scenario={relay_scenario['name']} "
             f"relay={relay_scenario['relay']} "
             f"transfer_relay={transfer_relay} "
             f"event_id={burn_result['sweep']['event_id']} "
-            f"expected_amount={amount} "
+            f"tendered_amount={burn_result['sweep']['amount']} "
             f"accepted_amount={sweep_back['accepted_amount']} "
             f"queried={sweep_back.get('queried')} "
             f"skipped={sweep_back.get('skipped')} "
             f"failed={sweep_back.get('failed')}. "
-            "This relay may not reliably return kind 1059 gift wraps or "
-            "direct/legacy kind 7378 events, may have delayed propagation, "
-            "or may apply filtering/"
-            "retention policies that make it unsuitable as an Acorn relay."
+            "Pending mint acceptance is not by itself evidence of relay unsuitability."
         )
+        returned = confirmed_transfer_amount(sweep_back, burn_result["sweep"]["amount"])
         source_credit_history = await _await_or_skip(
             wait_for_tx_history_entry(
                 source_wallet,
                 lambda entry: entry.get("tx_type") == "C"
-                and entry.get("amount") >= amount
+                and entry.get("amount") == returned
+                and int(entry.get("fees") or 0) == burn_result["sweep"]["amount"] - returned
                 and "acorn wallet burn sweep" in entry.get("comment", ""),
                 timeout,
                 "source credit for burn sweep",
@@ -222,7 +222,7 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
         )
         assert any(
             entry.get("tx_type") == "C"
-            and entry.get("amount") >= amount
+            and entry.get("amount") == returned
             and "acorn wallet burn sweep" in entry.get("comment", "")
             for entry in source_credit_history
         )
@@ -231,13 +231,12 @@ async def test_live_burn_wallet_sweeps_remaining_funds(monkeypatch, relay_scenar
             "burn-sweep-transfer",
             swept=f"{sweep_back['accepted_amount']} sats",
         )
+        completed = True
 
     finally:
         live_progress("burn test: cleanup")
-        with contextlib.suppress(Exception):
-            await _await_or_skip(
-                test_wallet.burn_wallet(allow_funded=True, relays=[test_relay]),
-                "burn test cleanup",
-                timeout,
-            )
-        remove_test_wallet_config(test_wallet_config)
+        if completed:
+            remove_test_wallet_config(test_wallet_config)
+        else:
+            live_progress("Burn test incomplete: wallet records and local config retained for recovery",
+                          config=test_wallet_config.get("_path"))

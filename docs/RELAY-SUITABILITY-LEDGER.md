@@ -65,6 +65,7 @@ To test only a third-party relay, set:
 ```env
 ACORN_THIRD_PARTY_RELAY=wss://relay.example.com
 ACORN_RELAY_SCENARIO=third-party
+ACORN_TEST_AMOUNT=10
 ```
 
 Then run:
@@ -72,6 +73,12 @@ Then run:
 ```sh
 poetry run pytest -m live -rs -s
 ```
+
+Funded ecash tests default to 10 sats and verify the net credit after mint fees.
+An existing environment value of 1 overrides this default and can produce a token
+whose entire value is consumed by an input fee. Keep extra source funds for fees.
+The legacy per-proof refresh checks require a zero-input-fee mint and are skipped
+otherwise; inspect skipped capabilities before treating a relay as fully tested.
 
 The output should emit suitability lines such as:
 

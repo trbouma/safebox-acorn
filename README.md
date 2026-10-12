@@ -399,14 +399,29 @@ main test wallet, funds it from the source wallet, burns it, and verifies that
 remaining funds are swept back.
 
 The token round-trip live test creates another separate disposable wallet. It
-funds that wallet with `ACORN_TEST_AMOUNT`, issues a `cashuB` token from the
-disposable wallet, accepts the token back into the same wallet, verifies that
-the pre-issue balance is restored after relay readback, and checks for matching
+funds that wallet with `ACORN_TEST_AMOUNT` (default 10 sats), issues a `cashuB`
+token using at most half its funded balance to leave fee headroom, accepts the
+token back into the same wallet, verifies that
+the balance is restored less mint fees after relay readback, and checks for matching
 debit and credit transaction-history entries. It then refreshes every proof
 with `swap_multi_each`, runs a read-only mint-state check, repairs the refreshed
 proof set with `repair_proofs`, and confirms after each operation that the mint
 reports every sat as unspent and the relay-backed balance is unchanged. Cleanup
 burns the wallet and attempts to sweep its funds back to the source wallet.
+The legacy per-proof swap/repair portion is explicitly skipped on mints charging
+input fees because those methods request equal-value outputs. The completed
+token round-trip is still reported in the relay capability summary; a skipped
+maintenance check is not a suitability pass. Ten sats provides headroom for
+ordinary small input fees, not a guarantee for every mint's fee schedule.
+If your existing `.env` sets `ACORN_TEST_AMOUNT=1`, change it to `10` or override
+it on the command line. Fund the disposable source wallet with extra fee headroom.
+
+Ecash burn sweeps reserve the mint input fee and require a single keyset. Wallet
+deletion stops if the sweep fails, readback is uncertain, or value remains.
+Incomplete burn tests retain their wallet records and local configuration for
+recovery. Token cleanup retains configuration on an unconfirmed sweep; Grove
+cleanup refuses to burn a wallet with funds or pending receipts. Review retained
+test wallets before rerunning; do not use a production account as a disposable wallet.
 
 The live test flow can also be used as a manual interoperability check with the
 Safebox web app: create or recover the same source wallet in the web app and
@@ -447,7 +462,7 @@ tests:
 # External NIP-05 ecash transfer test. This spends source-wallet sats and
 # requires separate confirmation in the recipient wallet.
 # ACORN_NIP05_RECIPIENT=someone@example.com
-# ACORN_NIP05_TEST_AMOUNT=1
+# ACORN_NIP05_TEST_AMOUNT=10
 # ACORN_NIP05_TEST_COMMENT=pytest nip05 ecash transfer
 
 # Real lightning-address payment test. This spends source-wallet sats and runs

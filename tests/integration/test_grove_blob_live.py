@@ -12,11 +12,11 @@ import pytest
 from acorn.acorn import Acorn
 
 from tests.helpers import (
+    cleanup_empty_test_wallet,
     ensure_test_wallet_config,
     live_progress,
     live_relay_scenarios,
     relay_suitable,
-    remove_test_wallet_config,
     should_burn_test_wallet,
 )
 
@@ -109,7 +109,11 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
             timeout,
         )
         assert result["status"] == "OK"
-        assert result["blobref"].startswith(blossom_server)
+        if result.get("blob_service_npubs"):
+            assert result["blobref"] is None
+        else:
+            assert isinstance(result.get("blobref"), str), result
+            assert result["blobref"].startswith(blossom_server.rstrip("/") + "/")
         assert result["blobsha256"]
 
         live_progress("Grove blob test: reading record metadata", label=label)
@@ -122,6 +126,14 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
         assert record.blobtype == expected_blob_type
         assert record.effective_mime == expected_blob_type
         assert record.blobsha256 == result["blobsha256"]
+        assert record.blob_service_npubs == result.get("blob_service_npubs", [])
+        resolved_servers = await _await_or_skip(
+            acorn.resolve_blob_servers(record, capability="blossom.read"),
+            "Grove service identity resolution", timeout,
+        )
+        assert resolved_servers, "Blob reference/service identity must resolve to a readable endpoint"
+        if not result.get("blob_service_npubs"):
+            assert blossom_server.rstrip("/") in [server.rstrip("/") for server in resolved_servers]
         assert record.origsha256 == hashlib.sha256(blob_data).hexdigest()
         assert record.encryptparms is not None
 
@@ -164,10 +176,4 @@ async def test_live_grove_blob_record_round_trip(relay_scenario):
                 )
         if should_burn_test_wallet(test_wallet_config):
             live_progress("Grove blob test: cleanup burn disposable wallet")
-            with contextlib.suppress(Exception):
-                await _await_or_skip(
-                    acorn.burn_wallet(allow_funded=True, relays=[test_relay]),
-                    "Grove blob cleanup burn",
-                    timeout,
-                )
-        remove_test_wallet_config(test_wallet_config)
+            await cleanup_empty_test_wallet(acorn, test_wallet_config, [test_relay], timeout)

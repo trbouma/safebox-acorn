@@ -35,7 +35,7 @@ async def test_live_nip05_ecash_transfer_to_external_wallet():
     source_config = require_source_config()
     source_nsec = source_config["nsec"]
     source_relay = source_config["home_relay"]
-    amount = int(os.getenv("ACORN_NIP05_TEST_AMOUNT", os.getenv("ACORN_TEST_AMOUNT", "1")))
+    amount = int(os.getenv("ACORN_NIP05_TEST_AMOUNT", os.getenv("ACORN_TEST_AMOUNT", "10")))
     timeout = float(os.getenv("ACORN_TEST_TIMEOUT", "15"))
     comment = os.getenv("ACORN_NIP05_TEST_COMMENT", "pytest nip05 ecash transfer")
     source_pubkey = Keys(priv_k=source_nsec).public_key_hex()
