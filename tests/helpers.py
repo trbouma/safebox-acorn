@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 import asyncio
 from pathlib import Path
 from time import monotonic
@@ -18,6 +19,13 @@ DEFAULT_TEST_MINT = "https://mint.getsafebox.app"
 
 def confirmed_transfer_amount(result: dict, tendered: int) -> int:
     """Require finalized value, not merely a stored provisional receipt."""
+    for failure in result.get("failed", []):
+        reason = str(failure.get("reason", ""))
+        if is_rate_limit_error(reason):
+            for relay in result.get("relays", []):
+                if relay in reason:
+                    relay_rate_limited(relay, "incoming-transfer", "HTTP 429 while accessing relay")
+                    skip_if_relay_unsuitable(relay)
     assert result.get("confirmed_count") == 1, (
         "Transfer was not finalized. Check op=sweep_ecash_transfers status=pending "
         "logs for the matching event_id; acceptance_error_type identifies the exception class.", result
@@ -118,6 +126,9 @@ def start_relay_suitability(scenario: dict) -> None:
 
 
 def relay_unsuitable(relay: str, capability: str, reason: str, **details) -> None:
+    if is_rate_limit_error(details.get("error", "")):
+        relay_rate_limited(relay, capability, "HTTP 429 while accessing relay")
+        return
     relay = normalize_relay(relay)
     UNSUITABLE_RELAYS[relay] = f"{capability}: {reason}"
     result = _relay_result(relay)
@@ -136,6 +147,19 @@ def relay_unsuitable(relay: str, capability: str, reason: str, **details) -> Non
     )
 
 
+def is_rate_limit_error(error) -> bool:
+    if getattr(error, "status", None) == 429 or getattr(error, "status_code", None) == 429:
+        return True
+    return bool(re.search(r"\b429(?:, message=|\s+Too Many Requests|\s+Client Error)|HTTP\s+429\b", str(error), re.I))
+
+
+def relay_rate_limited(relay: str, capability: str, reason: str) -> None:
+    result = _relay_result(relay)
+    result.setdefault("rate_limited", []).append(f"{capability}: {reason}")
+    live_progress("RATE-LIMITED relay; suitability not fully reassessed",
+                  relay=normalize_relay(relay), capability=capability)
+
+
 def relay_suitability_summary_rows() -> list[dict]:
     rows = []
     for relay, result in sorted(RELAY_SUITABILITY_RESULTS.items()):
@@ -146,6 +170,7 @@ def relay_suitability_summary_rows() -> list[dict]:
             if capability_result.get("status") == "suitable"
         ]
         unsuitable = result["unsuitable"]
+        rate_limited = result.get("rate_limited", [])
         elapsed = max(0.0, monotonic() - result["started_at"])
         status = "Suitable" if suitable_caps and not unsuitable else "Unsuitable as tested"
         if not suitable_caps and not unsuitable:
@@ -156,6 +181,10 @@ def relay_suitability_summary_rows() -> list[dict]:
             observed = "Passed " + ", ".join(sorted(suitable_caps))
         else:
             observed = "No relay capabilities completed"
+        if rate_limited:
+            if not unsuitable:
+                status = "Rate-limited; suitability not fully reassessed"
+            observed += "; " + "; ".join(rate_limited)
         rows.append(
             {
                 "relay": relay,
@@ -170,6 +199,8 @@ def relay_suitability_summary_rows() -> list[dict]:
 
 def skip_if_relay_unsuitable(relay: str) -> None:
     relay = normalize_relay(relay)
+    if RELAY_SUITABILITY_RESULTS.get(relay, {}).get("rate_limited"):
+        pytest.skip(f"{relay} rate-limited this run (HTTP 429); suitability not fully reassessed. Later checks skipped to avoid additional load.")
     reason = UNSUITABLE_RELAYS.get(relay)
     if not reason:
         return
@@ -448,8 +479,10 @@ async def initialize_test_wallet_config(config: dict) -> None:
     try:
         await acorn.load_data()
         return
-    except Exception:
-        pass
+    except Exception as exc:
+        if is_rate_limit_error(exc):
+            relay_rate_limited(config["home_relay"], "wallet-bootstrap-readback", "HTTP 429 on initial read")
+            skip_if_relay_unsuitable(config["home_relay"])
 
     try:
         await acorn.create_instance(keepkey=True)
@@ -461,6 +494,8 @@ async def initialize_test_wallet_config(config: dict) -> None:
             reason="wallet bootstrap state was not readable after initialization",
             error=exc,
         )
+        if is_rate_limit_error(exc):
+            skip_if_relay_unsuitable(config["home_relay"])
         pytest.skip(
             "relay compatibility: wallet bootstrap state was not readable "
             f"after initialization on {config['home_relay']}. "

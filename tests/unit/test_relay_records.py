@@ -27,6 +27,81 @@ def wallet_with_key() -> Acorn:
     return wallet
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("previous", [None, 99, 100, 101])
+async def test_record_timestamp_never_uses_future_time(monkeypatch, previous):
+    from acorn import acorn as module
+    clock = {"wall": 100.25, "elapsed": 0.0}
+    monkeypatch.setattr(module, "time", lambda: clock["wall"])
+    monkeypatch.setattr(module, "monotonic", lambda: clock["elapsed"])
+    async def sleep(delay):
+        clock["wall"] += delay
+        clock["elapsed"] += delay
+    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    stamp = await wallet_with_key()._record_timestamp_after(previous, 3)
+    assert stamp == int(clock["wall"])
+    assert previous is None or stamp > previous
+    if previous is None or previous < 100:
+        assert clock["elapsed"] == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("direction", [0, -1])
+async def test_record_timestamp_wait_is_bounded_when_clock_stalls_or_reverses(monkeypatch, direction):
+    from acorn import acorn as module
+    clock = {"wall": 100.5, "elapsed": 0.0}
+    monkeypatch.setattr(module, "time", lambda: clock["wall"])
+    monkeypatch.setattr(module, "monotonic", lambda: clock["elapsed"])
+    async def sleep(delay):
+        clock["wall"] += direction * delay
+        clock["elapsed"] += delay
+    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    with pytest.raises(RuntimeError, match="no event was published"):
+        await wallet_with_key()._record_timestamp_after(100, 1)
+    assert clock["elapsed"] <= 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("future", [False, True])
+async def test_verified_replacements_wait_or_fail_without_publishing(monkeypatch, future):
+    from acorn import acorn as module
+    wallet = wallet_with_key()
+    clock = {"wall": 100.25, "elapsed": 0.0}
+    monkeypatch.setattr(module, "time", lambda: clock["wall"])
+    monkeypatch.setattr(module, "monotonic", lambda: clock["elapsed"])
+    async def sleep(delay):
+        clock["wall"] += delay
+        clock["elapsed"] += delay
+    monkeypatch.setattr(module.asyncio, "sleep", sleep)
+    initial = Event(kind=37375, pub_key=wallet.pubkey_hex, content="old",
+                    tags=[["d", wallet._record_label_hash("lock")]], created_at=1000 if future else 100)
+    initial.sign(wallet.privkey_hex)
+    stored = [initial]
+    published = []
+    class Pool:
+        def __init__(self, relays): pass
+        async def __aenter__(self): return self
+        async def __aexit__(self, *args): pass
+        async def query(self, filters): return list(stored)
+        def publish(self, event):
+            assert event.is_valid()
+            assert wallet._event_timestamp(event) <= int(clock["wall"])
+            assert wallet._event_timestamp(event) > wallet._event_timestamp(stored[0])
+            published.append(event)
+            stored[:] = [event]
+    monkeypatch.setattr(module, "ClientPool", Pool)
+    if future:
+        with pytest.raises(RuntimeError, match="clock synchronization"):
+            await wallet.set_wallet_info("lock", "new", verify=True, verify_timeout=2)
+        assert not published
+        assert stored == [initial]
+    else:
+        for value in ("locked", "unlocked", "locked again"):
+            result = await wallet.set_wallet_info("lock", value, verify=True, verify_timeout=2)
+            assert result["verified"]
+        assert [wallet._event_timestamp(event) for event in published] == [101, 102, 103]
+
+
 def record_event(
     *,
     event_id: str,

@@ -4629,6 +4629,26 @@ class Acorn:
             preflight_existing=preflight_existing,
         )
 
+    async def _record_timestamp_after(self, previous: int | None, deadline: float) -> int:
+        """Order replacements without publishing a future-dated event.
+
+        Wall time determines event timestamps; monotonic time bounds waiting
+        even if the local clock stops or moves backwards.
+        """
+        while True:
+            now = time()
+            if previous is None or int(now) > previous:
+                return int(now)
+            remaining = deadline - monotonic()
+            delay = previous + 1 - now
+            if remaining <= 0 or delay > remaining:
+                raise RuntimeError(
+                    "Record timestamp cannot advance within the write timeout; "
+                    "no event was published. Check clock synchronization and "
+                    "future-dated existing records before retrying."
+                )
+            await asyncio.sleep(min(0.25, delay, remaining))
+
     async def _async_set_wallet_info(
         self,
         label: str,
@@ -4651,7 +4671,8 @@ class Acorn:
             replicate_relays if replicate_relays else [self.home_relay]
         )
 
-        created_at = int(datetime.now().timestamp())
+        timestamp_deadline = monotonic() + max(0.5, float(verify_timeout))
+        previous_timestamp = None
         if verify and preflight_existing:
             existing_filter = self._record_lookup_filter(
                 label_name_hash,
@@ -4673,10 +4694,9 @@ class Acorn:
                     ) from exc
             canonical_existing = self._canonical_record_events(existing)
             if canonical_existing:
-                created_at = max(
-                    created_at,
-                    self._event_timestamp(canonical_existing[0]) + 1,
-                )
+                previous_timestamp = self._event_timestamp(canonical_existing[0])
+
+        created_at = await self._record_timestamp_after(previous_timestamp, timestamp_deadline)
 
         async with ClientPool(write_relays) as c:
             n_msg = Event(

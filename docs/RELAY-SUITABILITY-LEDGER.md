@@ -24,9 +24,30 @@ Suitability is an observed test result, not a permanent guarantee. Relay
 operators can change policies, retention windows, accepted event kinds, rate
 limits, authentication requirements, or infrastructure at any time.
 
+### Timestamp compatibility
+
+Verified Acorn record replacements must be newer than the previous event.
+Acorn now waits for wall-clock time to advance instead of creating a future-dated
+replacement. Preflight and timestamp waiting share the configured verification
+timeout budget (with a 0.5-second minimum); canonical readback retains its own
+bounded verification window. A record too far in the future fails before a new
+event is published. Existing events are not deleted or rewritten to bypass this.
+
+A relay rejection such as `invalid: created_at too late` is distinct from rate
+limiting. Check client/server clock synchronization and the relay's timestamp
+policy. This change prevents Acorn's deliberate timestamp advancement, but does
+not correct clock skew between hosts. Preserve pending payment recovery records
+and investigate the rejected event before repeating funded tests.
+
 ## Current results
 
-Last updated: 2026-08-11
+Last updated: 2026-10-12
+
+The older results below are historical observations, not continuous health
+checks. On October 12, nos.lol's retest was incomplete due to HTTP 429 rate
+limiting during wallet-lock and bootstrap reads. The funding event was retrieved,
+but the funded burn check did not complete. Its earlier successful result is
+retained; this retest does not establish permanent protocol incompatibility.
 
 The preferred relay suitability signal is a post-`1059` test result. Earlier
 results gathered while Acorn used kind `7378` as the relay-visible outer
@@ -36,13 +57,14 @@ payloads.
 
 | Relay | Status | Observed result | Observed time | Notes |
 | --- | --- | --- | --- | --- |
+| `wss://spurline.safebox.dev` | Suitable as tested (2026-10-12) | Passed burn-sweep-transfer, disposable-token-round-trip, external-entropy-bootstrap-recovery-burn, gift-wrapped-ecash-transfer, grove-blob-put-get, private-record-put-get-list-delete | ~97.4s | User-reported run: 7 passed, 1 skipped; legacy per-proof swap/repair requires a zero-input-fee mint. |
 | `ws://127.0.0.1:8080` | Suitable | Passed external-entropy-bootstrap-recovery-burn, private-record-put-get-list-delete | ~11.1s | Spurline local relay tested in third-party scenario. Funded ecash capabilities were tested separately in controlled mode. |
 | `wss://purplerelay.com/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~48.7s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.mostr.pub/` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~49.4s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://relay.openetr.org` | Suitable | Passed third-party scenario live test matrix | ~55s | Independently deployed relay controlled by the project operator. |
 | `ws://beelink:8735` | Suitable | Passed controlled live test matrix | ~58s to ~60s | Local controlled relay used for development. |
 | `wss://nostr.oxtr.dev` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~61.3s | Real third-party relay. Passed core Acorn capabilities. |
-| `wss://nos.lol` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~62.1s | Real third-party relay. Passed core Acorn capabilities. |
+| `wss://nos.lol` | Previously suitable; latest retest rate-limited | Earlier pass: burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete. 2026-10-12: suitability not fully reassessed due to HTTP 429. | Earlier pass ~62.1s; latest relay summary ~27.3s | Preserve earlier pass. Latest user-reported run: 1 failed, 4 passed, 3 skipped; transfer retrieved, lock/bootstrap reads rate-limited. |
 | `wss://relay.primal.net` | Suitable | Passed third-party scenario live test matrix | ~99s | Real third-party relay. Passed core Acorn capabilities, but slower than `relay.openetr.org` in the observed run. |
 | `wss://espelho.girino.org` | Suitable | Passed burn-sweep-transfer, gift-wrapped-ecash-transfer, private-record-put-get-list-delete | ~108.8s | Real third-party relay. Passed core Acorn capabilities. |
 | `wss://nostr.openhoofd.nl` | Suitable | Passed third-party scenario live test matrix | ~114s | Real third-party relay. Passed burn sweep, gift-wrapped ecash transfer, and private record lifecycle. |
