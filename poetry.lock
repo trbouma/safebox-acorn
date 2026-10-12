@@ -2945,7 +2945,7 @@ yarl = ">=1.9,<2"
 [package.source]
 type = "git"
 url = "https://github.com/trbouma/stroma.git"
-reference = "a2898d82348b201cb5794f0f00d3d2aca08bf6c5"
+reference = "main"
 resolved_reference = "a2898d82348b201cb5794f0f00d3d2aca08bf6c5"
 
 [[package]]
@@ -3287,4 +3287,4 @@ post-quantum = ["liboqs-python"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "b4cbe5e173e5b30426b37e28a3436f0219105199ba5d26adb4584db3997ec025"
+content-hash = "aabba58829bd04564309a0983b755e79609c213e5de1e7805e92954087fe506f"
