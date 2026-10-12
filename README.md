@@ -270,6 +270,68 @@ and provide local secrets:
 cp .env.example .env
 ```
 
+### Paced first-time-user suitability test
+
+The [suitability matrix](docs/RELAY-SUITABILITY-LEDGER.md) distinguishes
+**implementation suitability** (protocol/lifecycle support, preferably tested
+on deployments under the tester's control) from **user suitability** (a paced
+workflow on the actual service under normal user policies). Service certification
+as tested requires recorded passes of both assessments for the applicable
+deployment/configuration; neither test alone certifies a service.
+
+This separate, explicitly enabled test creates a fresh wallet, receives an ecash
+payment, sends a payment back to the funding wallet, then creates, edits and
+deletes a private record. It verifies finalized balances (allowing for mint fees),
+record contents after both writes, and removal from the record listing.
+
+```sh
+ACORN_SOURCE_CONFIG="$HOME/.acorn/test-source-new.yml" \
+ACORN_TEST_WALLET_CONFIG="./.acorn-test/user-wallet.yml" \
+ACORN_THIRD_PARTY_RELAY=wss://nos.lol \
+ACORN_RELAY_SCENARIO=third-party \
+ACORN_RUN_USER_JOURNEY=1 \
+poetry run pytest -m live -rs -s tests/integration/test_user_journey_live.py
+```
+
+Use `wss://spurline.safebox.dev` or `wss://relay.getsafebox.app` to test your
+own implementations. Run only this file, not the entire live suite, for an
+isolated user-paced measurement. Do not use the funding wallet concurrently.
+
+Defaults are 30 seconds before each user action and 5 seconds before each
+verification read: about 4 minutes 40 seconds of deliberate waiting, plus
+network time. Adjust `ACORN_USER_ACTION_PAUSE` (minimum 5 seconds),
+`ACORN_USER_READ_PAUSE` (minimum 1 second), and `ACORN_USER_STEP_TIMEOUT`
+(default 120 seconds per operation). These are simulated reading/typing delays,
+not empirically measured usage. Internal Acorn operations retain their normal
+network behavior; pacing reduces bursts but cannot guarantee avoidance of a
+relay's rate limits. It does not bypass relay policies.
+
+The funded source needs more than 32 sats and enough additional spendable funds
+for mint fees. `ACORN_USER_RECEIVE_AMOUNT` defaults to 32 sats;
+`ACORN_USER_SEND_AMOUNT` defaults to 8 sats, leaving fee headroom. Higher-fee
+mints may require larger amounts. This tests gift-wrapped ecash, not Lightning.
+Transfers explicitly use the relay under test, independently of
+`ACORN_TEST_TRANSFER_RELAY`. Bootstrap uses the source home mint unless
+`ACORN_TEST_MINT` overrides it.
+
+A unique `-user-journey-<id>` suffix is added to the test configuration filename.
+The private key is saved before bootstrap, and the wallet/configuration is
+**retained on success and failure**, including remaining funds and recovery
+state. The printed path can be used with `ACORN_CONFIG` to inspect it. Never
+share that file. There is no automatic burn, funded retry, or cleanup after a
+timeout/rate limit. Inspect unfinished transfers before starting another run;
+each run creates a new wallet and spends real mint fees. A pending receipt or
+unverified readback is not a pass. A pass establishes this journey only, not all
+relay capabilities or permanent deletion guarantees under NIP-09.
+
+### Full live suite
+
+For implementation suitability alone, exclude the separately opted-in user journey:
+
+```sh
+poetry run pytest -m live -rs -s --ignore=tests/integration/test_user_journey_live.py
+```
+
 Then edit `.env` and run:
 
 ```sh

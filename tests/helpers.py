@@ -160,6 +160,66 @@ def relay_rate_limited(relay: str, capability: str, reason: str) -> None:
                   relay=normalize_relay(relay), capability=capability)
 
 
+def exception_chain(error: BaseException):
+    """Walk visible causes/contexts once, respecting suppressed context."""
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        yield error
+        error = error.__cause__ if error.__cause__ is not None else (
+            None if error.__suppress_context__ else error.__context__
+        )
+
+
+def is_timeout_error(error: BaseException) -> bool:
+    """Recognize wrapped timeouts using the displayed exception chain, not text."""
+    return any(isinstance(cause, TimeoutError) for cause in exception_chain(error))
+
+
+def user_journey_failure_reason(error: Exception) -> str:
+    """Classify known transport errors without exposing arbitrary error payloads."""
+    causes = list(exception_chain(error))
+    for cause in causes:
+        code = getattr(cause, "status", None) or getattr(cause, "status_code", None)
+        if code is None:
+            # Stroma may flatten HTTP exceptions or event-rejection responses.
+            match = re.search(
+                r"HTTP\s+([45]\d\d)\b|"
+                r"\b([45]\d\d)(?=, message=|\s+(?:Server Error|Client Error|Service Unavailable|Bad Gateway|Gateway Timeout|Forbidden|Unauthorized|Too Many Requests))|"
+                r"\bRelay\s+wss?://\S+\s+rejected\s+[0-9a-f]{64}:\s*(401|403|429)(?=$|[;\s])",
+                str(cause), re.I,
+            )
+            code = next((int(group) for group in match.groups() if group), None) if match else None
+        if str(code).isdigit() and 500 <= int(code) <= 599:
+            return f"HTTP {code} service unavailable/server error; responsible service requires investigation"
+        if str(code) in {"401", "403"}:
+            return f"access/policy blocked (status {code}); inspect authentication and publication policies"
+        if str(code) == "429" or is_rate_limit_error(cause):
+            return "HTTP 429 rate-limited; responsible service requires investigation"
+    if is_timeout_error(error):
+        return "operation timed out; outcome requires inspection"
+    for cause in causes:
+        if re.search(r"\bRelay\s+wss?://\S+\s+closed before EOSE\b", str(cause), re.I):
+            return "connection closed before query completion (EOSE); response is incomplete, not an empty result"
+        if isinstance(cause, (ConnectionResetError, ConnectionAbortedError, BrokenPipeError)):
+            return "connection closed or interrupted; operation outcome requires inspection"
+    return f"operation or verification incomplete ({type(error).__name__})"
+
+
+def report_user_journey_failure(relay: str, stage: str, error: Exception, *, funding_started: bool) -> None:
+    """Record incomplete user evidence without declaring protocol incompatibility.
+
+    Do not echo exception text: it can contain private wallet data or payloads.
+    A service error can originate at the relay, mint, or another dependency.
+    """
+    reason = user_journey_failure_reason(error)
+    funding = "funding may have started; inspect retained wallet and transfers" if funding_started else "funding not started; no payment sent by this journey"
+    detail = f"paced-first-time-user-journey: {stage}: {reason}; {funding}"
+    _relay_result(relay).setdefault("incomplete_user_journeys", []).append(detail)
+    live_progress("INCONCLUSIVE user suitability", relay=normalize_relay(relay),
+                  stage=stage, reason=reason, funding=funding)
+
+
 def relay_suitability_summary_rows() -> list[dict]:
     rows = []
     for relay, result in sorted(RELAY_SUITABILITY_RESULTS.items()):
@@ -185,6 +245,11 @@ def relay_suitability_summary_rows() -> list[dict]:
             if not unsuitable:
                 status = "Rate-limited; suitability not fully reassessed"
             observed += "; " + "; ".join(rate_limited)
+        incomplete = result.get("incomplete_user_journeys", [])
+        if incomplete:
+            if not unsuitable:
+                status = "Inconclusive user suitability; journey incomplete"
+            observed += "; " + "; ".join(incomplete)
         rows.append(
             {
                 "relay": relay,

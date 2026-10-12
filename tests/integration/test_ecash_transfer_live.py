@@ -16,6 +16,7 @@ from tests.helpers import (
     live_relay_scenarios,
     relay_suitable,
     require_source_config,
+    skip_if_relay_unsuitable,
     wait_for_tx_history_entry,
 )
 
@@ -32,6 +33,7 @@ async def _await_or_skip(awaitable, label: str, timeout: float):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("relay_scenario", live_relay_scenarios())
 async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
+    skip_if_relay_unsuitable(relay_scenario["relay"])
     live_progress(
         "ecash transfer test: loading configuration",
         scenario=relay_scenario["name"],
@@ -43,6 +45,8 @@ async def test_live_gift_wrapped_ecash_transfer_round_trip(relay_scenario):
     source_nsec = source_config["nsec"]
     source_relay = source_config["home_relay"]
     transfer_relay = get_test_transfer_relay(source_relay, relay=relay_scenario["relay"])
+    # An explicit transfer-relay override can differ from the scenario relay.
+    skip_if_relay_unsuitable(transfer_relay)
     source_recipient = Keys(priv_k=source_nsec).public_key_bech32()
 
     live_progress("ecash transfer test: loading source wallet", relay=source_relay)

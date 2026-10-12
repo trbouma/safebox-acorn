@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 
@@ -55,3 +55,46 @@ def test_mint_rate_limit_not_misattributed_to_relay():
         helpers.confirmed_transfer_amount({"relays": ["wss://nos.lol"], "failed": [
             {"reason": "HTTP 429 from https://mint.example"}]}, 10)
     assert not helpers.RELAY_SUITABILITY_RESULTS
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("blocked", ["rate-limited", "unsuitable"])
+async def test_gift_wrap_skips_before_reading_source_or_constructing_wallet(monkeypatch, blocked):
+    from tests.integration import test_ecash_transfer_live as live
+    relay = "wss://nos.lol"
+    if blocked == "rate-limited":
+        helpers.relay_rate_limited(relay, "bootstrap", "HTTP 429")
+    else:
+        helpers.relay_unsuitable(relay, "bootstrap", "unsupported")
+    source = Mock(side_effect=AssertionError("Must not read source configuration"))
+    factory = Mock(side_effect=AssertionError("Must not construct wallet or perform network operations"))
+    monkeypatch.setattr(live, "require_source_config", source)
+    monkeypatch.setattr(live, "Acorn", factory)
+    with pytest.raises(pytest.skip.Exception):
+        await live.test_live_gift_wrapped_ecash_transfer_round_trip({"relay": relay, "name": "third-party"})
+    source.assert_not_called()
+    factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gift_wrap_checks_blocked_transfer_override(monkeypatch):
+    from tests.integration import test_ecash_transfer_live as live
+    helpers.relay_rate_limited("wss://nos.lol", "bootstrap", "HTTP 429")
+    monkeypatch.setattr(live, "require_source_config", lambda: {"nsec": "unused", "home_relay": "wss://home.example"})
+    monkeypatch.setattr(live, "get_test_transfer_relay", lambda *args, **kwargs: "wss://nos.lol")
+    factory = Mock(side_effect=AssertionError("Must not construct wallet"))
+    monkeypatch.setattr(live, "Acorn", factory)
+    with pytest.raises(pytest.skip.Exception, match="rate-limited"):
+        await live.test_live_gift_wrapped_ecash_transfer_round_trip({"relay": "wss://other.example", "name": "third-party"})
+    factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_gift_wrap_unrelated_rate_limit_does_not_skip(monkeypatch):
+    from tests.integration import test_ecash_transfer_live as live
+    helpers.relay_rate_limited("wss://nos.lol", "bootstrap", "HTTP 429")
+    source = Mock(side_effect=RuntimeError("Reached source configuration"))
+    monkeypatch.setattr(live, "require_source_config", source)
+    with pytest.raises(RuntimeError, match="Reached source configuration"):
+        await live.test_live_gift_wrapped_ecash_transfer_round_trip({"relay": "wss://other.example", "name": "third-party"})
+    source.assert_called_once()
