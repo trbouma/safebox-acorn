@@ -694,3 +694,37 @@ after successful copies. This is a copy/migration tool, not a standalone archive
 export, a funds transfer, or proof that a relay returned every record: queries
 are bounded to 10,000 events and fail on saturation, but relay-side omission
 cannot be ruled out. Review all skipped/failed entries before retiring a source.
+
+Copy results are printed as each record completes. Failures include a stage
+and the source hostname when downloading files. For missing or outdated source
+locations, repeat `--source-blossom` to supply preferred candidates:
+
+```bash
+acorn records copy --destination-relay wss://spurline.safebox.dev \
+  --source-blossom https://grove.safebox.dev \
+  --source-blossom https://blossom.getsafebox.app \
+  --destination-blossom https://grove.safebox.dev
+```
+
+Record copying uses Stroma's `BlossomPool`: explicit source servers are raced
+first, then stored/discovered locations if necessary. Only digest-verified bytes
+are accepted. Acorn additionally verifies decrypted content before publishing
+the destination record. Servers must be public HTTPS origins (no URL paths),
+with a 25 MiB encrypted-file limit. For trusted private-network HTTPS servers,
+opt in with `--allow-private-blossom`; this does not enable plain HTTP.
+
+Explicit sources are tried first, then discovered/stored sources if needed.
+Duplicate URLs are tried once per retrieval; a failed download or wrong digest
+falls through to the next source. Only ciphertext matching the record's digest
+is decrypted. These options do not change saved configuration, copy files to
+source servers, or delete source files. Source and destination may use the same
+server; re-encryption still creates a fresh ciphertext object.
+
+Failures include a stage
+(source resolution/download/decryption, destination encryption/upload/readback,
+or record publication/readback) and a sanitized reason. HTTP status codes are
+reported without server response bodies, authorization headers, file keys, or
+private exception messages. Missing `origsha256` is reported explicitly; this
+does not bypass integrity verification. A failure after upload or record
+publication can still leave partial destination data. Rerun the preview before
+retrying and share only the stage/reason lines when requesting support.

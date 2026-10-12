@@ -303,16 +303,16 @@ files = [
 [package.dependencies]
 cbor2 = {version = ">=5.5.0,<7.0.0", markers = "python_version >= \"3.9\""}
 coincurve = [
-    {version = ">=21.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=18.0.0", markers = "python_version == \"3.11\""},
+    {version = ">=21.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=19.0.1", markers = "python_version >= \"3.12\" and python_version < \"3.13\""},
 ]
 crcmod = ">=1.7,<2.0"
 ecdsa = ">=0.17,<1.0"
 ed25519-blake2b-fork = ">=1.4.2,<2.0.0"
 py-sr25519-bindings = [
-    {version = ">=0.2.2,<1.0.0", markers = "python_version >= \"3.13\""},
     {version = ">=0.2.0,<1.0.0", markers = "python_version >= \"3.11\" and python_version < \"3.13\""},
+    {version = ">=0.2.2,<1.0.0", markers = "python_version >= \"3.13\""},
 ]
 pycryptodome = ">=3.15,<4.0"
 pynacl = ">=1.5,<2.0"
@@ -566,8 +566,8 @@ files = [
 
 [package.dependencies]
 cffi = [
-    {version = ">=1.17", markers = "python_version == \"3.13\""},
     {version = ">=1.6", markers = "python_version < \"3.13\""},
+    {version = ">=1.17", markers = "python_version == \"3.13\""},
 ]
 
 [[package]]
@@ -2940,12 +2940,13 @@ aiohttp = ">=3.10,<4"
 bech32 = ">=1.2,<2"
 coincurve = ">=20,<22"
 pycryptodome = ">=3.20,<4"
+yarl = ">=1.9,<2"
 
 [package.source]
 type = "git"
 url = "https://github.com/trbouma/stroma.git"
-reference = "main"
-resolved_reference = "544165018f38f12d8b4f33d70b940a996acb46c3"
+reference = "a2898d82348b201cb5794f0f00d3d2aca08bf6c5"
+resolved_reference = "a2898d82348b201cb5794f0f00d3d2aca08bf6c5"
 
 [[package]]
 name = "tibs"
@@ -3286,4 +3287,4 @@ post-quantum = ["liboqs-python"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "aabba58829bd04564309a0983b755e79609c213e5de1e7805e92954087fe506f"
+content-hash = "b4cbe5e173e5b30426b37e28a3436f0219105199ba5d26adb4584db3997ec025"

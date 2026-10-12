@@ -3192,16 +3192,24 @@ def records():
 @records.command("copy")
 @click.option("--destination-relay", required=True, help="Existing destination wallet's home relay.")
 @click.option("--destination-blossom", default=None, help="Copy attachments to this HTTPS Blossom server.")
+@click.option("--source-blossom", multiple=True, help="Try this HTTPS source server before stored locations; repeat for multiple servers.")
+@click.option("--allow-private-blossom", is_flag=True, help="Allow private-network HTTPS Blossom endpoints for a trusted local deployment.")
 @click.option("--legacy", is_flag=True, help="Use Acorn's legacy recovery-phrase derivation.")
 @click.option("--dry-run", is_flag=True, help="Verify identities and preview; write nothing.")
-def copy_records(destination_relay, destination_blossom, legacy, dry_run):
+def copy_records(destination_relay, destination_blossom, source_blossom, allow_private_blossom, legacy, dry_run):
     from acorn import record_copy
 
     try:
         relay = record_copy.endpoint(_normalize_relay(destination_relay), ("wss", "ws"))
         blossom = record_copy.endpoint(destination_blossom, ("https",)) if destination_blossom else None
+        sources = tuple(dict.fromkeys(record_copy.endpoint(server, ("https",)) for server in source_blossom))
+        # Validate pool policy before requesting a secret. No network requests.
+        if sources:
+            sources = record_copy.BlossomPool(sources, allow_private=allow_private_blossom).servers
+        if blossom:
+            blossom = record_copy.BlossomPool([blossom], allow_private=allow_private_blossom).servers[0]
     except ValueError:
-        raise click.ClickException("Invalid destination relay or Blossom URL.") from None
+        raise click.ClickException("Invalid relay or source/destination Blossom URL.") from None
     secret = _prompt_secret("Destination private key or recovery phrase")
     try:
         nsec = record_copy.destination_nsec(secret, legacy=legacy)
@@ -3214,9 +3222,14 @@ def copy_records(destination_relay, destination_blossom, legacy, dry_run):
                    blossom_home_server=blossom)
     nsec = None
 
+    def print_result(row):
+        click.echo(f"{row.get('label', row['source_id'])!r}: {row['status']}")
+        if row.get("error_stage"):
+            click.echo(f"  Stage: {row['error_stage']}; {row['error_detail']}")
+
     async def run_copy():
         try:
-            rows = await record_copy.prepare(source, target, blossom=blossom)
+            rows = await record_copy.prepare(source, target, blossom=blossom, source_blossoms=sources, allow_private=allow_private_blossom)
         except ValueError as exc:
             raise click.ClickException(str(exc)) from None
         except Exception:
@@ -3225,7 +3238,7 @@ def copy_records(destination_relay, destination_blossom, legacy, dry_run):
         click.echo(f"Destination: {target.pubkey_bech32} at {target.home_relay} (existing configuration verified)")
         click.echo("Only user records in kind 37375 are included. Funds and operational state are excluded.")
         for row in rows:
-            click.echo(f"{row.get('label', row['source_id'])!r}: {row['status']}")
+            print_result(row)
         eligible = sum(row["status"] == "copy" for row in rows)
         click.echo(f"Eligible: {eligible}; other/skipped: {len(rows) - eligible}.")
         if dry_run or not eligible:
@@ -3235,11 +3248,9 @@ def copy_records(destination_relay, destination_blossom, legacy, dry_run):
         if not click.confirm("Copy these records to the verified destination, leaving the source unchanged?", default=False):
             return
         try:
-            results = await record_copy.execute(source, target, rows, blossom=blossom)
+            results = await record_copy.execute(source, target, rows, blossom=blossom, source_blossoms=sources, allow_private=allow_private_blossom, on_result=print_result)
         except Exception:
             raise click.ClickException("Copy interrupted. Inspect the destination and retry the preview; the source is unchanged.") from None
-        for row in results:
-            click.echo(f"{row.get('label', row['source_id'])!r}: {row['status']}")
         copied = sum(row["status"] == "copied and verified" for row in results)
         click.echo(f"Copied and verified: {copied}. Source records and local account configuration unchanged.")
         if copied:

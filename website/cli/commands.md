@@ -1009,6 +1009,34 @@ Commands:
 
 Copies labeled user records in kind 37375 to a different, already initialized Acorn. Prompts privately for the destination key or phrase, verifies the target configuration, and previews records before confirmation. `--dry-run` writes nothing. Attachments require `--destination-blossom` and are decrypted, verified, and freshly encrypted; otherwise attachment-bearing records are skipped. Conflicts are never overwritten, source state is untouched, and funds/configuration/recovery journals are excluded. See the lifecycle migration section for completeness and retry limitations.
 
+Run this command from the source account. For example, preview a migration
+including files stored on current or older Blossom servers:
+
+```bash
+acorn records copy \
+  --destination-relay wss://spurline.safebox.dev \
+  --source-blossom https://grove.safebox.dev \
+  --source-blossom https://blossom.getsafebox.app \
+  --destination-blossom https://grove.safebox.dev \
+  --dry-run
+```
+
+Enter the destination private key or recovery phrase at the hidden prompt;
+do not put it on the command line. Check both public identities and the preview,
+then repeat without `--dry-run` and confirm to copy.
+
+Stroma's `BlossomPool` queries explicit source candidates concurrently, accepts
+the first digest-verified response, and cancels remaining requests. If that
+group fails, it tries stored/discovered locations. Acorn still verifies decrypted
+content and freshly encrypted destination readback before publishing the record.
+This is concurrent retrieval, not a race between wallet writers.
+
+Use HTTPS origins without paths, credentials, queries, or fragments. The pool
+limits encrypted files to 25 MiB. For a trusted private-network HTTPS deployment,
+add `--allow-private-blossom`; plain HTTP remains disabled. These options do not
+change saved account configuration. See [the migration lifecycle](lifecycle.md#8-migrate-private-records-to-a-new-identity)
+for retry handling and legacy-wallet precautions.
+
 ```text
 Usage: acorn records copy [OPTIONS]
 
@@ -1016,6 +1044,10 @@ Options:
   --destination-relay TEXT    Existing destination wallet's home relay.
                               [required]
   --destination-blossom TEXT  Copy attachments to this HTTPS Blossom server.
+  --allow-private-blossom     Allow private-network HTTPS Blossom endpoints for
+                             a trusted local deployment.
+  --source-blossom TEXT       Try this HTTPS source server before stored
+                             locations; repeat for multiple servers.
   --legacy                    Use Acorn's legacy recovery-phrase derivation.
   --dry-run                   Verify identities and preview; write nothing.
   --help                      Show this message and exit.
@@ -1271,4 +1303,3 @@ Options:
   -r, --relays TEXT   comma-separated relays to search for the event
   --help              Show this message and exit.
 ```
-

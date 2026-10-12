@@ -200,6 +200,29 @@ configuration (`wallet`, or `wallet_config` when `wallet` is absent), then shows
 both public identities. Repeat without `--dry-run` to
 copy after confirmation.
 
+If source file locations are missing or out of date, supply one or more explicit
+source servers. Stroma's `BlossomPool` races these candidates first, before
+trying discovered or stored locations:
+
+```bash
+acorn records copy --destination-relay wss://new-relay.example.com \
+  --source-blossom https://source-blossom.example.com \
+  --source-blossom https://older-blossom.example.com \
+  --destination-blossom https://new-blossom.example.com
+```
+
+The pool verifies ciphertext digests and confirms destination storage; Acorn
+also decrypts the readback and verifies the original content. The pool defaults
+to public HTTPS origins and a 25 MiB encrypted-file limit. Private-network HTTPS
+servers require `--allow-private-blossom` for trusted deployments. HTTP and URL
+paths are not supported by this command.
+
+Downloads must match the source record's ciphertext digest. The first verified
+response wins and remaining requests are cancelled. A missing file or digest
+mismatch does not prevent another candidate from succeeding; no match means no destination record is
+published. Options apply only to this command and do not change saved settings.
+Source download errors identify hostnames, not private paths or credentials.
+
 - Copies labeled user records in kind 37375; excludes funds, configuration,
   locks, payment queues, and recovery state. Other record kinds are not included.
 - Does not load proofs or run payment recovery, so it can rescue records from an
@@ -222,9 +245,33 @@ account. Queries stop on a 10,000-event saturation limit; a relay can still omit
 records. This is not an exhaustive archive guarantee. A partial attempt can
 leave an uploaded file or an unverified record; rerun the preview before retrying.
 
+Results appear as each record completes. On failure, the next line identifies
+the stage and a sanitized reason, for example a source-download HTTP 404, a
+missing plaintext digest (`origsha256`), or a destination-upload HTTP 403.
+Share the stage/reason lines for diagnosis; do not share private keys, recovery
+phrases, raw record JSON, or attachment encryption parameters. Reporting does
+not weaken verification or automatically discard an uncertain destination copy.
+
 Moving funds, updating public identity, and changing address registration are
 separate operations. New keys cannot revoke access to plaintext or old file keys
 someone already obtained.
+
+### Migrating away from a legacy wallet
+
+If a new wallet works but an older wallet cannot finalize incoming payments,
+that suggests an account-specific problem; it does not establish the cause.
+Possible causes include old operational state, configuration differences, or
+another client writing under the same identity. An actively running legacy
+client is different from simply having old user records.
+
+Stop legacy workers and clients for the old identity before investigating its
+payment state. Keep its private key and recovery records available; do not delete
+uncertain payment state merely to make an error disappear. Use `records copy`
+to move eligible user records and attachments to a separately initialized wallet,
+without transferring the old payment queues, proofs, locks, or recovery journals.
+Pause other destination writers while copying, inspect copied records and files
+in the new account, and review all skipped or failed results before retiring the
+old account. Any remaining funds require separate recovery or transfer.
 
 ## 9. Investigate problems before destructive intervention
 

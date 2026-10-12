@@ -4,13 +4,76 @@ import hashlib
 import json
 import os
 import re
+from contextlib import contextmanager
 from urllib.parse import urlsplit
 
-from stroma import ClientPool, NIP44Encrypt, Keys
+import requests
+from cryptography.exceptions import InvalidTag
 
-from acorn.acorn import INTERNAL_RECORD_LABELS, BlossomClient
+from stroma import ClientPool, NIP44Encrypt, Keys, BlossomPool, BlossomError
+
+from acorn.acorn import INTERNAL_RECORD_LABELS
 from acorn.models import SafeboxRecord, WalletConfig, EncryptionParms
-from acorn.func_utils import recover_nsec_from_seed, encrypt_bytes, decrypt_and_verify_record_blob
+from acorn.func_utils import recover_nsec_from_seed, encrypt_bytes, decrypt_bytes
+
+
+class CopyFailure(ValueError):
+    """Only fixed, non-sensitive diagnostics may be supplied here."""
+    def __init__(self, stage, detail):
+        self.stage = stage
+        self.detail = detail
+        super().__init__(detail)
+
+
+def safe_failure(exc):
+    if isinstance(exc, BlossomError) and exc.outcomes:
+        return pool_failures(exc.outcomes)
+    code = getattr(exc, "status_code", None)
+    if code is None:
+        code = getattr(getattr(exc, "response", None), "status_code", None)
+    if type(code) is int and 400 <= code <= 599:
+        description = {401: "authorization required", 402: "payment required",
+                       403: "access refused", 404: "file or endpoint not found",
+                       413: "file too large", 429: "rate limited"}.get(code, "server rejected the request")
+        return f"HTTP {code}: {description}"
+    if isinstance(exc, (TimeoutError, requests.exceptions.Timeout)):
+        return "Request timed out"
+    if isinstance(exc, (ConnectionError, requests.exceptions.ConnectionError)):
+        return "Connection failed; check endpoint and network access"
+    if isinstance(exc, InvalidTag):
+        return "Attachment authentication failed; key, nonce, or ciphertext does not match"
+    if isinstance(exc, (ValueError, TypeError, KeyError)):
+        return "Invalid data, encryption parameters, or digest"
+    return "Operation failed; no private exception details displayed"
+
+
+def pool_failures(outcomes):
+    details = []
+    approved = {"Blob SHA-256 mismatch", "Blob exceeds the size limit",
+                "Operation deadline exceeded", "Upload authorization failed",
+                "Operation deadline exceeded; storage may have occurred"}
+    for outcome in outcomes:
+        host = urlsplit(outcome.server).hostname or "unknown server"
+        code = re.fullmatch(r"(?:Retrieval|Upload) returned HTTP ([0-9]{3})", outcome.message)
+        reason = (f"HTTP {code.group(1)}" if code else outcome.message
+                  if outcome.message in approved else "Request failed or unconfirmed")
+        details.append(f"{host}: {reason}")
+    return "; ".join(details) or "No confirmed Blossom result"
+
+
+@contextmanager
+def copy_stage(name):
+    try:
+        yield
+    except CopyFailure:
+        raise
+    except Exception as exc:
+        raise CopyFailure(name, safe_failure(exc)) from None
+
+
+def failure_row(row, exc):
+    return {**row, "status": "failed or unverified; inspect destination before retrying",
+            "error_stage": exc.stage, "error_detail": exc.detail}
 
 
 def destination_nsec(secret: str, *, legacy: bool = False) -> str:
@@ -95,7 +158,7 @@ def verify_destination(target, events):
         raise ValueError("Destination configuration is invalid or unreadable") from None
 
 
-async def prepare(source, target, *, blossom=None):
+async def prepare(source, target, *, blossom=None, source_blossoms=(), allow_private=False):
     if source.pubkey_hex == target.pubkey_hex:
         raise ValueError("Source and destination are the same identity; use relay replication")
     destination = await inventory(target)
@@ -123,34 +186,42 @@ async def prepare(source, target, *, blossom=None):
             row.update(label=label, data=data)
             current = destination.get(target._record_label_hash(label))
             if current is not None:
-                matches = await matches_copy(source, data, decrypt(target, current), blossom)
+                matches = await matches_copy(source, data, decrypt(target, current), blossom, source_blossoms=source_blossoms, allow_private=allow_private)
                 row["status"] = "already present" if matches else "conflict (skipped)"
             elif record.blobsha256 and not blossom:
                 row["status"] = "attachment needs --destination-blossom (skipped)"
             else:
                 row["status"] = "copy"
+        except CopyFailure as exc:
+            row = failure_row(row, exc)
         except Exception:
             row["status"] = "unreadable, reserved, or unlabeled record (skipped)"
         rows.append(row)
     return rows
 
 
-def plaintext(data, raw):
+def plaintext(data, raw, stage="attachment verification"):
     record = SafeboxRecord.model_validate(data)
     if hashlib.sha256(raw).hexdigest() != record.blobsha256:
-        raise ValueError("Attachment ciphertext digest mismatch")
+        raise CopyFailure(stage, "Attachment ciphertext digest mismatch")
     if record.encryptparms:
         if record.encryptparms.aad:
-            raise ValueError("Attachment uses unsupported additional authenticated data")
-        return decrypt_and_verify_record_blob(
-            cipherbytes=raw, encryptparms=record.encryptparms,
-            blobsha256=record.blobsha256, origsha256=record.origsha256)
+            raise CopyFailure(stage, "Attachment uses unsupported additional authenticated data")
+        if not record.origsha256:
+            raise CopyFailure(stage, "Source record is missing the plaintext digest (origsha256)")
+        if record.encryptparms.alg != "AES-256-GCM":
+            raise CopyFailure(stage, "Unsupported attachment encryption algorithm")
+        clear = decrypt_bytes(raw, bytes.fromhex(record.encryptparms.key),
+                              bytes.fromhex(record.encryptparms.iv))
+        if hashlib.sha256(clear).hexdigest() != record.origsha256:
+            raise CopyFailure(stage, "Attachment plaintext digest mismatch")
+        return clear
     if record.origsha256 and hashlib.sha256(raw).hexdigest() != record.origsha256:
-        raise ValueError("Attachment plaintext digest mismatch")
+        raise CopyFailure(stage, "Attachment plaintext digest mismatch")
     return raw
 
 
-async def matches_copy(source, data, existing, blossom):
+async def matches_copy(source, data, existing, blossom, *, source_blossoms=(), allow_private=False):
     if not data.get("blobsha256"):
         return existing == data
     if not blossom or not isinstance(existing, dict):
@@ -166,66 +237,104 @@ async def matches_copy(source, data, existing, blossom):
             or existing.get("blob_service_npubs")):
         return False
     # Verify actual plaintext, not just a claimed source digest or marker.
-    original = await read_attachment(source, data)
-    client = BlossomClient(nsec=None, default_servers=[blossom])
-    blob = await asyncio.to_thread(client.get_blob, server=blossom, sha256=existing["blobsha256"])
-    return plaintext(existing, blob.get_bytes()) == original
+    original = await read_attachment(source, data, source_blossoms=source_blossoms, allow_private=allow_private)
+    with copy_stage("destination attachment readback"):
+        blob = await BlossomPool([blossom], allow_private=allow_private).retrieve(existing["blobsha256"])
+    with copy_stage("destination attachment verification"):
+        return plaintext(existing, blob.content, "destination attachment verification") == original
 
 
-async def read_attachment(source, data):
+async def read_attachment(source, data, *, source_blossoms=(), allow_private=False):
     record = SafeboxRecord.model_validate(data)
-    servers = await source.resolve_blob_servers(record, capability="blossom.read")
-    client = BlossomClient(nsec=None, default_servers=servers)
-    raw = None
-    for server in servers:
-        try:
-            blob = await asyncio.to_thread(client.get_blob, server=server, sha256=record.blobsha256)
-            candidate = blob.get_bytes()
-            if hashlib.sha256(candidate).hexdigest() == record.blobsha256:
-                raw = candidate
-                break
-        except Exception:
-            continue
+    overrides = [endpoint(server, ("https",)) for server in source_blossoms]
+    failures = []
+    tried = set()
+
+    async def download(servers):
+        candidates = []
+        for server in servers:
+            try:
+                server = BlossomPool([server], allow_private=allow_private).servers[0]
+            except ValueError:
+                failures.append("Source endpoint rejected by Blossom URL/network policy")
+                continue
+            if server in tried:
+                continue
+            tried.add(server)
+            candidates.append(server)
+        if candidates:
+            try:
+                result = await BlossomPool(candidates, allow_private=allow_private).retrieve(record.blobsha256)
+                return result.content
+            except Exception as exc:
+                failures.append(safe_failure(exc))
+        return None
+
+    # Overrides can rescue a record even if its old service-resolution metadata
+    # is unavailable or invalid. Never contact discovery until these are tried.
+    raw = await download(overrides)
     if raw is None:
-        raise ValueError("Attachment unavailable or digest verification failed")
-    return plaintext(data, raw)
+        try:
+            servers = await source.resolve_blob_servers(record, capability="blossom.read")
+        except Exception as exc:
+            if not tried:
+                raise CopyFailure("source attachment resolution", safe_failure(exc)) from None
+            failures.append("Stored source resolution: " + safe_failure(exc))
+            servers = []
+        raw = await download(servers)
+    if raw is None:
+        if not tried and not failures:
+            raise CopyFailure("source attachment resolution", "No source Blossom endpoint could be resolved")
+        raise CopyFailure("source attachment download", "; ".join(dict.fromkeys(failures)))
+    with copy_stage("source attachment decryption"):
+        return plaintext(data, raw, "source attachment decryption")
 
 
-async def copy_attachment(source, target, data, blossom):
-    original = await read_attachment(source, data)
-    key = os.urandom(32)
-    encrypted = encrypt_bytes(original, key)
+async def copy_attachment(source, target, data, blossom, *, source_blossoms=(), allow_private=False):
+    original = await read_attachment(source, data, source_blossoms=source_blossoms, allow_private=allow_private)
+    with copy_stage("destination attachment encryption"):
+        key = os.urandom(32)
+        encrypted = encrypt_bytes(original, key)
     digest = hashlib.sha256(encrypted.cipherbytes).hexdigest()
     result = {**data, "blobsha256": digest,
               "origsha256": hashlib.sha256(original).hexdigest(),
               "blobref": f"{blossom}/{digest}", "blob_service_npubs": [],
               "encryptparms": EncryptionParms(alg=encrypted.alg, key=key.hex(),
                                               iv=encrypted.iv.hex()).model_dump()}
-    destination = BlossomClient(nsec=target.privkey_bech32, default_servers=[blossom])
-    uploaded = await asyncio.to_thread(destination.upload_blob, blossom, data=encrypted.cipherbytes,
-                                      mime_type="application/octet-stream", description="Private record copy")
-    if uploaded.get("sha256") != digest:
-        raise ValueError("Attachment upload returned the wrong digest")
-    observed = await asyncio.to_thread(destination.get_blob, server=blossom, sha256=digest)
-    if plaintext(result, observed.get_bytes()) != original:
-        raise ValueError("Destination attachment verification failed")
+    with copy_stage("destination attachment upload"):
+        destination = BlossomPool([blossom], allow_private=allow_private)
+        uploaded = await destination.store(encrypted.cipherbytes, signer=target.k, require="all")
+        if not uploaded.ok:
+            raise CopyFailure("destination attachment upload", pool_failures(uploaded.outcomes))
+        if uploaded.digest != digest:
+            raise CopyFailure("destination attachment upload", "Attachment upload returned the wrong digest")
+    with copy_stage("destination attachment readback"):
+        observed = await destination.retrieve(digest)
+    with copy_stage("destination attachment verification"):
+        if plaintext(result, observed.content, "destination attachment verification") != original:
+            raise CopyFailure("destination attachment verification", "Destination plaintext differs from the source")
     return result
 
 
-async def execute(source, target, rows, *, blossom=None):
+async def execute(source, target, rows, *, blossom=None, source_blossoms=(), allow_private=False, on_result=None):
     """Recheck both inventories; never overwrite or delete anything."""
-    fresh = await prepare(source, target, blossom=blossom)
+    fresh = await prepare(source, target, blossom=blossom, source_blossoms=source_blossoms, allow_private=allow_private)
     fresh_by_id = {r["source_id"]: r for r in fresh}
     results = []
+    def report(row):
+        results.append(row)
+        if on_result:
+            on_result({key: row[key] for key in ("label", "source_id", "status", "error_stage", "error_detail") if key in row})
     for row in rows:
         if row["status"] != "copy":
-            results.append(row)
+            report(row)
             continue
         current = fresh_by_id.get(row["source_id"])
         if current is None or current["status"] != "copy":
-            results.append({**row, "status": "source or destination changed (skipped)"})
+            report(current if current and current.get("error_stage") else {**row, "status": "source or destination changed (skipped)"})
             continue
         try:
+            stage = "destination record conflict check"
             # Recheck immediately before publishing as well. Nostr does not
             # provide compare-and-swap; users must pause destination writers.
             target_events = await inventory(target)
@@ -233,14 +342,19 @@ async def execute(source, target, rows, *, blossom=None):
                 raise ValueError("Destination record appeared during copy")
             data = dict(row["data"])
             if data.get("blobsha256"):
-                data = await copy_attachment(source, target, data, blossom)
+                stage = "attachment migration"
+                data = await copy_attachment(source, target, data, blossom, source_blossoms=source_blossoms, allow_private=allow_private)
+            stage = "destination record publication"
             await target.set_wallet_info(row["label"], json.dumps(data),
                                          record_kind=37375, verify=True)
+            stage = "destination record readback"
             observed = (await inventory(target)).get(target._record_label_hash(row["label"]))
             if observed is None or decrypt(target, observed) != data:
                 raise ValueError("Destination record readback failed")
-            results.append({**row, "status": "copied and verified"})
-        except Exception:
-            # Do not expose exception text that could contain decrypted data.
-            results.append({**row, "status": "failed or unverified; inspect destination before retrying"})
+            result = {**row, "status": "copied and verified"}
+        except CopyFailure as exc:
+            result = failure_row(row, exc)
+        except Exception as exc:
+            result = failure_row(row, CopyFailure(stage, safe_failure(exc)))
+        report(result)
     return results

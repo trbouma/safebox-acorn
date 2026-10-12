@@ -23,7 +23,8 @@ def _load_cli(monkeypatch, tmp_path):
 
 
 @pytest.mark.parametrize("dry_run,answer,writes", [(True, "", False), (False, "n\n", False), (False, "y\n", True)])
-def test_record_copy_cli_confirmation_and_no_secret_output(monkeypatch, tmp_path, dry_run, answer, writes):
+@pytest.mark.parametrize("allow_private", [False, True])
+def test_record_copy_cli_confirmation_and_no_secret_output(monkeypatch, tmp_path, dry_run, answer, writes, allow_private):
     from types import SimpleNamespace
     from acorn import record_copy
     cli = _load_cli(monkeypatch, tmp_path)
@@ -36,14 +37,28 @@ def test_record_copy_cli_confirmation_and_no_secret_output(monkeypatch, tmp_path
     monkeypatch.setattr(cli, "_prompt_secret", lambda *args: secret)
     rows = [{"label": "note", "source_id": "a" * 64, "status": "copy", "data": {"payload": "private-content"}}]
     monkeypatch.setattr(record_copy, "prepare", AsyncMock(return_value=rows))
-    execute = AsyncMock(return_value=[{**rows[0], "status": "copied and verified"}])
+    async def execute_copy(*args, on_result=None, **kwargs):
+        result = {**rows[0], "status": "copied and verified"}
+        on_result(result)
+        return [result]
+    execute = AsyncMock(side_effect=execute_copy)
     monkeypatch.setattr(record_copy, "execute", execute)
-    args = ["--destination-relay", "wss://target.example"] + (["--dry-run"] if dry_run else [])
+    args = ["--destination-relay", "wss://target.example",
+            "--source-blossom", "https://source.example/",
+            "--source-blossom", "https://older.example"] + (["--dry-run"] if dry_run else [])
+    if allow_private:
+        args.append("--allow-private-blossom")
     result = CliRunner().invoke(cli.copy_records, args, input=answer)
     assert result.exit_code == 0, result.output
     assert "npub-target" in result.output and "npub-source" in result.output
     assert secret not in result.output and "private-content" not in result.output
     assert execute.await_count == int(writes)
+    assert record_copy.prepare.call_args.kwargs["allow_private"] is allow_private
+    assert record_copy.prepare.call_args.kwargs["source_blossoms"] == ("https://source.example", "https://older.example")
+    if writes:
+        assert execute.call_args.kwargs["allow_private"] is allow_private
+        assert execute.call_args.kwargs["source_blossoms"] == ("https://source.example", "https://older.example")
+        assert "'note': copied and verified" in result.output
 
 
 def test_record_copy_cli_missing_target_cannot_write(monkeypatch, tmp_path):
