@@ -3287,4 +3287,4 @@ post-quantum = ["liboqs-python"]
 [metadata]
 lock-version = "2.0"
 python-versions = ">=3.11,<3.14"
-content-hash = "aabba58829bd04564309a0983b755e79609c213e5de1e7805e92954087fe506f"
+content-hash = "d947a2ca4ad9532881d0a6e2bc2e0a8ef7560991fbefee8e6b596f4482f7e321"

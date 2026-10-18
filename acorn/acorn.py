@@ -1487,6 +1487,25 @@ class Acorn:
             "relays": result_relays,
         }
 
+    @staticmethod
+    def generate_recovery_material(strength: int = 256) -> dict:
+        """Generate custody material without publishing or exposing key operations to hosts."""
+        phrase, nsec = generate_seed_phrase_and_nsec(strength=strength)
+        return {'phrase': phrase, 'nsec': nsec,
+                'npub': Keys(priv_k=nsec).public_key_bech32(), 'legacy': False}
+
+    @staticmethod
+    def recover_material(phrase: str, legacy: bool = False) -> dict:
+        """Derive the Acorn identity inside the Acorn boundary, without network I/O."""
+        phrase = ' '.join(phrase.strip().split())
+        nsec = recover_nsec_from_seed(phrase, legacy=legacy)
+        return {'phrase': phrase, 'nsec': nsec,
+                'npub': Keys(priv_k=nsec).public_key_bech32(), 'legacy': legacy}
+
+    def public_identity(self) -> dict:
+        """Expose public identity only; callers need not access private key objects."""
+        return {'hex': self.pubkey_hex, 'npub': self.pubkey_bech32}
+
     async def create_instance(
         self,
         keepkey: bool = False,
@@ -3475,7 +3494,29 @@ class Acorn:
                                 error_code: str = None,
                                 verify: bool = True,
                                 verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+                                prepare_only: bool = False,
+                                prepared_event: dict | None = None,
+                                created_at: int | None = None,
+                                use_wallet_balance: bool = True,
                                 ):
+        if prepare_only or prepared_event is not None:
+            from .incoming import history_event, validate_history
+            raw = prepared_event
+            if raw is None:
+                payload = TxHistory(create_time=created_at if created_at is not None else int(time()),
+                    tx_type=tx_type, amount=amount, comment=comment or '',
+                    tendered_amount=amount if tendered_amount is None else tendered_amount,
+                    tendered_currency=tendered_currency, fees=fees,
+                    current_balance=self.balance if use_wallet_balance else None,
+                    invoice=invoice, preimage=payment_preimage, payment_hash=payment_hash,
+                    description_hash=description_hash, error_code=error_code)
+                raw = history_event(self, payload)
+            validate_history(self, raw, tx_type, amount, invoice)
+            if prepare_only:
+                return raw
+            if not await self._publish_incoming_event(self.home_relay, raw, private=True):
+                raise RuntimeError('Acorn history delivery not confirmed')
+            return {'status': 'OK', 'event_id': raw['id'], 'verified': True}
         self.logger.debug("op=add_tx_history status=start type=%s amount=%s", tx_type, amount)
         my_enc = NIP44Encrypt(self.k)
         if comment == None: #sometimes none get passed in
@@ -3571,6 +3612,28 @@ class Acorn:
         return result
             
 
+
+    async def _publish_incoming_event(self, relay, event, *, private=False):
+        from .incoming import publish_event
+        return await publish_event(self, relay, event, private=private)
+
+    async def add_zap_receipt(self, request_json, invoice, paid_at, *, relay=None,
+                              prepare_only=False, prepared_event=None):
+        """Prepare or deliver a receipt only after the caller confirms credit."""
+        from .incoming import zap_event, validate_event
+        raw = prepared_event if prepared_event is not None else zap_event(self, request_json, invoice, paid_at)
+        event = validate_event(self, raw, 9735)
+        tags = list(event.tags)
+        if (['description', request_json] not in tags or ['bolt11', invoice] not in tags
+                or raw.get('created_at') != paid_at):
+            raise ValueError('Prepared receipt does not match its payment')
+        if prepare_only:
+            return raw
+        if not relay:
+            raise ValueError('Receipt relay required')
+        if not await self._publish_incoming_event(relay, raw):
+            raise RuntimeError('Zap receipt delivery not confirmed')
+        return {'status': 'OK', 'event_id': raw['id'], 'verified': True}
 
     async def get_tx_history(self):
         self.logger.debug("Get tx history")
@@ -10272,8 +10335,24 @@ class Acorn:
         replicate_relays: List[str] = None,
         verify: bool = False,
         verify_timeout: float = RELAY_VERIFY_TIMEOUT_SECONDS,
+        prepare_only: bool = False,
+        prepared_events: list[dict] | None = None,
     ):
-        
+        if prepare_only or prepared_events is not None:
+            from .incoming import proofs_event, validate_proofs
+            if not proofs_arg:
+                raise ValueError('Proof delivery cannot be empty')
+            if replicate_relays and replicate_relays != [self.home_relay]:
+                raise ValueError('Prepared proof delivery currently uses the home relay only')
+            events = prepared_events if prepared_events is not None else [proofs_event(self, proofs_arg)]
+            validate_proofs(self, events, proofs_arg)
+            if prepare_only:
+                return events
+            for raw in events:
+                if not await self._publish_incoming_event(self.home_relay, raw, private=True):
+                    raise RuntimeError('Acorn proof delivery not confirmed')
+            return {'status': 'OK', 'event_ids': [e['id'] for e in events], 'verified': True}
+
         records_to_write = []
         # my_enc = NIP44Encrypt(self.k)
         my_enc = ExtendedNIP44Encrypt(self.k)

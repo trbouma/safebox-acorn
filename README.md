@@ -805,3 +805,40 @@ private exception messages. Missing `origsha256` is reported explicitly; this
 does not bypass integrity verification. A failure after upload or record
 publication can still leave partial destination data. Rerun the preview before
 retrying and share only the stage/reason lines when requesting support.
+
+
+## Restart-safe incoming payment writes
+
+Hosts that maintain a durable payment journal can ask Acorn to prepare a write,
+persist the opaque result, and deliver that same result after a restart. Acorn
+owns encryption, signing, payload validation, publication and verification.
+
+- `await acorn.add_proofs_obj(proofs, prepare_only=True)` returns prepared events.
+  Set `known_mints` for the proof keysets first. Deliver with
+  `await acorn.add_proofs_obj(proofs, prepared_events=saved_events)`.
+- `await acorn.add_tx_history(..., prepare_only=True)` returns a prepared history
+  event. Deliver with the same transaction arguments and `prepared_event=saved`.
+  Use `created_at=paid_at` for the original payment time and
+  `use_wallet_balance=False` when an accurate historical balance is unavailable.
+- `await acorn.add_zap_receipt(request_json, invoice, paid_at, prepare_only=True)`
+  returns a signed receipt. Deliver separately to each public relay using those
+  same arguments, `relay=url` and `prepared_event=saved`.
+
+Persist before delivery, and record verified completion afterward. Prepared
+writes reuse their event IDs, including after an acknowledgment is lost. Acorn
+rejects foreign, invalidly signed or mismatched prepared events. Prepared proof
+batches must fit one event and use one mint; prepared private writes target the
+home relay and verify readback. Receipt writes require acknowledgment and use
+public secure relay destinations with DNS-address and redirect checks. Only call
+receipt creation after payment and proof delivery have been confirmed.
+
+Existing callers that omit the prepared-write arguments retain their current
+behavior. Preparing is not publishing, and publishing a history entry is not a
+payment operation. Do not repeat mint issuance when delivery needs retrying.
+
+
+Custodial hosts should also use `Acorn.generate_recovery_material()`,
+`Acorn.recover_material(phrase, legacy=False)`, and `acorn.public_identity()`
+instead of performing user-key generation, recovery or public-key derivation
+outside Acorn. The first two return custody material for protected storage;
+`public_identity()` returns only the public hex and npub representations.
