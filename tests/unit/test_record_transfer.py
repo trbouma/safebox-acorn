@@ -236,7 +236,8 @@ async def test_component_transfer_import_preserves_effective_blob_type(monkeypat
     sender.get_record_blobdata = AsyncMock(
         return_value=("application/vnd.apple.pkpass", b"pkpass bytes")
     )
-    transfer = await sender.create_record_transfer("Boarding Pass", expires_in=3600)
+    transfer = await sender.create_record_transfer("Boarding Pass", expires_in=3600, public_only=True)
+    sender.get_record_blobdata.assert_awaited_once_with(record_name="Boarding Pass", public_only=True)
 
     receiver = object.__new__(Acorn)
     receiver.logger = logging.getLogger("record-transfer-pkpass-receiver-test")
@@ -364,3 +365,12 @@ async def test_originator_delete_rejects_unapproved_transfer_server() -> None:
             descriptor,
             allowed_servers=["https://blossom.example"],
         )
+
+
+@pytest.mark.asyncio
+async def test_presentation_forwards_public_only_blob_policy():
+    wallet = object.__new__(Acorn)
+    wallet.create_record_transfer = AsyncMock(return_value={"descriptor": "opaque"})
+    await wallet.create_record_presentation("Credential", public_only=True)
+    assert wallet.create_record_transfer.await_args.kwargs["public_only"] is True
+    assert wallet.create_record_transfer.await_args.kwargs["_capability"] == "presentation"

@@ -452,6 +452,8 @@ def powers_of_2_sum(amount):
 
     return "hello"
 class Acorn:
+    # Safe attachment preservation and public-only record capability reads.
+    record_workflows_version = 1
     k: Keys
     nsec: str
     name: str
@@ -8711,6 +8713,7 @@ class Acorn:
         expires_in: int = 3600,
         blossom_transfer_server: str | None = None,
         _capability: str = "transfer",
+        public_only: bool = False,
     ) -> Dict[str, Any]:
         """Create a short-lived encrypted bearer transfer for one record."""
 
@@ -8720,7 +8723,7 @@ class Acorn:
         blob_type = None
         blob_data = None
         if getattr(record, "blobsha256", None) or getattr(record, "blobref", None):
-            blob_type, blob_data = await self.get_record_blobdata(record_name=record_name)
+            blob_type, blob_data = await self.get_record_blobdata(record_name=record_name, public_only=public_only)
             if blob_data is None:
                 raise RuntimeError("Original Record could not be loaded for sharing")
         ciphertext, secret = encrypt_record_transfer_envelope(
@@ -8738,8 +8741,8 @@ class Acorn:
             priv_k=derive_record_transfer_authority_hex(secret)
         ).private_key_bech32()
         client = BlossomClient(nsec=authority_nsec, default_servers=[server])
-        upload = client.upload_blob(
-            server,
+        upload = await asyncio.to_thread(
+            client.upload_blob, server,
             data=ciphertext,
             mime_type=DEFAULT_BLOB_MIME,
             description=f"Temporary Acorn record {_capability}",
@@ -8776,6 +8779,7 @@ class Acorn:
         *,
         expires_in: int = 3600,
         blossom_transfer_server: str | None = None,
+        public_only: bool = False,
     ) -> Dict[str, Any]:
         """Create a view-only record presentation bearer capability."""
 
@@ -8784,6 +8788,7 @@ class Acorn:
             expires_in=expires_in,
             blossom_transfer_server=blossom_transfer_server,
             _capability="presentation",
+            public_only=public_only,
         )
 
     async def inspect_record_transfer(
@@ -8871,8 +8876,8 @@ class Acorn:
             default_servers=[descriptor.server],
         )
         try:
-            client.delete_blob(
-                server=descriptor.server,
+            await asyncio.to_thread(
+                client.delete_blob, server=descriptor.server,
                 sha256=descriptor.ciphertext_sha256,
             )
         except Exception as exc:
@@ -9011,8 +9016,8 @@ class Acorn:
                 nsec=self.privkey_bech32,
                 default_servers=[blossom_server],
             )
-            upload_result = client.upload_blob(
-                blossom_server,
+            upload_result = await asyncio.to_thread(
+                client.upload_blob, blossom_server,
                 data=encrypt_result.cipherbytes,
                 mime_type=DEFAULT_BLOB_MIME,
                 description="Blob to server",
@@ -9070,24 +9075,18 @@ class Acorn:
         )
         write_relays = self._record_relay_pool(relays)
 
-        try:
-            publish_result = await self.set_wallet_info(
-                record_name,
-                record_json_str,
-                replicate_relays=write_relays,
-                record_kind=record_kind,
-                verify=True,
-                verify_timeout=verify_timeout,
-                preflight_existing=preserve_existing_blob,
-            )
-        except Exception:
-            if sha256:
-                with contextlib.suppress(Exception):
-                    BlossomClient(
-                        nsec=self.privkey_bech32,
-                        default_servers=[blossom_server],
-                    ).delete_blob(server=blossom_server, sha256=sha256)
-            raise
+        # A failed verification does not prove the write was rejected. Keep
+        # both existing and newly uploaded ciphertext on an uncertain outcome:
+        # deleting either could break an event that a relay already accepted.
+        publish_result = await self.set_wallet_info(
+            record_name,
+            record_json_str,
+            replicate_relays=write_relays,
+            record_kind=record_kind,
+            verify=True,
+            verify_timeout=verify_timeout,
+            preflight_existing=preserve_existing_blob,
+        )
 
         # The encrypted event is authoritative. Do not couple record writes to
         # the legacy wallet tag index: doing so would require loading proofs and
@@ -9121,7 +9120,7 @@ class Acorn:
             )
             for server in cleanup_servers:
                 try:
-                    client.delete_blob(server=server, sha256=existing_blob.blobsha256)
+                    await asyncio.to_thread(client.delete_blob, server=server, sha256=existing_blob.blobsha256)
                     replaced_blob_cleanup["servers"].append(
                         {"server": server, "deleted": True}
                     )

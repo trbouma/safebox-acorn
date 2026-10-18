@@ -197,3 +197,30 @@ async def test_put_record_retains_blobref_for_unidentified_blossom(monkeypatch):
         "https://blossom.example/legacy-cipher-sha"
     )
     assert result["blobref"] == stored["blobref"]
+
+
+@pytest.mark.asyncio
+async def test_failed_payload_save_never_deletes_existing_attachment(monkeypatch):
+    wallet = wallet_with_existing_attachment()
+    wallet.set_wallet_info.side_effect = RuntimeError("publish failed")
+    def forbidden_client(**kwargs):
+        pytest.fail("An existing attachment must never be deleted on a failed payload save")
+    monkeypatch.setattr(acorn_module, "BlossomClient", forbidden_client)
+    with pytest.raises(RuntimeError, match="publish failed"):
+        await wallet.put_record("Field Notes", "updated", preserve_existing_blob=True)
+
+
+@pytest.mark.asyncio
+async def test_uncertain_replacement_preserves_both_ciphertexts(monkeypatch):
+    wallet = wallet_with_existing_attachment()
+    wallet.set_wallet_info.side_effect = TimeoutError("verification uncertain")
+    class BlobClient:
+        def __init__(self, **kwargs):
+            pass
+        def upload_blob(self, server, **kwargs):
+            return {"sha256": "new-cipher-sha"}
+        def delete_blob(self, **kwargs):
+            pytest.fail("An uncertain publication may already reference the uploaded ciphertext")
+    monkeypatch.setattr(acorn_module, "BlossomClient", BlobClient)
+    with pytest.raises(TimeoutError):
+        await wallet.put_record("Field Notes", "updated", blob_data=b"new file", preserve_existing_blob=True)
