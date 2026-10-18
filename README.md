@@ -842,3 +842,14 @@ Custodial hosts should also use `Acorn.generate_recovery_material()`,
 instead of performing user-key generation, recovery or public-key derivation
 outside Acorn. The first two return custody material for protected storage;
 `public_identity()` returns only the public hex and npub representations.
+
+### Bounded public record file retrieval
+
+Custodial web applications can call
+`await wallet.get_record_blobdata(record_name=label, public_only=True)` to
+retrieve through Stroma's BlossomPool with public-address validation, a 25 MiB
+encrypted-response limit and a 30 second retrieval deadline. Acorn still owns
+record lookup, decryption and integrity checks. The default remains the legacy
+transport for existing callers. Private/local storage needs a separately
+designed trusted deployment policy; do not disable public-address checks for
+user-supplied destinations.

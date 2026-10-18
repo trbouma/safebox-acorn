@@ -5730,6 +5730,7 @@ class Acorn:
         record_by_hash: str = None,
         record_origin: str = None,
         relays: List[str] | str | None = None,
+        public_only: bool = False,
     ) -> tuple[str | None, bytes | None]:
         blob_data: bytes = None
         blob_type:  str = None
@@ -5784,26 +5785,33 @@ class Acorn:
                 safebox_record,
                 capability="blossom.read",
             )
-            client = BlossomClient(nsec=None, default_servers=blossom_servers)
             blob_type = _record_effective_mime(safebox_record)
-            blob_retrieve: BlossomBlob | None = None
-            last_blob_error: Exception | None = None
-            for server in blossom_servers:
-                try:
-                    blob_retrieve = client.get_blob(
-                        server=server,
-                        sha256=blob_sha256,
+            if public_only:
+                from stroma import BlossomPool
+                result = await BlossomPool(blossom_servers, max_bytes=25 * 1024 * 1024,
+                                           operation_timeout=30).retrieve(blob_sha256)
+                retrieved_bytes = result.content
+            else:
+                client = BlossomClient(nsec=None, default_servers=blossom_servers)
+                blob_type = _record_effective_mime(safebox_record)
+                blob_retrieve: BlossomBlob | None = None
+                last_blob_error: Exception | None = None
+                for server in blossom_servers:
+                    try:
+                        blob_retrieve = client.get_blob(
+                            server=server,
+                            sha256=blob_sha256,
+                        )
+                        break
+                    except Exception as exc:
+                        last_blob_error = exc
+                if blob_retrieve is None:
+                    raise RuntimeError(
+                        f"Blob {blob_sha256} was not available from configured "
+                        f"servers: {last_blob_error}"
                     )
-                    break
-                except Exception as exc:
-                    last_blob_error = exc
-            if blob_retrieve is None:
-                raise RuntimeError(
-                    f"Blob {blob_sha256} was not available from configured "
-                    f"servers: {last_blob_error}"
-                )
 
-            retrieved_bytes = blob_retrieve.get_bytes()
+                retrieved_bytes = blob_retrieve.get_bytes()
             if safebox_record.encryptparms is not None:
                 try:
                     blob_data = decrypt_and_verify_record_blob(
