@@ -853,3 +853,28 @@ record lookup, decryption and integrity checks. The default remains the legacy
 transport for existing callers. Private/local storage needs a separately
 designed trusted deployment policy; do not disable public-address checks for
 user-supplied destinations.
+
+## Wallet-only messaging
+
+`await acorn.send_wallet_message("alice@example.com", "Hello", sender="bob@example.com")`
+resolves the `safebox-wallet-message` capability through `safebox.json`. Missing,
+invalid or unsupported wallet discovery fails without any NIP-05 fallback. For a
+trusted local wallet binding, pass an explicit public key and `relays=[...]`.
+An address cannot override its directory relays through this API.
+
+Acorn creates the interoperable `safebox.dm` version-1 envelope and uses Stroma
+`GiftWrap(jitter_seconds=0)` for NIP-17 kind 14 inside kind 1059. All signing,
+encryption and publication stay inside Acorn. Publication is not proof of reading;
+an uncertain outcome must never be automatically retried.
+
+`await acorn.get_wallet_messages(limit=50)` uses authenticated Acorn message
+reading, filters payment payloads and checks up to ten claimed sender addresses
+against wallet discovery. It retains the authenticated sender key even when an
+address is unverified or mismatched. Applications may supply an async
+`resolver(address)` returning `{"pubkey": hex_key, "relays": [...]}` for trusted
+local wallet registrations and public wallet discovery; never use social NIP-05.
+The inbox is a bounded recent relay window, not a complete archive. Reading does
+not redeem payments, execute message content, reply, or store plaintext.
+
+Existing `secure_dm` and `get_private_messages` signatures and behavior remain
+unchanged for Safebox Web. The new envelope is compatible with its existing UI.

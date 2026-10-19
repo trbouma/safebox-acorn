@@ -2867,6 +2867,24 @@ class Acorn:
             self.logger.debug("op=delete_dms status=published")
 
             
+    async def send_wallet_message(self, recipient, message, *, relays=None, sender=None):
+        """Send a wallet message via safebox.json or an explicit wallet binding.
+
+        Uses Stroma's zero-jitter giftwrap; never falls back to social NIP-05.
+        Publication is not proof of recipient retrieval. Do not auto-retry.
+        """
+        from acorn.wallet_messages import send_wallet_message
+        return await send_wallet_message(self, recipient, message, relays=relays, sender=sender)
+
+    async def get_wallet_messages(self, limit=50, *, resolver=None):
+        """Read authenticated wallet messages and check optional address claims.
+
+        resolver is an optional public wallet-directory/local-registration lookup.
+        Unverified claims never replace the authenticated sender public key.
+        """
+        from acorn.wallet_messages import get_wallet_messages
+        return await get_wallet_messages(self, limit, resolver=resolver)
+
     async def get_private_messages(self, limit: int = 50):
         """Read recent authenticated NIP-17 messages without side effects.
 
