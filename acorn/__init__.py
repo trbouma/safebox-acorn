@@ -1,6 +1,15 @@
 """Public API for the standalone Acorn component."""
 
 __all__ = [
+    "SafeboxDestination",
+    "SafeboxDiscoveryError",
+    "SafeboxHTTPError",
+    "SafeboxNotFound",
+    "normalize_safebox_name",
+    "normalize_safebox_address",
+    "parse_safebox_document",
+    "build_safebox_document",
+    "resolve_safebox_address",
     "Acorn",
     "AmbiguousSwapError",
     "BitcoinCapabilityError",
@@ -53,6 +62,20 @@ class OptionalDependencyError(RuntimeError):
 
 
 def __getattr__(name):
+    if name in {
+        "SafeboxDestination",
+        "SafeboxDiscoveryError",
+        "SafeboxHTTPError",
+        "SafeboxNotFound",
+        "normalize_safebox_name",
+        "normalize_safebox_address",
+        "parse_safebox_document",
+        "build_safebox_document",
+        "resolve_safebox_address",
+    }:
+        from acorn import safebox_discovery
+        return getattr(safebox_discovery, name)
+
     if name in {
         "Acorn",
         "AmbiguousSwapError",

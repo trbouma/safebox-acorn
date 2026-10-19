@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "address": "alice@example.com",
+  "pubkey": "b0635d6a9851d3aed0cd6c495b282167acf761729078d975fc341b22650b07b9",
+  "relays": [
+    "wss://spurline.safebox.dev"
+  ],
+  "capabilities": {
+    "acorn-ecash-transfer": {
+      "transports": [
+        "nip59"
+      ],
+      "kinds": [
+        7378
+      ],
+      "units": [
+        "sat"
+      ]
+    },
+    "clear-token-transfer": {
+      "transports": [
+        "nip59"
+      ],
+      "kinds": [
+        7379
+      ]
+    }
+  }
+}
