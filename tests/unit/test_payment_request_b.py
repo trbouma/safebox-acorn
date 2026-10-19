@@ -77,3 +77,42 @@ async def test_npub_uses_inbox_discovery_and_never_sender_home():
     with pytest.raises(ValueError, match='no matching Clear balance'):
         await acorn.inspect_payment_request(request)
     acorn.get_clear_balances.assert_awaited_once()
+
+
+def test_encoder_matches_official_vector_and_preserves_legacy_default():
+    from acorn.payment_request import encode_payment_request
+    request = decode_payment_request(EXAMPLE)
+    assert encode_payment_request(request, encoding='B') == EXAMPLE
+    assert encode_payment_request(request).startswith('creqA')
+    assert decode_payment_request(encode_payment_request(request)) == request
+
+
+def test_b_roundtrip_keeps_wallet_key_nip17_and_inbox_relays():
+    from acorn.payment_request import PaymentRequest, nostr_nip17_transport, encode_payment_request
+    from tests.unit.test_payment_request_routing import wallet
+    relays = ['wss://spurline.safebox.dev', 'wss://relay.damus.io']
+    profile = Entities.encode('nprofile', {'pubkey':'11'*32,'relay':relays})
+    request = PaymentRequest(payment_id='clear-1',amount=42,unit='cmu-shares',single_use=True,
+        mints=('https://clear.safebox.dev',),mint_list_preferred=False, description='Satellite Shares',
+        transports=(nostr_nip17_transport(profile),))
+    encoded = encode_payment_request(request,encoding='B')
+    assert encoded.startswith('CREQB1') and encoded == encoded.upper()
+    for value in [encoded,encoded.lower(),'bitcoin:?creq='+encoded]:
+        decoded=decode_payment_request(value)
+        assert (decoded.amount,decoded.unit,decoded.mints,decoded.payment_id)==(42,'cmu-shares',request.mints,'clear-1')
+        assert wallet()._nut18_nostr_destination(decoded) == ('11'*32,relays)
+
+
+def test_b_encoder_rejects_semantic_loss_and_u64_overflow():
+    from acorn.payment_request import PaymentRequest, encode_payment_request
+    for request in [PaymentRequest(amount=2**64,unit='sat'), PaymentRequest(mints=('https://mint.example',),mint_list_preferred=True)]:
+        with pytest.raises(PaymentRequestError): encode_payment_request(request,encoding='B')
+
+
+def test_acorn_creation_can_select_b_without_changing_default():
+    from tests.unit.test_payment_request_routing import wallet
+    w=wallet()
+    old=w.create_payment_request(42,unit='cmu-test',mint='https://clear.safebox.dev',relays=['wss://spurline.safebox.dev'])
+    new=w.create_payment_request(42,unit='cmu-test',mint='https://clear.safebox.dev',relays=['wss://spurline.safebox.dev'],encoding='B')
+    assert old.startswith('creqA') and new.startswith('CREQB1')
+    assert decode_payment_request(new).unit == 'cmu-test'

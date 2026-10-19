@@ -16163,6 +16163,7 @@ class Acorn:
         mint: str | None = None,
         relays: List[str] | None = None,
         allow_internal_relays: bool = False,
+        encoding: str = "A",
     ) -> str:
         """Create a NUT-18 request; internal relays require operator opt-in."""
 
@@ -16204,7 +16205,7 @@ class Acorn:
             transports=(nostr_nip17_transport(nprofile),),
         )
         self.logger.debug("op=create_payment_request status=payload_ready")
-        return encode_payment_request(request)
+        return encode_payment_request(request, encoding=encoding)
 
     async def _async_token_accept(self, token:str):
         return

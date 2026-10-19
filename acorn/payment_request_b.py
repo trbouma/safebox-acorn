@@ -132,3 +132,90 @@ def decode_nut26(value: str) -> dict:
             raise PaymentRequestError("NUT-10 spending conditions are not supported for payment requests")
         # Unknown tags are intentionally ignored for forward compatibility.
     return payload
+
+
+def encode_nut26(payload: dict) -> str:
+    """Encode the supported NUT-18 model as uppercase NUT-26 Bech32m."""
+    from .payment_request import payment_request_from_dict
+    request = payment_request_from_dict(payload)
+    if request.mint_list_preferred:
+        raise PaymentRequestError("NUT-26 cannot represent a preferred-only mint list")
+
+    def field(tag, value):
+        if len(value) > 65535:
+            raise PaymentRequestError("NUT-26 field is oversized")
+        return bytes([tag]) + len(value).to_bytes(2, 'big') + value
+
+    def tag_tuple(values):
+        encoded = [value.encode('utf-8') for value in values]
+        if any(len(value) > 255 for value in encoded):
+            raise PaymentRequestError("NUT-26 tag item exceeds 255 bytes")
+        return b''.join(bytes([len(value)]) + value for value in encoded)
+
+    data = b''
+    if request.payment_id is not None:
+        data += field(1, request.payment_id.encode())
+    if request.amount is not None:
+        if request.amount >= 2**64:
+            raise PaymentRequestError("NUT-26 amount exceeds u64")
+        data += field(2, request.amount.to_bytes(8, 'big'))
+    if request.unit is not None:
+        data += field(3, b'\x00' if request.unit == 'sat' else request.unit.encode())
+    if request.single_use is not None:
+        data += field(4, bytes([int(request.single_use)]))
+    for mint in request.mints:
+        data += field(5, mint.encode())
+    if request.description is not None:
+        data += field(6, request.description.encode())
+    for transport in request.transports:
+        tags = list(transport.tags)
+        if transport.transport_type == 'nostr':
+            try:
+                decoded = Entities.decode(transport.target)
+                if transport.target.startswith('nprofile1') and isinstance(decoded, dict):
+                    key = decoded['pubkey']
+                    relays = decoded.get('relay') or []
+                    if isinstance(relays, str):
+                        relays = [relays]
+                    for relay in relays:
+                        if not any(tag[0] == 'r' and relay in tag[1:] for tag in tags):
+                            tags.append(('r', relay))
+                elif transport.target.startswith('npub1') and isinstance(decoded, str):
+                    key = decoded
+                else:
+                    raise ValueError()
+                target = bytes.fromhex(key)
+                if len(target) != 32:
+                    raise ValueError()
+            except Exception as exc:
+                raise PaymentRequestError('NUT-26 Nostr target must be an npub or nprofile') from exc
+            kind = b'\x00'
+        elif transport.transport_type == 'post':
+            kind, target = b'\x01', transport.target.encode()
+        else:
+            raise PaymentRequestError('Unsupported NUT-26 transport')
+        body = field(1, kind) + field(2, target)
+        body += b''.join(field(3, tag_tuple(tag)) for tag in tags)
+        data += field(7, body)
+    if len(data) > MAX_PAYMENT_REQUEST_BYTES:
+        raise PaymentRequestError('NUT-26 request is oversized')
+    words = []
+    accumulator = bits = 0
+    for byte in data:
+        accumulator = ((accumulator << 8) | byte) & 0xffff
+        bits += 8
+        while bits >= 5:
+            bits -= 5
+            words.append((accumulator >> bits) & 31)
+    if bits:
+        words.append((accumulator << (5 - bits)) & 31)
+    hrp, checksum = 'creqb', 1
+    for word in [*(ord(c) >> 5 for c in hrp), 0, *(ord(c) & 31 for c in hrp), *words, 0, 0, 0, 0, 0, 0]:
+        top = checksum >> 25
+        checksum = ((checksum & 0x1ffffff) << 5) ^ word
+        for bit, generator in enumerate((0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3)):
+            if (top >> bit) & 1:
+                checksum ^= generator
+    checksum ^= 0x2bc830a3
+    words.extend((checksum >> (5 * i)) & 31 for i in range(5, -1, -1))
+    return (hrp + '1' + ''.join(CHARSET[word] for word in words)).upper()

@@ -193,8 +193,13 @@ def payment_request_from_dict(payload: dict[str, Any]) -> PaymentRequest:
     )
 
 
-def encode_payment_request(request: PaymentRequest) -> str:
+def encode_payment_request(request: PaymentRequest, *, encoding: str = "A") -> str:
     validated = payment_request_from_dict(request.to_dict())
+    if encoding.upper() == "B":
+        from .payment_request_b import encode_nut26
+        return encode_nut26(validated.to_dict())
+    if encoding.upper() != "A":
+        raise PaymentRequestError("Payment request encoding must be A or B")
     encoded = base64.urlsafe_b64encode(
         cbor2.dumps(validated.to_dict(), canonical=True)
     ).decode("ascii")
