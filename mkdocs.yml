@@ -54,6 +54,7 @@ nav:
           - Getting Started: cli/index.md
           - Acorn Lifecycle: cli/lifecycle.md
           - Command Reference: cli/commands.md
+      - Durable Cashu Issuance: durable-minting.md
       - Deployment and Trust: deployment-and-trust.md
       - Project Status: project-status.md
   - Mitigating AI and Quantum Attacks: mitigating-ai-and-quantum-attacks.md
