@@ -63,8 +63,8 @@ class DurableCashuMint:
                 or invoice.date + invoice.expiry <= time.time()):
             raise MintCompatibilityError('Mint returned an invalid amount, network or expired invoice')
         bound = invoice.description_hash == hashlib.sha256(description.encode()).hexdigest()
-        if (self.require_description_hash or invoice.description_hash) and not bound:
-            raise MintCompatibilityError('Invoice description-hash binding is missing in strict mode or does not match')
+        if self.require_description_hash and not bound:
+            raise MintCompatibilityError('Invoice description-hash binding is missing or does not match in strict mode')
         if not isinstance(result['quote'], str) or not 1 <= len(result['quote']) <= 512:
             raise ValueError('Invalid mint quote')
         return {'quote': result['quote'], 'invoice': result['request'],

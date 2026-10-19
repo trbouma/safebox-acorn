@@ -32,6 +32,9 @@ if state.get("state") in {"PAID", "ISSUED"} or state.get("paid") is True:
 ```
 
 `quote` returns `quote`, `invoice`, `expiry` and `description_hash_bound`.
+With `require_description_hash=False`, missing or mismatched description hashes
+are accepted; the binding flag is informational. Explicit strict mode continues
+to require a matching hash. Amount, network, expiry and recovery checks are unchanged.
 It requires NUT-09 support and validates the invoice amount, mainnet network and
 expiry. Description-hash binding remains optional by default; a hash supplied
 by the mint must match, and strict mode requires it.

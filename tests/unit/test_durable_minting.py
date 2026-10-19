@@ -137,6 +137,10 @@ def test_optional_description_binding_and_required_restore_support():
         mint.hashed = False
         quote = await mint.quote('https://mint.example', 13, 'deposit')
         assert quote['description_hash_bound'] is False
+        mint.hashed = True
+        quote = await mint.quote('https://mint.example', 13, 'different zap context')
+        assert quote['description_hash_bound'] is False
+        mint.hashed = False
         mint.require_description_hash = True
         with pytest.raises(MintCompatibilityError):
             await mint.quote('https://mint.example', 13, 'deposit')
