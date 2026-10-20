@@ -377,3 +377,18 @@ are all part of the same hardening effort.
 - Treat `acorn set --show-recovery` output as highly sensitive.
 - Relay deletion requests are advisory; do not assume a burn operation erases
   data from every relay implementation.
+
+
+## Default application handles
+
+`acorn.default_handle()` returns a deterministic public handle derived from that
+Acorn instance's own public key, without network access. It joins two BIP39
+words with a numeric suffix from 0 to 999, matching the Mainstay client format.
+These are public labels, not recovery words. Applications need not import the
+word-list utility or provide a separate key, including any social identity key.
+
+Use `acorn.default_handle(attempt=1)` and subsequent integer attempts up to 999
+to advance the suffix when a name is taken. The application must atomically
+check uniqueness and reservations and persist the selected handle. Acorn does
+not claim a name or modify its existing `handle` attribute or wallet metadata.
+The existing `generate_name_from_hex` API and legacy naming remain unchanged.

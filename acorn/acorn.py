@@ -1504,6 +1504,19 @@ class Acorn:
         return {'phrase': phrase, 'nsec': nsec,
                 'npub': Keys(priv_k=nsec).public_key_bech32(), 'legacy': legacy}
 
+    def default_handle(self, *, attempt: int = 0) -> str:
+        """Return a public handle derived from this Acorn's own public key.
+
+        Matches the Mainstay two-word-and-number convention. Applications own
+        uniqueness and persistence; attempts 0..999 advance the numeric suffix.
+        This performs no network I/O and does not change the wallet's metadata
+        or its legacy ``handle`` attribute.
+        """
+        if type(attempt) is not int or not 0 <= attempt < 1000:
+            raise ValueError("Handle allocation attempt must be an integer between 0 and 999.")
+        first, second, raw_suffix = generate_name_from_hex(self.pubkey_hex).split('-', 2)
+        return f"{first}{second}{(int(raw_suffix) % 1000 + attempt) % 1000}"
+
     def public_identity(self) -> dict:
         """Expose public identity only; callers need not access private key objects."""
         return {'hex': self.pubkey_hex, 'npub': self.pubkey_bech32}
