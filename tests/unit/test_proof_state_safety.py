@@ -707,3 +707,65 @@ async def test_swap_each_persists_first_replacement_before_later_failure(monkeyp
     assert sum(proof.amount for proof in persisted_args[0]) == 1
     wallet._async_delete_events_by_ids.assert_not_awaited()
     wallet.release_lock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stage", ["read", "publish", "verify"])
+async def test_cancelled_acquisition_releases_local_lock_preserves_relay_lease(stage):
+    import asyncio
+    import json
+    acorn_module._PROCESS_WALLET_LOCKS.clear()
+    wallet = wallet_with_key()
+    entered = asyncio.Event()
+    relay = {"active": False}
+    reads = 0
+
+    async def block():
+        entered.set()
+        await asyncio.Event().wait()
+
+    async def read():
+        nonlocal reads
+        reads += 1
+        if stage == "read" or (stage == "verify" and reads == 2):
+            await block()
+        return dict(relay)
+
+    async def publish(**kwargs):
+        relay.update(json.loads(kwargs["label_info"]), active=True)
+        if stage == "publish":
+            await block()
+
+    wallet._read_wallet_lock = AsyncMock(side_effect=read)
+    wallet.set_wallet_info = AsyncMock(side_effect=publish)
+    task = asyncio.create_task(wallet.acquire_lock())
+    await asyncio.wait_for(entered.wait(), 1)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    lock = acorn_module._PROCESS_WALLET_LOCKS[wallet.pubkey_hex]
+    assert not lock.locked()
+    assert wallet._process_wallet_lock is None
+    assert relay["active"] == (stage != "read")
+    # The local lock is usable again, but a possibly published relay lease is
+    # left intact to prevent another process spending during uncertain cleanup.
+    await asyncio.wait_for(lock.acquire(), 1)
+    lock.release()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_local_wait_does_not_release_another_owner():
+    import asyncio
+    acorn_module._PROCESS_WALLET_LOCKS.clear()
+    wallet = wallet_with_key()
+    lock = asyncio.Lock()
+    await lock.acquire()
+    acorn_module._PROCESS_WALLET_LOCKS[wallet.pubkey_hex] = lock
+    task = asyncio.create_task(wallet.acquire_lock())
+    await asyncio.sleep(0)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert lock.locked()
+    assert wallet._process_wallet_lock is None
+    lock.release()

@@ -5493,7 +5493,10 @@ class Acorn:
             raise RuntimeError(
                 f"Wallet is busy; could not acquire its owned lease after {wait_ms} ms"
             )
-        except Exception:
+        except BaseException:
+            # Cancellation also owns this local lock. Never clear an unverified
+            # relay lease here: publication may have succeeded before cancellation,
+            # and its expiry must continue protecting other wallet instances.
             if process_lock.locked():
                 process_lock.release()
             self._process_wallet_lock = None
