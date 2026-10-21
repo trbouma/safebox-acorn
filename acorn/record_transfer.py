@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import os
+import re
 import time
 from typing import Any
 from urllib.parse import urlsplit
@@ -92,6 +93,13 @@ class RecordTransferEnvelope:
     blob_type: str | None = None
     capability: str = "transfer"
     version: int = 1
+    originator_handle: str | None = None
+
+
+def validate_originator_handle(value):
+    if value is not None and (not isinstance(value, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}", value)):
+        raise RecordTransferError("Invalid originator handle")
+    return value
 
 
 def encode_record_transfer_descriptor(descriptor: RecordTransferDescriptor) -> str:
@@ -212,6 +220,8 @@ def encrypt_record_transfer_envelope(
         "t": envelope.record_type,
         "v": envelope.version,
     }
+    if envelope.originator_handle is not None:
+        payload["originator_handle"] = validate_originator_handle(envelope.originator_handle)
     if envelope.blob_data is not None:
         payload["b"] = {
             "d": envelope.blob_data,
@@ -268,6 +278,7 @@ def decrypt_record_transfer_envelope(
             blob_data=blob_data,
             blob_type=blob_type,
             capability=capability,
+            originator_handle=validate_originator_handle(data.get("originator_handle")),
         )
     except RecordTransferError:
         raise

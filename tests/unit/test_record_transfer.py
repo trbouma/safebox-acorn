@@ -164,11 +164,14 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
             blobtype=None,
         )
     )
-    transfer = await sender.create_record_transfer("Field Notes", expires_in=3600)
+    transfer = await sender.create_record_transfer("Field Notes", expires_in=3600, originator_handle="alice")
 
     receiver = object.__new__(Acorn)
     receiver.logger = logging.getLogger("record-transfer-receiver-test")
     receiver.put_record = AsyncMock()
+    inspected = await receiver.inspect_record_transfer(transfer["descriptor"], allowed_servers=["https://blossom.example"])
+    assert inspected["originator_handle"] == "alice"
+    assert inspected["label"] == "Field Notes"
     result = await receiver.accept_record_transfer(
         transfer["descriptor"],
         record_name="Imported Notes",
@@ -374,3 +377,49 @@ async def test_presentation_forwards_public_only_blob_policy():
     await wallet.create_record_presentation("Credential", public_only=True)
     assert wallet.create_record_transfer.await_args.kwargs["public_only"] is True
     assert wallet.create_record_transfer.await_args.kwargs["_capability"] == "presentation"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("head_result,confirmed", [("missing", True), ("present", False), ("timeout", False), ("forbidden", False)])
+async def test_stop_after_recipient_cleanup_requires_confirmed_absence(monkeypatch, head_result, confirmed):
+    from python_blossom.errors import NotFound, Forbidden
+    calls = []
+    class Client:
+        def __init__(self, **kwargs): pass
+        def delete_blob(self, **kwargs):
+            calls.append(("delete", kwargs))
+            raise NotFound("Already removed", status_code=404)
+        def head_blob(self, **kwargs):
+            calls.append(("head", kwargs))
+            if head_result == "missing": raise NotFound("Missing", status_code=404)
+            if head_result == "timeout": raise TimeoutError()
+            if head_result == "forbidden": raise Forbidden("Denied", status_code=403)
+            return {"content_length": 100}
+    monkeypatch.setattr(acorn_module, "BlossomClient", Client)
+    component = object.__new__(Acorn)
+    component.logger = logging.getLogger("stop-test")
+    descriptor = encode_record_transfer_descriptor(RecordTransferDescriptor(
+        blob_url="https://blossom.example/" + "ab"*32, ciphertext_sha256="ab"*32,
+        secret=b"s"*32, expires_at=100))
+    if confirmed:
+        result = await component.delete_record_transfer(descriptor, allowed_servers=["https://blossom.example"])
+        assert result["transfer_deleted"] and result["already_absent"]
+    else:
+        with pytest.raises(RecordTransferError):
+            await component.delete_record_transfer(descriptor, allowed_servers=["https://blossom.example"])
+    assert calls[-1] == ("head", {"server":"https://blossom.example", "sha256":"ab"*32, "use_auth": True})
+
+
+@pytest.mark.parametrize("handle", [None, "alice", "alice-123"])
+def test_optional_originator_round_trip(handle):
+    encrypted, secret = encrypt_record_transfer_envelope(RecordTransferEnvelope(
+        label="Certificate", record_type="note", payload="contents", originator_handle=handle))
+    decoded = decrypt_record_transfer_envelope(encrypted, secret=secret)
+    assert decoded.originator_handle == handle
+    assert decoded.label == "Certificate"
+
+@pytest.mark.parametrize("handle", ["../alice", "alice/other", "a\n", "x"*65, 123])
+def test_reject_invalid_originator_handle(handle):
+    with pytest.raises(RecordTransferError):
+        encrypt_record_transfer_envelope(RecordTransferEnvelope(
+            label="Certificate", record_type="note", payload="contents", originator_handle=handle))

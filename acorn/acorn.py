@@ -8832,6 +8832,7 @@ class Acorn:
         blossom_transfer_server: str | None = None,
         _capability: str = "transfer",
         public_only: bool = False,
+        originator_handle: str | None = None,
     ) -> Dict[str, Any]:
         """Create a short-lived encrypted bearer transfer for one record."""
 
@@ -8847,6 +8848,7 @@ class Acorn:
         ciphertext, secret = encrypt_record_transfer_envelope(
             RecordTransferEnvelope(
                 label=record_name,
+                originator_handle=originator_handle,
                 record_type=str(record.type),
                 payload=record.payload,
                 blob_data=blob_data,
@@ -8898,6 +8900,7 @@ class Acorn:
         expires_in: int = 3600,
         blossom_transfer_server: str | None = None,
         public_only: bool = False,
+        originator_handle: str | None = None,
     ) -> Dict[str, Any]:
         """Create a view-only record presentation bearer capability."""
 
@@ -8907,6 +8910,7 @@ class Acorn:
             blossom_transfer_server=blossom_transfer_server,
             _capability="presentation",
             public_only=public_only,
+            originator_handle=originator_handle,
         )
 
     async def inspect_record_transfer(
@@ -8923,6 +8927,7 @@ class Acorn:
         )
         return {
             "label": envelope.label,
+            "originator_handle": envelope.originator_handle,
             "record_type": envelope.record_type,
             "has_original": envelope.blob_data is not None,
             "blob_type": envelope.blob_type,
@@ -8945,6 +8950,7 @@ class Acorn:
         )
         return {
             "label": envelope.label,
+            "originator_handle": envelope.originator_handle,
             "record_type": envelope.record_type,
             "payload": envelope.payload,
             "has_original": envelope.blob_data is not None,
@@ -8993,10 +8999,26 @@ class Acorn:
             nsec=authority_nsec,
             default_servers=[descriptor.server],
         )
+        from python_blossom.errors import NotFound
+
+        def delete_or_confirm_absent():
+            try:
+                client.delete_blob(server=descriptor.server, sha256=descriptor.ciphertext_sha256)
+            except NotFound:
+                # A recipient can remove the temporary copy after import. A
+                # DELETE 404 alone can also mean wrong owner, so independently
+                # confirm absence at the exact blob path before accepting it.
+                try:
+                    client.head_blob(server=descriptor.server,
+                                     sha256=descriptor.ciphertext_sha256, use_auth=True)
+                except NotFound:
+                    return True
+                raise RecordTransferError("Temporary transfer is still available")
+            return False
+
         try:
-            await asyncio.to_thread(
-                client.delete_blob, server=descriptor.server,
-                sha256=descriptor.ciphertext_sha256,
+            already_absent = await asyncio.to_thread(
+                delete_or_confirm_absent,
             )
         except Exception as exc:
             self.logger.warning(
@@ -9009,6 +9031,7 @@ class Acorn:
         return {
             "status": "DELETED",
             "transfer_deleted": True,
+            "already_absent": already_absent,
             "server": descriptor.server,
             "ciphertext_sha256": descriptor.ciphertext_sha256,
         }
