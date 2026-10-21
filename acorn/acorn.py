@@ -6093,6 +6093,62 @@ class Acorn:
             "nip05": nip05_resolution,
         }
 
+    @staticmethod
+    def _net_transfer_denominations(amount: int, fee_ppk: int) -> tuple[list[int], int]:
+        """Choose binary denominations giving an exact net credit after NUT-02 fees."""
+        if amount <= 0 or fee_ppk < 0:
+            raise ValueError("Invalid net transfer amount or fee")
+        for count in range(1, 257):
+            fee = (fee_ppk * count + 999) // 1000
+            gross = amount + fee
+            if gross.bit_count() <= count <= gross:
+                parts = powers_of_2_sum(gross)
+                while len(parts) < count:
+                    largest = max(parts)
+                    parts.remove(largest)
+                    parts.extend([largest // 2, largest // 2])
+                return parts, fee
+        raise ValueError("Mint fee requires too many transfer proofs")
+
+    async def quote_ecash_transfer(self, amount: int) -> Dict[str, Any]:
+        """Read-only sender-paid fee quote using this wallet's loaded cash proofs."""
+        amount = int(amount)
+        if amount <= 0:
+            raise ValueError("amount must be positive")
+        by_keyset, totals = self._proofs_by_keyset()
+        for key in sorted(totals, key=lambda candidate: totals[candidate]):
+            mint = self.known_mints.get(key)
+            if not mint:
+                continue
+            async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, connect=5.0)) as client:
+                response = await client.get(f"{normalize_mint_url(mint)}/v1/keysets")
+                response.raise_for_status()
+                rows = response.json()['keysets']
+            source = next((row for row in rows if row.get('id') == key), None)
+            output = next((row for row in rows if row.get('active') is True
+                           and str(row.get('unit') or 'sat').lower() == 'sat'), None)
+            if not source or not output or str(source.get('unit') or 'sat').lower() != 'sat':
+                continue
+            source_fee = int(source.get('input_fee_ppk') or 0)
+            output_fee = int(output.get('input_fee_ppk') or 0)
+            if min(source_fee, output_fee) < 0:
+                raise ValueError("Invalid mint fee")
+            denominations, receiver_fee = self._net_transfer_denominations(amount, output_fee)
+            gross = sum(denominations)
+            selected_total = 0
+            for count, proof in enumerate(sorted(by_keyset[key], key=lambda p: int(p.amount), reverse=True), 1):
+                selected_total += int(proof.amount)
+                sender_fee = self._input_fee_sats(source_fee, count)
+                if selected_total >= gross + sender_fee:
+                    return {'version': 1, 'recipient_amount': amount, 'token_amount': gross,
+                            'receiver_fee': receiver_fee, 'sender_fee': sender_fee,
+                            'total_fee': receiver_fee + sender_fee,
+                            'total_amount': gross + sender_fee,
+                            'mint': normalize_mint_url(mint), 'input_keyset': key,
+                            'output_keyset': output['id'], 'input_fee_ppk': source_fee,
+                            'output_fee_ppk': output_fee, 'denominations': denominations}
+        raise ValueError("Insufficient balance in a single keyset including mint fees")
+
     async def send_ecash_transfer(
         self,
         amount: int,
@@ -6106,6 +6162,7 @@ class Acorn:
         tendered_amount: float | None = None,
         tendered_currency: str = "SAT",
         relay_hints: List[str] | None = None,
+        fee_quote: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Send ecash to another Acorn via encrypted relay event.
 
@@ -6148,6 +6205,8 @@ class Acorn:
         payment_mode = str(payment_mode).strip().lower()
         if payment_mode not in {"confirmed", "continuity"}:
             raise ValueError("payment_mode must be 'confirmed' or 'continuity'")
+        if fee_quote is not None and payment_mode != "confirmed":
+            raise ValueError("Sender-paid fees require confirmed payment mode")
         if payment_mode == "continuity":
             token = await self.issue_continuity_token(
                 int(amount),
@@ -6161,21 +6220,28 @@ class Acorn:
                 comment=comment,
                 tendered_amount=tendered_amount,
                 tendered_currency=tendered_currency,
+                **({'fee_quote': fee_quote} if fee_quote is not None else {}),
             )
         token_mint = str(decode_cashu_token(token).get_mints()[0])
+
+        token_amount = int(decode_cashu_token(token).get_amount())
 
         payload = {
             "version": 1,
             "type": "cashu-token",
             "token": token,
             "mint": token_mint,
-            "amount": int(amount),
+            "amount": token_amount,
             "unit": "sat",
             "comment": comment,
             "nonce": nonce,
             "payment_mode": payment_mode,
             "settlement": "provisional" if payment_mode == "continuity" else "mint-confirmed",
         }
+
+        if fee_quote is not None:
+            payload.update(fee_payer="sender", recipient_amount=int(amount),
+                           receiver_fee=int(fee_quote["receiver_fee"]))
 
         async with ClientPool(transfer_relays) as c:
             if direct:
@@ -6186,7 +6252,7 @@ class Acorn:
                     ["protocol", "acorn-ecash-transfer"],
                     ["v", "1"],
                     ["mint", token_mint],
-                    ["amount", str(int(amount))],
+                    ["amount", str(token_amount)],
                     ["unit", "sat"],
                     ["nonce", nonce],
                 ]
@@ -6243,6 +6309,7 @@ class Acorn:
             "deletable_by_sender": bool(direct),
             "expiration": expiration,
             "amount": int(amount),
+            **({"token_amount": token_amount, "fee_quote": fee_quote} if fee_quote is not None else {}),
             "unit": "sat",
             "mint": token_mint,
             "nonce": nonce,
@@ -6268,6 +6335,13 @@ class Acorn:
         claimed_amount = int(payload.get("amount", token_amount))
         if token_amount <= 0 or claimed_amount != token_amount:
             raise ValueError("Continuity Payment amount does not match its proofs")
+
+        sender_paid = payload.get("fee_payer") == "sender"
+        if sender_paid:
+            recipient_amount = int(payload.get("recipient_amount", 0))
+            receiver_fee = int(payload.get("receiver_fee", -1))
+            if recipient_amount <= 0 or receiver_fee < 0 or recipient_amount + receiver_fee != token_amount:
+                raise ValueError("Invalid sender-paid receipt amounts")
 
         lock_acquired = False
         try:
@@ -6302,6 +6376,9 @@ class Acorn:
                     "timestamp": int(timestamp),
                     "status": "provisional",
                 }
+                if sender_paid:
+                    existing.update(fee_payer="sender", recipient_amount=recipient_amount,
+                                    receiver_fee=receiver_fee)
                 receipts.append(existing)
                 await self.set_wallet_info(
                     CONTINUITY_RECEIPTS_LABEL,
@@ -6526,6 +6603,9 @@ class Acorn:
         receipts: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
         """Refresh same-mint receipt tokens through one mint swap and proof write."""
+
+        if any(receipt.get("fee_payer") == "sender" for receipt in receipts):
+            raise ValueError("Sender-paid receipts require individual settlement")
 
         if len(receipts) < 2:
             raise ValueError("A continuity token batch requires at least two receipts")
@@ -6768,6 +6848,10 @@ class Acorn:
         # the offending transfer can be isolated without blocking valid ones.
         batch_groups: Dict[str, List[Dict[str, Any]]] = {}
         for receipt in receipts:
+            # Keep prepaid redemption fees attached to their own transfer. The
+            # legacy batch allocation can charge one receipt for other tokens.
+            if receipt.get("fee_payer") == "sender":
+                continue
             try:
                 details = self._continuity_token_details(receipt)
             except Exception:
@@ -6846,7 +6930,7 @@ class Acorn:
                         tx_type="C",
                         amount=amount,
                         comment=history_comment,
-                        tendered_amount=receipt.get("amount"),
+                        tendered_amount=receipt.get("recipient_amount", receipt.get("amount")),
                         tendered_currency=str(receipt.get("unit") or "sat").upper(),
                         fees=mint_fee,
                         description_hash=f"cashu-receipt:{event_id}",
@@ -6905,7 +6989,7 @@ class Acorn:
                 message, amount = await self.accept_token(
                     cashu_token=token,
                     comment=history_comment,
-                    tendered_amount=receipt.get("amount"),
+                    tendered_amount=receipt.get("recipient_amount", receipt.get("amount")),
                     tendered_currency=str(receipt.get("unit") or "sat").upper(),
                 )
                 await self._update_continuity_receipt(
@@ -8104,7 +8188,7 @@ class Acorn:
                         msg_out, token_amount = await self.accept_token(
                             cashu_token=token,
                             comment=history_comment,
-                            tendered_amount=payload.get("amount"),
+                            tendered_amount=receipt.get("recipient_amount", payload.get("amount")),
                             tendered_currency=payload.get("unit", "SAT").upper(),
                         )
                         await self._update_continuity_receipt(
@@ -14524,6 +14608,7 @@ class Acorn:
         *,
         unit: str = "sat",
         persist_cash: bool = True,
+        fee_quote: Dict[str, Any] | None = None,
     ) -> List[Proof]:
         # create proofs to melt, and proofs_remaining
 
@@ -14603,6 +14688,14 @@ class Acorn:
             input_fee_ppk = int(input_keyset_info.get("input_fee_ppk") or 0)
             self.known_mints[str(keyset)] = self.known_mints[keyset_to_use]
 
+        if fee_quote is not None:
+            if (keyset_to_use != fee_quote['input_keyset'] or keyset != fee_quote['output_keyset']
+                    or input_fee_ppk != fee_quote['input_fee_ppk']
+                    or int(keyset_info.get('input_fee_ppk') or 0) != fee_quote['output_fee_ppk']
+                    or payment_amount != fee_quote['token_amount']
+                    or self._input_fee_sats(input_fee_ppk, len(proofs_to_use)) != fee_quote['sender_fee']):
+                raise ValueError("Mint fees changed; payment was not attempted")
+
         swap_url = f"{self.known_mints[keyset_to_use]}/v1/swap"
         checkstate_url = f"{self.known_mints[keyset_to_use]}/v1/checkstate"
 
@@ -14671,7 +14764,7 @@ class Acorn:
                 f"{payment_amount} sats after {swap_fee} sats swap input fee"
             )
 
-        powers_of_2_payment = self.powers_of_2_sum(payment_amount)
+        powers_of_2_payment = fee_quote['denominations'] if fee_quote is not None else self.powers_of_2_sum(payment_amount)
         
 
         for each in powers_of_2_payment:
@@ -15299,8 +15392,11 @@ class Acorn:
         comment: str = "ecash withdrawal",
         tendered_amount: float | None = None,
         tendered_currency: str = "SAT",
+        *,
+        fee_quote: Dict[str, Any] | None = None,
     ):
 
+        recipient_amount = int(amount)
         lock_acquired = False
         token_serialized = None
         mint_input_fee = 0
@@ -15309,6 +15405,11 @@ class Acorn:
             lock_acquired = True
             await self._reconcile_spent_proofs_locked()
             await self._require_resolved_pending_melts()
+            if fee_quote is not None:
+                fresh_quote = await self.quote_ecash_transfer(recipient_amount)
+                if fresh_quote != fee_quote:
+                    raise ValueError("Transfer fees or wallet funding changed; review a new quote")
+                amount = fresh_quote['token_amount']
             # print("issue token")
             available_amount = 0
             chosen_keyset = None
@@ -15327,6 +15428,8 @@ class Acorn:
             proofs_to_use = []
             proofs_from_keyset = []
             for key in sorted(keyset_amounts, key=lambda k: keyset_amounts[k]):
+                if fee_quote is not None and key != fee_quote['input_keyset']:
+                    continue
                 self.logger.debug(
                     "op=issue_token status=consider_keyset keyset=%s amount=%s",
                     key,
@@ -15388,7 +15491,7 @@ class Acorn:
                 len(proofs_to_use),
             )
             
-            proofs_remaining = await self.swap_for_payment_multi(chosen_keyset,proofs_to_use, amount)
+            proofs_remaining = await self.swap_for_payment_multi(chosen_keyset,proofs_to_use, amount, **({'fee_quote': fee_quote} if fee_quote is not None else {}))
             
 
             self.logger.debug("op=issue_token status=swap_complete amount=%s proofs_remaining=%s", amount, len(proofs_remaining))
@@ -15472,13 +15575,13 @@ class Acorn:
         try:
             await self.add_tx_history(
                 tx_type='D',
-                amount=amount,
+                amount=recipient_amount,
                 comment=comment,
                 tendered_amount=(
-                    amount if tendered_amount is None else tendered_amount
+                    recipient_amount if tendered_amount is None else tendered_amount
                 ),
                 tendered_currency=tendered_currency,
-                fees=mint_input_fee,
+                fees=mint_input_fee + (fee_quote['receiver_fee'] if fee_quote else 0),
             )
         except Exception as exc:
             # Issuance is already committed once proofs are persisted.

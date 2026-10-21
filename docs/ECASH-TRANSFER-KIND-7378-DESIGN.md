@@ -543,3 +543,32 @@ and include a status such as `accepted`, `failed`, or `expired`.
   through Cashu token serialization?
 - Should transfer relay preferences be a separate reserved record from public
   social relays?
+
+
+## Opt-in sender-paid redemption fees
+
+Existing `send_ecash_transfer(amount, ...)` and `issue_token(amount, ...)` calls
+keep their gross-token semantics. Applications can opt into net-amount semantics:
+load wallet data, obtain `quote_ecash_transfer(amount)`, show `total_amount` and
+`total_fee` to the sender, then pass the unchanged quote as `fee_quote` to
+`send_ecash_transfer`. Only confirmed mode accepts a fee quote. Quotes contain
+public amounts, fee rates, keyset IDs, a mint URL and denominations, never proofs
+or secrets. Enough value must exist in one cash keyset, including both fees.
+
+The quote covers the source input fee and redemption fee for the exact output
+proof count, using [NUT-02](https://github.com/cashubtc/nuts/blob/main/02.md).
+Denominations may repeat to achieve an exact net amount at binary boundaries.
+Issuance revalidates the quote under the wallet lock, and the swap checks the
+current input/output keysets and fees before submission. Existing persistence,
+uncertainty and recovery paths still apply; callers must not retry an ambiguous
+send as a new payment. History records the requested amount and combined fees.
+
+The encrypted v1 payload retains `amount` as the gross token value for existing
+readers. Opted-in sends also carry `fee_payer: "sender"`, `recipient_amount` and
+`receiver_fee`, with `recipient_amount + receiver_fee == amount`. Updated Acorn
+persists this metadata with the receipt and excludes it from batch settlement;
+it redeems the token individually through the existing recoverable acceptance
+path. The receipt is credited only when actual refreshed proofs are persisted.
+Sender claims never create spendable funds. Older receivers still accept the
+ordinary token but may distribute fees differently if they batch receipts.
+A mint changing fees after dispatch can change the eventual net credit.

@@ -294,7 +294,8 @@ async def test_payment_pre_swap_check_ignores_incorrect_cached_proof_y(monkeypat
 
 
 @pytest.mark.asyncio
-async def test_swap_for_payment_multi_subtracts_input_fee_from_outputs(monkeypatch):
+@pytest.mark.parametrize("sender_paid", [False, True])
+async def test_swap_for_payment_multi_subtracts_input_fee_from_outputs(monkeypatch, sender_paid):
     wallet = wallet_with_key()
     keyset = "fee-keyset"
     wallet.known_mints = {keyset: "https://mint.example"}
@@ -376,7 +377,13 @@ async def test_swap_for_payment_multi_subtracts_input_fee_from_outputs(monkeypat
 
     monkeypatch.setattr(acorn_module.httpx, "AsyncClient", FakeHttpClient)
 
-    replacements = await wallet.swap_for_payment_multi(keyset, proofs, 21)
+    quote = {"input_keyset":keyset,"output_keyset":keyset,"input_fee_ppk":100,
+             "output_fee_ppk":100,"token_amount":21,"sender_fee":1,
+             "denominations":[16,4,1]} if sender_paid else None
+    replacements = await wallet.swap_for_payment_multi(keyset, proofs, 21, fee_quote=quote)
+    assert sorted(p.amount for p in replacements[:3]) == [1,4,16]
+    if sender_paid:
+        assert sum(p.amount for p in replacements[:3]) - 1 == 20
 
     assert sum(output["amount"] for output in captured["swap"]["outputs"]) == 84
     assert sum(proof.amount for proof in replacements) == 84
