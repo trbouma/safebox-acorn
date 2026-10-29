@@ -2430,6 +2430,24 @@ class Acorn:
             events_out.sort(key=lambda r: int(r.get("timestamp", 0)), reverse=reverse)
         return events_out
 
+    async def get_user_records_page(self, *, page_size=100, cursor=None, relay=None):
+        """Discover user records newest-first with an opaque, inclusive cursor.
+
+        Empty pages may have next_cursor; continue until next_cursor is None.
+        Uses one authoritative relay and never returns internal wallet records.
+        """
+        from .record_discovery import page
+        return await page(self, page_size=page_size, cursor=cursor, relay=relay)
+
+    async def get_user_record(self, *, event_id=None, label=None, relay=None):
+        """Read one user record safely, by exact event ID or label.
+
+        Unlike get_record_safebox, this rejects internal wallet state.
+        Missing/protected records return None; relay/decode failures propagate.
+        """
+        from .record_discovery import retrieve
+        return await retrieve(self, event_id=event_id, label=label, relay=relay)
+
     async def get_user_record_labels(
         self,
         record_kind: int = 37375,
