@@ -94,6 +94,7 @@ class RecordTransferEnvelope:
     capability: str = "transfer"
     version: int = 1
     originator_handle: str | None = None
+    originator_pubkey: str | None = None
 
 
 def validate_originator_handle(value):
@@ -220,6 +221,8 @@ def encrypt_record_transfer_envelope(
         "t": envelope.record_type,
         "v": envelope.version,
     }
+    if envelope.originator_pubkey is not None:
+        payload["originator_pubkey"] = validate_wallet_pubkey(envelope.originator_pubkey)
     if envelope.originator_handle is not None:
         payload["originator_handle"] = validate_originator_handle(envelope.originator_handle)
     if envelope.blob_data is not None:
@@ -279,6 +282,7 @@ def decrypt_record_transfer_envelope(
             blob_type=blob_type,
             capability=capability,
             originator_handle=validate_originator_handle(data.get("originator_handle")),
+            originator_pubkey=validate_wallet_pubkey(data["originator_pubkey"]) if "originator_pubkey" in data else None,
         )
     except RecordTransferError:
         raise
@@ -292,3 +296,26 @@ def verify_record_transfer_ciphertext(
 ) -> None:
     if hashlib.sha256(ciphertext).hexdigest() != descriptor.ciphertext_sha256:
         raise RecordTransferError("Record transfer ciphertext hash does not match")
+
+
+def validate_wallet_pubkey(value):
+    if not isinstance(value, str) or not re.fullmatch(r"[a-fA-F0-9]{64}", value):
+        raise RecordTransferError("Invalid Acorn public key")
+    return value.lower()
+
+
+def record_fingerprints(envelope, recipient_pubkey=None):
+    """Public identifiers, not proof of authorship or recipient authorization."""
+    import json
+    original = hashlib.sha256(envelope.blob_data).hexdigest() if envelope.blob_data is not None else None
+    content = hashlib.sha256(json.dumps({
+        "record_type": envelope.record_type, "payload": envelope.payload,
+        "original_record_fingerprint": original,
+    }, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")).hexdigest()
+    originator = getattr(envelope, "originator_pubkey", None)
+    sharing = None
+    if originator is not None and recipient_pubkey is not None:
+        sharing = hashlib.sha256(bytes.fromhex(validate_wallet_pubkey(originator)) +
+            bytes.fromhex(content) + bytes.fromhex(validate_wallet_pubkey(recipient_pubkey))).hexdigest()
+    return {"record_content_fingerprint": content, "original_record_fingerprint": original,
+            "sharing_fingerprint": sharing, "originator_pubkey": originator}

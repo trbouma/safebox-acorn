@@ -1,3 +1,4 @@
+import json
 import hashlib
 import logging
 from types import SimpleNamespace
@@ -154,6 +155,7 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
     monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
 
     sender = object.__new__(Acorn)
+    sender.pubkey_hex = "11"*32
     sender.blossom_xfer_server = "https://blossom.example"
     sender.logger = logging.getLogger("record-transfer-sender-test")
     sender.get_record_safebox = AsyncMock(
@@ -167,11 +169,20 @@ async def test_component_transfer_stores_before_deleting_temporary_blob(monkeypa
     transfer = await sender.create_record_transfer("Field Notes", expires_in=3600, originator_handle="alice")
 
     receiver = object.__new__(Acorn)
+    receiver.pubkey_hex = "22"*32
     receiver.logger = logging.getLogger("record-transfer-receiver-test")
     receiver.put_record = AsyncMock()
     inspected = await receiver.inspect_record_transfer(transfer["descriptor"], allowed_servers=["https://blossom.example"])
     assert inspected["originator_handle"] == "alice"
     assert inspected["label"] == "Field Notes"
+    assert inspected["original_record_fingerprint"] is None
+    assert inspected["originator_pubkey"] == sender.pubkey_hex
+    assert inspected['sharing_fingerprint'] == hashlib.sha256(bytes.fromhex(sender.pubkey_hex) + bytes.fromhex(inspected['record_content_fingerprint']) + bytes.fromhex(receiver.pubkey_hex)).hexdigest()
+    targeted = await sender.inspect_record_transfer(transfer['descriptor'], allowed_servers=['https://blossom.example'], recipient_pubkey=receiver.pubkey_hex)
+    assert targeted['sharing_fingerprint'] == inspected['sharing_fingerprint']
+    assert inspected["record_content_fingerprint"] == hashlib.sha256(json.dumps(
+        {"record_type":"generic", "payload":{"note":"portable"}, "original_record_fingerprint":None},
+        sort_keys=True, separators=(",",":"), ensure_ascii=False).encode()).hexdigest()
     result = await receiver.accept_record_transfer(
         transfer["descriptor"],
         record_name="Imported Notes",
@@ -225,6 +236,7 @@ async def test_component_transfer_import_preserves_effective_blob_type(monkeypat
     monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
 
     sender = object.__new__(Acorn)
+    sender.pubkey_hex = "11"*32
     sender.blossom_xfer_server = "https://blossom.example"
     sender.logger = logging.getLogger("record-transfer-pkpass-sender-test")
     sender.get_record_safebox = AsyncMock(
@@ -243,6 +255,7 @@ async def test_component_transfer_import_preserves_effective_blob_type(monkeypat
     sender.get_record_blobdata.assert_awaited_once_with(record_name="Boarding Pass", public_only=True)
 
     receiver = object.__new__(Acorn)
+    receiver.pubkey_hex = "22"*32
     receiver.logger = logging.getLogger("record-transfer-pkpass-receiver-test")
     receiver.put_record = AsyncMock()
     result = await receiver.accept_record_transfer(
@@ -289,6 +302,7 @@ async def test_presentation_envelope_cannot_be_imported_as_transfer(monkeypatch)
 
     monkeypatch.setattr(acorn_module, "BlossomClient", FakeBlossomClient)
     sender = object.__new__(Acorn)
+    sender.pubkey_hex = "11"*32
     sender.blossom_xfer_server = "https://blossom.example"
     sender.logger = logging.getLogger("record-presentation-sender-test")
     sender.get_record_safebox = AsyncMock(
@@ -305,6 +319,7 @@ async def test_presentation_envelope_cannot_be_imported_as_transfer(monkeypatch)
         + presentation["descriptor"][len(RECORD_PRESENTATION_PREFIX) :]
     )
     receiver = object.__new__(Acorn)
+    receiver.pubkey_hex = "22"*32
     receiver.logger = logging.getLogger("record-presentation-receiver-test")
     receiver.put_record = AsyncMock()
 
@@ -423,3 +438,38 @@ def test_reject_invalid_originator_handle(handle):
     with pytest.raises(RecordTransferError):
         encrypt_record_transfer_envelope(RecordTransferEnvelope(
             label="Certificate", record_type="note", payload="contents", originator_handle=handle))
+
+
+@pytest.mark.asyncio
+async def test_inspection_adds_original_file_fingerprint_without_changing_label():
+    receiver = object.__new__(Acorn)
+    receiver.pubkey_hex = "22"*32
+    receiver._read_record_transfer = lambda *args, **kwargs: (
+        SimpleNamespace(expires_at=2000000000, server='https://blossom.example'),
+        SimpleNamespace(label='benefits/dental', originator_handle='alice', record_type='generic',
+                        payload={'note':'unchanged'}, blob_data=b'original file', blob_type='image/png'), None)
+    result = await receiver.inspect_record_transfer('opaque')
+    assert result['original_record_fingerprint'] == hashlib.sha256(b'original file').hexdigest()
+    assert result['record_content_fingerprint'] != result['original_record_fingerprint']
+    assert result['label'] == 'benefits/dental'
+    assert result['originator_handle'] == 'alice'
+
+
+def test_sharing_fingerprint_is_sender_content_recipient_specific():
+    from acorn.record_transfer import record_fingerprints
+    from dataclasses import replace
+    envelope = RecordTransferEnvelope(label='pass', record_type='generic', payload='ticket',
+        originator_pubkey='11'*32, blob_data=b'original')
+    first = record_fingerprints(envelope, '22'*32)
+    assert first == record_fingerprints(envelope, '22'*32)
+    expected = hashlib.sha256(bytes.fromhex('11'*32) + bytes.fromhex(first['record_content_fingerprint']) + bytes.fromhex('22'*32)).hexdigest()
+    assert first['sharing_fingerprint'] == expected
+    assert record_fingerprints(envelope, '33'*32)['sharing_fingerprint'] != expected
+    other = record_fingerprints(replace(envelope, originator_pubkey='44'*32), '22'*32)
+    assert other['sharing_fingerprint'] != expected
+    assert other['record_content_fingerprint'] == first['record_content_fingerprint']
+    edited = record_fingerprints(replace(envelope, payload='edited'), '22'*32)
+    assert edited['record_content_fingerprint'] != first['record_content_fingerprint']
+    assert edited['original_record_fingerprint'] == first['original_record_fingerprint']
+    assert record_fingerprints(replace(envelope, originator_pubkey=None), '22'*32)['sharing_fingerprint'] is None
+    with pytest.raises(RecordTransferError): record_fingerprints(envelope, 'npub-invalid')

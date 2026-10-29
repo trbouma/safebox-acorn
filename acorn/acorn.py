@@ -8849,6 +8849,7 @@ class Acorn:
             RecordTransferEnvelope(
                 label=record_name,
                 originator_handle=originator_handle,
+                originator_pubkey=self.pubkey_hex,
                 record_type=str(record.type),
                 payload=record.payload,
                 blob_data=blob_data,
@@ -8918,14 +8919,18 @@ class Acorn:
         descriptor_value: str,
         *,
         allowed_servers: List[str] | None = None,
+        recipient_pubkey: str | None = None,
     ) -> Dict[str, Any]:
         """Validate and decrypt transfer metadata without storing the record."""
+
+        from .record_transfer import record_fingerprints
 
         descriptor, envelope, _ = self._read_record_transfer(
             descriptor_value,
             allowed_servers=allowed_servers,
         )
         return {
+            **record_fingerprints(envelope, recipient_pubkey or getattr(self, "pubkey_hex", None)),
             "label": envelope.label,
             "originator_handle": envelope.originator_handle,
             "record_type": envelope.record_type,
