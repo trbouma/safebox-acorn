@@ -25,6 +25,19 @@ from acorn import acorn as acorn_module
 from acorn.acorn import Acorn
 
 
+@pytest.mark.parametrize('length', [200, 256, 1024])
+def test_long_record_labels_round_trip(length):
+    envelope = RecordTransferEnvelope(label='x' * length, record_type='generic', payload='note')
+    ciphertext, secret = encrypt_record_transfer_envelope(envelope)
+    assert decrypt_record_transfer_envelope(ciphertext, secret=secret).label == envelope.label
+
+
+def test_oversized_record_label_is_not_published():
+    envelope = RecordTransferEnvelope(label='x' * 1025, record_type='generic', payload='note')
+    with pytest.raises(RecordTransferError, match='1024'):
+        encrypt_record_transfer_envelope(envelope)
+
+
 def test_record_transfer_descriptor_round_trip_uses_base64url() -> None:
     secret = bytes(range(32))
     descriptor = RecordTransferDescriptor(

@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 
 RECORD_TRANSFER_PREFIX = "acorn:record-transfer:"
+MAX_RECORD_LABEL_LENGTH = 1024
 RECORD_PRESENTATION_PREFIX = "acorn:record-presentation:"
 _ENVELOPE_MAGIC = b"ACRN-RECORD-XFER-1\x00"
 _ENVELOPE_AAD = b"acorn/record-transfer/envelope/v1"
@@ -209,6 +210,8 @@ def encrypt_record_transfer_envelope(
     *,
     secret: bytes | None = None,
 ) -> tuple[bytes, bytes]:
+    if not isinstance(envelope.label, str) or not 1 <= len(envelope.label.strip()) <= MAX_RECORD_LABEL_LENGTH:
+        raise RecordTransferError("Record label must be 1–1024 characters")
     transfer_secret = secret or os.urandom(32)
     key = _derive(transfer_secret, _KEY_INFO)
     nonce = os.urandom(12)
@@ -269,7 +272,7 @@ def decrypt_record_transfer_envelope(
             blob_type = str(blob["m"])
         label = str(data["l"]).strip()
         record_type = str(data["t"]).strip()
-        if not label or len(label) > 200 or not record_type:
+        if not label or len(label) > MAX_RECORD_LABEL_LENGTH or not record_type:
             raise RecordTransferError("Record transfer metadata is invalid")
         capability = str(data.get("c", "transfer"))
         if capability not in {"transfer", "presentation"}:
